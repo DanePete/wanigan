@@ -1516,17 +1516,21 @@ export function livePage(): void {
    * as the site has them; and whether every one it tags is plain words, the same words, in the same field mark (`same`):
    * one stored thing shown more than once, which the main process saves once.
    */
-  function layerOf(id: string): { count: number; field: string | null; words: string | null; plain: boolean; same: boolean } {
+  function layerOf(id: string): { count: number; field: string | null; words: string | null; plain: boolean; same: boolean; parts: string[] } {
     const els = taggedFor(id);
     const el = els[0];
-    if (!el) return { count: 0, field: null, words: null, plain: false, same: false };
+    if (!el) return { count: 0, field: null, words: null, plain: false, same: false, parts: [] };
     const fieldOf = (x: Element): string | null => x.closest('[data-wl-field]')?.getAttribute('data-wl-field') ?? null;
     const plainOf = (x: Element): boolean => x instanceof HTMLElement && !x.children.length;
     const field = fieldOf(el);
     const words = siteWords(el);
+    // The trace's parts around its first element, innermost first: where its words are looked up when no part with an
+    // identity names it (a template region whose path inside could not be written, a plugin's template).
+    if (!regions.length || mutations !== scannedAt) scan();
+    const parts = around(el).flatMap((r) => (r.part ? [r.part] : [])).slice(0, 64);
     return {
       count: els.length, field, words, plain: plainOf(el),
-      same: words !== null && els.every((x) => plainOf(x) && siteWords(x) === words && fieldOf(x) === field),
+      same: words !== null && els.every((x) => plainOf(x) && siteWords(x) === words && fieldOf(x) === field), parts,
     };
   }
 

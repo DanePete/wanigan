@@ -35,9 +35,16 @@
 //   change falls in, every tag kept (src/shared/rich-text.ts). Words for something the helper says shows beyond this
 //   page (a target's `shows`: a template, a synced pattern, a menu, a widget, a setting) are said with where, and
 //   saved only when the edit is made real again. A change across formatting, a post's content and markup nothing says
-//   how to write go to an agent as a brief, as do styles and tokens; on Drupal, words nothing holds are said as what
-//   they are (writtenIn(): written in a template, which an agent changes, or printed through t()); anything else says
-//   why.
+//   how to write go to an agent as a brief, as do styles and tokens. Words nothing holds are said as what they are,
+//   from the template words both helpers list (writtenIn(), from the part the edit names outward, or writtenAround(),
+//   from the parts around an element no named part holds): on Drupal, written in a template, which an agent changes,
+//   or printed through t(), an interface translation; on WordPress, written in a theme's template file or printed
+//   through a gettext function, which go to an agent with the file, the line and, for a string, its text domain (a
+//   parent theme's file under an active child: change a copy in the child theme), while a plugin's or core's template
+//   is said to be whose it is. Words in no template are said by what made their part (madeBy(): a plugin, named; a
+//   theme template's PHP, never guessed at; a template the helper did not read), and "cannot tell" only when the
+//   trace names no part around the element at all. A theme's template file runs once for each place it is loaded,
+//   so an edit for one element in it reaches only the places that show the words it was made on.
 // - Last, words nothing the page offers holds (on WordPress also words somewhere in a post's content no target
 //   offers; on Drupal, words in no template, and words in a marked field of a type the word saves do not model) are
 //   looked for where the content keeps them: the helper's stored-words search (POST /_wanigan/words,
@@ -210,13 +217,18 @@ export async function resolveLayer(run: Run, trace: LiveTrace | null, edits: rea
     const theirs = e.change.type === 'text' ? layerTextHash(e.change.value) : null;
     // The words check: one element showing the text the edit was made on (or, for a text edit, its new words) says
     // the identity still names that thing; every element of that identity is then the same stored thing.
-    const named = !guarded(e) || Array.from({ length: count }, (_, i) => {
+    const shows = Array.from({ length: count }, (_, i) => {
       const t = typeof texts[i] === 'string' ? texts[i] as string : null;
       const h = t === null ? null : layerTextHash(t);
       return h === e.target.textHash || h === theirs || (t !== null && saved.length > 0 && layerTextHash(asItWas(t)) === e.target.textHash);
-    }).some(Boolean);
+    });
+    const named = !guarded(e) || shows.some(Boolean);
+    // A theme's template file is code the page runs once for each place it is loaded (a card in a loop): what it
+    // prints from data differs between them, so an edit for one element reaches only the places showing its words.
+    const each = guarded(e) && e.target.part?.kind === 'template';
     if (count && !named) why = 'Its element shows other words now.';
     for (let i = 0; i < count && named; i++) {
+      if (each && !shows[i]) continue;
       if (e.change.type === 'text' && plain[i] !== true) { why ||= 'Its element holds more than words now.'; continue; }
       accept.push(i);
     }
@@ -423,23 +435,33 @@ export function wordsTarget(trace: LiveTrace, identity: PartIdentity, words: str
 const NOTHING_HOLDS = 'Nothing this page offers to edit holds exactly these words, so there is nothing here to save them to: they come from a template, from formatted text, or from something the site helper does not offer on this page.';
 
 /**
- * Drupal: the target that says a template around an element writes exactly its words (the helper's TemplateWords:
- * `words.tpl.<hash>` for words typed into it, `words.t.<hash>` for strings it prints through t()), looked for in the
- * parts the edit's identity names, then each one's parent; null when none does. Such a target is never saved: it says
+ * A template around an element that writes exactly its words: the target that says so (the helpers' template words:
+ * `words.tpl.<hash>` for words typed into a template, `words.t.<hash>` for strings it prints through a translation
+ * function, Drupal's t() or WordPress's gettext), the part that offers it, and where in the file the words are when
+ * the helper says (a WordPress property's description: "They are on line 12."). Such a target is never saved: it says
  * why not.
  */
-export function writtenIn(trace: LiveTrace, identity: PartIdentity, words: string): EditTarget | null {
+export interface Written { target: EditTarget; part: TracePart; at: string | null }
+
+/** writtenIn() and writtenAround(): looked for in `start`, then each part's parent, the nearest level first. */
+function writtenFrom(trace: LiveTrace, start: TracePart[], words: string): Written | null {
   const want = asWords(words);
+  if (!want) return null;
   const targets = new Map(trace.edits.map((e) => [e.id, e]));
   const byId = new Map(trace.parts.map((p) => [p.id, p]));
-  const key = identityKey(identity);
-  let level = trace.parts.filter((p) => p.identity && identityKey(p.identity) === key);
+  let level = start;
   const seen = new Set(level.map((p) => p.id));
   for (let depth = 0; level.length && depth < 64; depth++) {
     for (const p of level) {
       for (const id of p.edits ?? []) {
         const t = targets.get(id);
-        if (t && /^words\.(?:tpl|t)\./.test(t.id) && isObj(t.value) && Object.values(t.value).some((v) => typeof v === 'string' && asWords(v) === want)) return t;
+        if (!t || !/^words\.(?:tpl|t)\./.test(t.id) || !isObj(t.value)) continue;
+        const props = isObj(t.schema) && isObj(t.schema.properties) ? t.schema.properties : {};
+        for (const [k, v] of Object.entries(t.value).slice(0, 200)) {
+          if (typeof v !== 'string' || asWords(v) !== want) continue;
+          const d = isObj(props[k]) ? (props[k] as Record<string, unknown>).description : undefined;
+          return { target: t, part: p, at: typeof d === 'string' && d.trim() && d.length <= 300 ? d.trim() : null };
+        }
       }
     }
     level = level.flatMap((p) => {
@@ -451,6 +473,58 @@ export function writtenIn(trace: LiveTrace, identity: PartIdentity, words: strin
   }
   return null;
 }
+
+/** The template that writes an element's words, looked for in the parts the edit's identity names, then outward; null when none does. */
+export function writtenIn(trace: LiveTrace, identity: PartIdentity, words: string): Written | null {
+  const key = identityKey(identity);
+  return writtenFrom(trace, trace.parts.filter((p) => p.identity && identityKey(p.identity) === key), words);
+}
+
+/**
+ * The same for an element no part with an identity names: looked for from the innermost of the trace's parts around it
+ * (the page script's layerOf `parts`, innermost first), then outward.
+ */
+export function writtenAround(trace: LiveTrace, around: readonly string[], words: string): Written | null {
+  const first = innermost(trace, around);
+  return first ? writtenFrom(trace, [first], words) : null;
+}
+
+/** The innermost of the parts around an element (innermost first) that this trace has. */
+function innermost(trace: LiveTrace, around: readonly string[]): TracePart | null {
+  const byId = new Map(trace.parts.map((p) => [p.id, p]));
+  for (const id of around) { const p = byId.get(id); if (p) return p; }
+  return null;
+}
+
+/** A template's words, said: why they are not saved here, and where in the file they are. */
+const writtenWhy = (w: Written, fallback: string): string => [w.target.why ?? fallback, w.at].filter(Boolean).join(' ');
+
+/**
+ * WordPress: why words nothing the page offers holds, and no template around them writes, are not saved here, by what
+ * the trace knows of the part they sit in (the innermost): made by a plugin, named by the file its code is in; made by
+ * the PHP of a theme template the helper read, which is not guessed at; in a template the helper did not read, with
+ * why. Null when the trace knows none of these: the caller says nothing holds them.
+ */
+export function madeBy(p: TracePart | null): string | null {
+  if (!p) return null;
+  const file = p.source?.file ?? null;
+  const plugin = file ? /(?:^|\/)(?:mu-)?plugins\/([^/]+)/.exec(file) : null;
+  if (file && plugin) {
+    const name = (p.source?.package || plugin[1] || '').replace(/\.php$/, '');
+    return `These words come from the plugin “${name}”: its code (${file}) made this part of the page, and nothing here holds them, so Wanigan does not save them from here. They change where the plugin keeps them: in its settings if it has one for them, or in its code, which Wanigan does not change.`;
+  }
+  if (p.identity?.kind !== 'template') return null;
+  const shown = file ?? p.identity.path;
+  const read = p.variables?.find((v) => v.name === 'template.words')?.preview ?? '';
+  if (/^read\b/.test(read)) {
+    return `These words are not written as text in ${shown}: its PHP, or code it calls, makes them, and Wanigan does not guess at what PHP computes, so there is nothing here to save them to. An agent can find where they are made from a brief.`;
+  }
+  const notRead = /^not read: (.{1,200})$/.exec(read)?.[1];
+  return `These words are in what ${shown} prints, and the site helper did not read that template${notRead ? ` (${notRead})` : ''}, so whether they are written there or made by its code is not known.`;
+}
+
+/** Said when the trace names no part around an element at all: nothing the helper traced made it. */
+const UNNAMED = 'Its element is in markup no part of the page’s trace names, so Wanigan cannot tell what holds these words.';
 
 /** On Drupal, words no target holds and no template around them writes: made by code from what Wanigan does not save yet. */
 const DRUPAL_NOTHING_HOLDS = 'Nothing this page offers to edit holds exactly these words, and Wanigan finds them written in no template around them: code makes them (a formatter, a module or the theme) from something Wanigan does not save from here yet.';
@@ -1308,7 +1382,7 @@ export function wireLiveLayer(options: LiveLayerOptions): { hooks: LiveViewHooks
     const value = edit.change.value;
     const here = shown();
     if (!here || here.cur.projectId !== cur.projectId || !madeOn(edit, here.path)) return none(`Open ${edit.page} in the live view first: words are saved from the page they are on.`);
-    const at = await options.run<{ count?: unknown; field?: unknown; words?: unknown; plain?: unknown; same?: unknown } | null>(call('layerOf', id), null);
+    const at = await options.run<{ count?: unknown; field?: unknown; words?: unknown; plain?: unknown; same?: unknown; parts?: unknown } | null>(call('layerOf', id), null);
     if (!at || at.count === 0) return none('Its element is not tagged on this page. Reload the page, then try again.');
     // One stored thing shown more than once (one identity, every element the same plain words in the same field mark) is
     // saved once; elements a document path matched, or that differ, are refused.
@@ -1381,15 +1455,39 @@ export function wireLiveLayer(options: LiveLayerOptions): { hooks: LiveViewHooks
     }
     // No field marked around them (WordPress's helper marks none): the edit target in the page's trace that holds
     // exactly these words, saved as the window saves one.
-    if (!edit.target.part) return none('Its element is in markup no part of the page’s trace names, so Wanigan cannot tell what holds these words.');
     const answer = await options.trace();
+    /**
+     * Words a template writes, said as the platform has them. Drupal: typed into a template, code an agent changes;
+     * printed through t(), an interface translation Wanigan does not change yet. WordPress: a theme's template file
+     * (a part with a `template` identity), typed in or printed through a gettext function, goes to an agent with the
+     * file, its line and, for a string, its text domain (a translation file is the way without code); a plugin's or
+     * core's template is not Wanigan's to change, and says whose it is.
+     */
+    const sayWritten = (w: Written, platform: LiveTrace['platform']): Promise<LayerImplemented> | LayerImplemented => {
+      if (platform === 'drupal') return w.target.id.startsWith('words.tpl.') ? toAgent(writtenWhy(w, DRUPAL_NOTHING_HOLDS)) : none(writtenWhy(w, DRUPAL_NOTHING_HOLDS));
+      const why = writtenWhy(w, 'These words are written in a template, which is code.');
+      return w.part.identity?.kind === 'template' ? toAgent(why) : none(why);
+    };
+    if (!edit.target.part) {
+      // No part with an identity names its element, but the trace may still know what is around it: a template region
+      // whose path inside could not be written, a plugin's template, a Drupal template's region. Its words are looked
+      // for in the templates around it, and the refusal names the template or plugin that made it.
+      if (answer.state !== 'ok') return none(untraced(answer));
+      const around = Array.isArray(at.parts) ? at.parts.filter((x): x is string => typeof x === 'string' && x.length > 0 && x.length <= 100).slice(0, 64) : [];
+      const inner = innermost(answer.trace, around);
+      if (!inner) return none(UNNAMED);
+      const written = writtenAround(answer.trace, around, at.words);
+      if (written) return sayWritten(written, answer.trace.platform);
+      if (answer.trace.platform === 'drupal') return none(DRUPAL_NOTHING_HOLDS);
+      return none(madeBy(inner) ?? NOTHING_HOLDS);
+    }
     if (answer.state !== 'ok') return none(untraced(answer));
     const found = wordsTarget(answer.trace, edit.target.part, at.words, value);
     if (!found.ok && found.why === NOTHING_HOLDS && answer.trace.platform === 'drupal') {
       // Drupal: say which it is. Words a template writes are code (an agent changes the template), or an interface
       // translation Wanigan does not change yet; anything else is made by code from what is not saved here yet.
       const written = writtenIn(answer.trace, edit.target.part, at.words);
-      if (written?.id.startsWith('words.tpl.')) return toAgent(written.why ?? DRUPAL_NOTHING_HOLDS);
+      if (written?.target.id.startsWith('words.tpl.')) return sayWritten(written, 'drupal');
       // Written in no template: looked for in the stored values of the content the page showed.
       const c = !written && options.storedWords ? storedContentOf(answer.trace, edit.target.part) : null;
       if (c) {
@@ -1397,7 +1495,13 @@ export function wireLiveLayer(options: LiveLayerOptions): { hooks: LiveViewHooks
         if ('done' in r) return r.done;
         if (r.nowhere) return none(r.nowhere);
       }
-      return { ok: false, id, route: 'none', why: written?.why ?? DRUPAL_NOTHING_HOLDS };
+      return written ? sayWritten(written, 'drupal') : none(DRUPAL_NOTHING_HOLDS);
+    }
+    if (!found.ok && found.why === NOTHING_HOLDS && answer.trace.platform === 'wordpress') {
+      // WordPress: words a theme's template file writes, or prints through a gettext function (the helper's template
+      // words), before anything is searched.
+      const written = writtenIn(answer.trace, edit.target.part, at.words);
+      if (written) return sayWritten(written, 'wordpress');
     }
     // WordPress: nothing the page offers holds them, or they are somewhere in a post's content that no target offers
     // (classic content, a builder's, a shortcode's, a block's settings): looked for where the post keeps them. Words a
@@ -1407,6 +1511,12 @@ export function wireLiveLayer(options: LiveLayerOptions): { hooks: LiveViewHooks
       const r = await fromStore(answer.trace.id, stored, 'wordpress');
       if ('done' in r) return r.done;
       if (r.nowhere) return found.route === 'agent' ? toAgent(`${r.nowhere} An agent can make the change from a brief.`) : none(r.nowhere);
+    }
+    if (!found.ok && found.why === NOTHING_HOLDS && answer.trace.platform === 'wordpress') {
+      // Held by nothing and written in no template: said by what made the part it sits in (a plugin, a template's
+      // PHP, a template not read), or that nothing the helper offers holds them.
+      const key = identityKey(edit.target.part);
+      return none(madeBy(answer.trace.parts.find((p) => p.identity && identityKey(p.identity) === key) ?? null) ?? NOTHING_HOLDS);
     }
     // Formatted words handed to an agent keep the page from before, as a style does.
     if (!found.ok) return found.route === 'agent' ? toAgent(found.why) : { ok: false, id, route: found.route, why: found.why };

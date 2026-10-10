@@ -258,11 +258,13 @@ export const alsoChangedWords = (r: LayerReach): string => {
  * element shown more than once, an edit in the site already, no trace) means the words are stored, or that Wanigan
  * cannot tell, and a template is never written for them.
  *
- * On Drupal main no longer answers this: its helper says what writes words nothing holds (writtenIn), and main answers
- * that. Words a template writes go to an agent, by main's rule that a template is code; words printed through t()
- * are refused, since changing a template's source string would cut it off from its translations; anything else is made
- * by code and in no template. None of those offers a template here. So the offer is for a site whose helper cannot
- * say (a WordPress classic theme, whose template files the helper marks around what they print).
+ * Main answers it only where the helper cannot say what writes the words. Both helpers list the words each template
+ * writes (writtenIn): words a template writes go to an agent, by main's rule that a template is code; a translated
+ * string goes to an agent on WordPress (with its text domain) and is refused on Drupal (an interface translation);
+ * WordPress names a plugin that made the part, or the theme template whose PHP makes the words, or a template it did
+ * not read; anything else on Drupal is made by code and in no template. None of those offers a template here. So the
+ * offer is left for words in no template file the helper read and that no plugin it can name made (a block theme's
+ * pattern, say).
  */
 export const NOTHING_HOLDS = 'Nothing this page offers to edit holds exactly these words, so there is nothing here to save them to: they come from a template, from formatted text, or from something the site helper does not offer on this page.';
 
@@ -350,12 +352,20 @@ export function elementWords(e: Pick<LayerEdit, 'label' | 'target'>): string {
 }
 
 /** A layer edit in a brief to an agent: what it is and what it reaches, its element, and why no picture of it is attached when none is. */
-export interface LayerNote { label: string; reach: string; element?: string; noPicture?: string | null }
+export interface LayerNote {
+  label: string; reach: string; element?: string; noPicture?: string | null;
+  /**
+   * Why making it real did not save it, as the main process said (LayerImplemented's `why`): the template and line that
+   * write its words, the child theme a parent's file belongs in, a string's text domain. What the agent starts from.
+   */
+  why?: string | null;
+}
 
 /** The lines a brief gives a layer edit (note-store.ts notesText). */
 export function layerNoteLines(layer: LayerNote, pictured: boolean): string[] {
   const lines = [`   An edit in Wanigan’s design layer, shown on the page but not in the site yet: ${layer.label}, for ${layer.reach}.`];
   if (layer.element) lines.push(`   Its element: ${layer.element}.`);
+  if (layer.why) lines.push(`   Why Wanigan did not make it real itself: ${layer.why}`);
   if (!pictured && layer.noPicture) lines.push(`   No picture of it is attached: ${layer.noPicture}.`);
   return lines;
 }
