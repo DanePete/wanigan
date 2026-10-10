@@ -381,7 +381,8 @@ try {
       if (tabs.join() !== 'Board,Sessions,Changes,Code,Live') fail(`the project's tabs are ${tabs.join(', ')}`);
       await page.click('.topbar .project-more');
       const more = await page.$$eval('.menu-list [role="menuitemradio"]', (items) => items.map((i) => i.querySelector('.sel-text')?.textContent?.trim()));
-      if (more.join() !== 'History,Decisions,Activity,List') fail(`the project's other views are ${more.join(', ')}`);
+      // List is the board's other mode (its toolbar's Board | List), so ··· holds the rest.
+      if (more.join() !== 'History,Decisions,Activity') fail(`the project's other views are ${more.join(', ')}`);
       await page.keyboard.press('Escape');
       const tip = await page.getAttribute('.topbar .tabs a:text-is("Code")', 'data-tip');
       if (tip !== 'Code (G then E)') fail(`the Code tab's tip is "${tip}"`);
@@ -532,8 +533,7 @@ try {
       await page.waitForSelector('.editor-tab.active:not(.unsaved)', { timeout: 3000 }).catch(() => fail('Revert left the file unsaved'));
 
       // ⌘J on the Code tab puts the editor away: back to the view before it, the drawer closed.
-      await page.click('.topbar .project-more');
-      await page.click('.menu-list [role="menuitemradio"]:has-text("List")');
+      await page.click('nav[aria-label="Show the cards as"] a:text-is("List")');
       await page.waitForSelector('.list-table tbody tr[data-key]');
       await page.click('.topbar .tabs a:text-is("Code")');
       await page.waitForSelector('.editor-drawer[data-mode="page"]');
