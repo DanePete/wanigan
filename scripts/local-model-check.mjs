@@ -68,7 +68,7 @@ try {
   const project = await call('projects.add', { path: site, name: 'Corner Shop', key: 'CS' });
   results.push(`project ${project.key} opened`);
 
-  // The owner's way in: the project in the rail, then New session, Claude Code, the model "On this Mac".
+  // The owner's way in: the project in the rail, then New session, Claude Code, the model "On this computer".
   await page.evaluate(() => { location.hash = '#/p/CS/board'; });
   await page.waitForSelector('.rail-projects a:has-text("Corner Shop")', { timeout: 15_000 });
   await page.keyboard.press('Meta+t');
@@ -76,7 +76,7 @@ try {
   await dlg.waitFor();
   await dlg.getByRole('radio', { name: 'Claude Code' }).click();
   await dlg.locator('.model-row .select').click();
-  await page.waitForSelector('.sel-group:has-text("On this Mac")', { timeout: 15_000 });
+  await page.waitForSelector('.sel-group:has-text("On this computer")', { timeout: 15_000 });
   await page.getByRole('option').filter({ hasText: 'Qwen3-Coder 30B' }).click();
   await page.screenshot({ path: join(shots, 'new-session.png') });
   const startedAt = Date.now();

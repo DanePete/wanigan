@@ -79,8 +79,8 @@ test('LM Studio’s real port, its models and the module’s state are read from
     assert.equal(status.modules[0]?.downloaded, true);
     const claude = (await t2.owner.call('sessions.models', { provider: 'claude' })).models.filter((m) => m.local);
     assert.deepEqual(claude.map((m) => [m.value, m.label, m.detail, m.local?.ready]), [
-      [QWEN_VALUE, 'Qwen3-Coder 30B', 'On this Mac · LM Studio · not yet proven', true],
-      ['local/lmstudio/mistral/devstral-small', 'mistral/devstral-small', 'On this Mac · LM Studio · not proven with Claude Code', true],
+      [QWEN_VALUE, 'Qwen3-Coder 30B', 'On this computer · LM Studio · not yet proven', true],
+      ['local/lmstudio/mistral/devstral-small', 'mistral/devstral-small', 'On this computer · LM Studio · not proven with Claude Code', true],
     ]);
     const codex = (await t2.owner.call('sessions.models', { provider: 'codex' })).models.filter((m) => m.local);
     assert.ok(codex.every((m) => /not proven with Codex/.test(m.detail ?? '')), 'Qwen’s module is for Claude Code: on Codex it is not proven');
@@ -94,7 +94,7 @@ test('a module not on this Mac is offered with its size, and cannot start', asyn
     const offered = (await t2.owner.call('sessions.models', { provider: 'claude' })).models.find((m) => m.local);
     assert.equal(offered?.value, QWEN_VALUE);
     assert.equal(offered?.local?.ready, false);
-    assert.match(offered?.detail ?? '', /Not on this Mac yet · 17\.2 GB · get it in Settings › Local models/);
+    assert.match(offered?.detail ?? '', /Not on this computer yet · 17\.2 GB · get it in Settings › Local models/);
     const project = await t2.owner.call('projects.add', { path: t2.projectDir });
     await assert.rejects(
       t2.owner.call('sessions.start', { projectId: project.id, provider: 'claude', model: QWEN_VALUE }),
