@@ -756,8 +756,17 @@ export function liveStub(f) {
     },
     onEdited(l) { listeners.edited.add(l); return () => listeners.edited.delete(l); },
     onKey(l) { listeners.key.add(l); return () => listeners.key.delete(l); },
-    arrange(spec) { arranging?.(null); window.__wgLive.spec = spec; return new Promise((resolve) => { arranging = resolve; window.__wgLive.drop = (d) => { arranging = null; resolve(d); }; }); },
-    async disarm() { const a = arranging; arranging = null; a?.(null); },
+    // `armed`: the page waits for a drop now (a reload disarms it, and the window arms it again once the page is back).
+    arrange(spec) {
+      arranging?.(null);
+      window.__wgLive.spec = spec;
+      window.__wgLive.armed = true;
+      return new Promise((resolve) => {
+        arranging = resolve;
+        window.__wgLive.drop = (d) => { arranging = null; window.__wgLive.armed = false; resolve(d); };
+      });
+    },
+    async disarm() { const a = arranging; arranging = null; window.__wgLive.armed = false; a?.(null); },
     async preview(item, ref, place) { window.__wgLive.calls.push(`preview ${item} ${place} ${ref}`); return true; },
     async unpreview() { window.__wgLive.calls.push('unpreview'); },
     async move(m) { window.__wgLive.calls.push(`move ${JSON.stringify(m)}`); const a = window.__wgLive.moveAnswer ?? { ok: true, undo: 'u-1', revision: null }; if (a.ok) written(); return a; },

@@ -207,8 +207,13 @@ try {
     await page.waitForSelector('.live-status-said:has-text("Search: moved, and the page shows the change after reloading.")', { timeout: 4000 })
       .catch(async () => fail(t(`check: a move that landed was not said (${await page.locator('.live-status-said').first().innerText().catch(() => 'no status line')})`)));
     await shot('move-saved');
+    const beforeUndo = await page.evaluate(() => window.__wgLive.calls.length);
     await page.locator('.toast-info button', { hasText: 'Undo' }).click();
     if (!(await page.evaluate(() => window.__wgLive.calls.includes('undo u-1')))) fail(t('move: Undo did not ask the site'));
+    // The undo reloads the page, which disarms dragging until the page is back: the drop below waits for the page to be
+    // traced again and armed again, rather than racing the reload (a drop on the page being reloaded goes nowhere).
+    await page.waitForFunction((k) => window.__wgLive.calls.slice(k).includes('trace') && window.__wgLive.armed, beforeUndo, { timeout: 4000 })
+      .catch(() => fail(t('move: dragging was not armed again once the undo reloaded the page')));
     // A drop the page answers is saved the same way; a 409 says it changed meanwhile.
     await page.evaluate(() => { window.__wgLive.moveAnswer = { ok: false, conflict: true, items: null, error: 'It changed on the site since this page was shown, so nothing was moved. The page now shows the order as it is.' }; });
     await page.evaluate(() => window.__wgLive.drop({ kind: 'move', move: { collection: 'c-paras', item: 'p-para-2', to: { collection: 'c-paras', index: 0 } } }));
