@@ -13,6 +13,7 @@ import { wireAppSettings, type AppSettingsWiring } from './app-settings.ts';
 import { wireLiveCompare } from './live-compare.ts';
 import { askTrace, wireLiveInspect } from './live-inspect.ts';
 import { wireLiveLayer } from './live-layer.ts';
+import { wireSiteColours } from './live-site-colours.ts';
 import { askStoredWords, undoStoredWords } from './live-stored-words.ts';
 import { wireLiveFind } from './live-find.ts';
 import { wireLiveLibrary } from './live-library.ts';
@@ -188,6 +189,11 @@ function wireBridge(): void {
     partition: (id, url, token) => view.partition(id, null, url, token), sessionFor: (id, url) => view.sessionFor(id, url),
     askTrace, pageScript: () => view.pageScript(),
   }).hooks;
+  // The site's own colours for Try a style: its declared palette from the helper, its tokens and the colours its page uses.
+  wireSiteColours({
+    ipc: ipcMain, trusted, enabled: liveEnabled, current: () => view.current(), run: <T>(code: string, fallback: T) => view.run(code, fallback),
+    trace: () => inspect.trace(),
+  });
   // Snap and Record: a picture of the view to mark up, and a recording of it with a step log, kept in the data folder.
   const viewWidth = (id: string): number | null => view.now(id)?.width ?? null;
   wireLiveSnap({

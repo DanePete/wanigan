@@ -7,6 +7,7 @@ import type { ArrangeDrop, ArrangeSpec, LiveInsert, LiveMove, LiveMoveSaved, Liv
 import type { LibraryPicturesAnswer, LiveLibraryAnswer, LiveUsageAnswer } from './live-library.ts';
 import type { LayerApplied, LayerImplemented, LayerPickTarget, LayerProperty, LayerTyped, LayerUndone, LayerVerdict } from './design-layer.ts';
 import type { LiveSiteAiAnswer } from './live-ai.ts';
+import type { SiteColours } from './site-colours.ts';
 import type { LiveFailure } from './live-site.ts';
 import type { LiveFindAnswer, LiveHere } from './live-goto.ts';
 import type { LiveGesture, LiveKeyId } from './live-keys.ts';
@@ -349,6 +350,12 @@ export interface LiveBridge {
    * last; null, or no value the layer would set, takes it away. Answers how many elements show it.
    */
   layerTry(values: Partial<Record<LayerProperty, string>> | null, scope?: 'this' | 'kind'): Promise<number>;
+  /**
+   * The site's own colours, for Try a style (src/shared/site-colours.ts): the platform's declared palette from the
+   * helper (WordPress's theme.json and global styles), the theme's colour tokens and the colours the page uses, each
+   * said by where it came from. Read-only; nothing is made up.
+   */
+  siteColours(): Promise<SiteColours>;
   /* The Go to launcher (src/main/live-find.ts; the helpers' contract is src/shared/live-find.ts). */
 
   /** A project's site's destinations: the helper's index, or its search for `query`, or why there are none (with the pages the view knows). */

@@ -27,7 +27,7 @@ import { WORDPRESS_ACF_SOURCE } from './live-helper-wordpress-acf.ts';
 import { WORDPRESS_COPIES_SOURCE } from './live-helper-wordpress-copies.ts';
 import { WORDPRESS_TEMPLATE_WORDS_SOURCE } from './live-helper-wordpress-template-words.ts';
 
-export const WORDPRESS_HELPER_VERSION = 4;
+export const WORDPRESS_HELPER_VERSION = 5;
 export const WORDPRESS_HELPER_FILE = 'wanigan-live.php';
 /** A line of the file: how Wanigan knows a file of that name is its own. */
 export const WORDPRESS_HELPER_MARK = '// Written by Wanigan for its live view.';
@@ -252,7 +252,7 @@ final class Wanigan_Live {
 	public static function boot(): void {
 		self::$self = wp_normalize_path(__FILE__);
 		$path = self::request_path();
-		if (preg_match('#/_wanigan/(changed|save|trace|edit|move|insert|remove|undo|find|ai|components|usage|words)(/|$)#', $path, $m)) {
+		if (preg_match('#/_wanigan/(changed|save|trace|edit|move|insert|remove|undo|find|ai|palette|components|usage|words)(/|$)#', $path, $m)) {
 			// The Go to index lists the wp-admin menu as core builds it for this user. Plugins register their admin
 			// pages only in an admin request (many check is_admin() when they load), so this request is one:
 			// wp-admin/admin.php defines WP_ADMIN before WordPress loads, and must-use plugins load before plugins.
@@ -4703,6 +4703,56 @@ final class Wanigan_Live {
 		return array('client' => true, 'supports' => function_exists('wp_supports_ai') ? (bool) wp_supports_ai() : null, 'connected' => array_slice($connected, 0, 50));
 	}
 
+	/** @var callable[] What a plugin's adapter says of that plugin's own palette, registered by the adapter's file. */
+	private static $colour_notes = array();
+
+	/**
+	 * A plugin's adapter says here whether it reads that plugin's own colours (its file calls this when it loads): the
+	 * callable answers array('id', 'name', 'why') for a palette it does not read yet, or null when its plugin is off.
+	 */
+	public static function colour_source(callable $note): void {
+		self::$colour_notes[] = $note;
+	}
+
+	/**
+	 * GET /_wanigan/palette: the colours the site declares (Wanigan's src/shared/site-colours.ts). Read-only.
+	 * global-styles-and-settings.php wp_get_global_settings( array( 'color', 'palette' ) ) answers theme.json's
+	 * settings as core merges them, its presets keyed by origin (class-wp-theme-json.php __construct(): "Internally,
+	 * presets are keyed by origin"): core's defaults, the theme's theme.json and the user's global styles.
+	 */
+	private static function colour_palette(): void {
+		$by_origin = function_exists('wp_get_global_settings') ? wp_get_global_settings(array('color', 'palette')) : array();
+		$notes = array();
+		foreach (self::$colour_notes as $note) {
+			try {
+				$said = call_user_func($note);
+			} catch (Throwable $e) {
+				$said = null;
+			}
+			if (is_array($said)) $notes[] = $said;
+		}
+		self::answer(self::colour_palette_answer(is_array($by_origin) ? $by_origin : array(), $notes));
+	}
+
+	/**
+	 * The palette answer from the presets by origin, in core's order (default, theme, custom): each slug as
+	 * class-wp-theme-json.php get_settings_values_by_slug() turns it into --wp--preset--color--<slug>, with
+	 * _wp_to_kebab_case(). Its name and colour as declared. Public for its test.
+	 */
+	public static function colour_palette_answer(array $by_origin, array $notes): array {
+		$out = array();
+		foreach (array('default', 'theme', 'custom') as $origin) {
+			$list = isset($by_origin[$origin]) && is_array($by_origin[$origin]) ? $by_origin[$origin] : array();
+			foreach ($list as $p) {
+				if (count($out) >= 1000) break 2;
+				if (!is_array($p) || !isset($p['slug'], $p['color']) || !is_scalar($p['slug']) || !is_string($p['color'])) continue;
+				$slug = function_exists('_wp_to_kebab_case') ? _wp_to_kebab_case((string) $p['slug']) : (string) $p['slug'];
+				$out[] = array('slug' => $slug, 'name' => isset($p['name']) && is_string($p['name']) ? $p['name'] : '', 'color' => $p['color'], 'origin' => $origin);
+			}
+		}
+		return array('version' => 1, 'platform' => 'wordpress', 'palette' => $out, 'notYet' => array_slice($notes, 0, 10));
+	}
+
 	/** GET /_wanigan/ai: the site's AI as core reports it (src/shared/live-ai.ts SiteAi). Never a key. */
 	private static function site_ai(): void {
 		$saves = array();
@@ -4850,7 +4900,7 @@ final class Wanigan_Live {
 	/** Runs at wp_loaded: post types, meta, blocks and settings are registered, and the user is known. */
 	public static function route(): void {
 		$path = self::request_path();
-		if (!preg_match('#/_wanigan/(trace|edit|move|insert|remove|undo|find|ai|components|usage|words)(?:/([A-Za-z0-9._-]+))?/?$#', $path, $m)) return;
+		if (!preg_match('#/_wanigan/(trace|edit|move|insert|remove|undo|find|ai|palette|components|usage|words)(?:/([A-Za-z0-9._-]+))?/?$#', $path, $m)) return;
 		nocache_headers();
 		$post = isset($_SERVER['REQUEST_METHOD']) && $_SERVER['REQUEST_METHOD'] === 'POST';
 		$route = $m[1];
@@ -4859,6 +4909,7 @@ final class Wanigan_Live {
 			if ($route === 'trace' && !$post) self::serve_trace($arg);
 			if ($route === 'find' && !$post) self::find();
 			if ($route === 'ai' && !$post) self::site_ai();
+			if ($route === 'palette' && !$post) self::colour_palette();
 			if ($route === 'components' && !$post) self::components();
 			if ($route === 'usage' && !$post) {
 				// Where a library entry is used across the site (Wanigan_Live_Usage, below): read-only.

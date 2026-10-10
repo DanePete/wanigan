@@ -218,3 +218,8 @@ test('values to try are the layer’s own properties with values it prints; anyt
   assert.deepEqual(tryValues({ 'padding-top': ' 2rem !important ' }), { 'padding-top': '2rem' }, 'the sheet adds its own !important');
   for (const none of [null, undefined, 'color: red', ['color'], {}, { position: 'fixed' }, { color: 'url(https://example.test/x.png)' }]) assert.equal(tryValues(none), null, JSON.stringify(none));
 });
+
+test('a value may name a site colour by its custom property, a WordPress preset’s and a page builder’s too: the layer prints the reference, not a copy', () => {
+  for (const ref of ['var(--ns-pine)', 'var(--wp--preset--color--accent-1)', 'var(--e-global-color-primary)']) assert.equal(layerValue(ref), ref, ref);
+  assert.deepEqual(tryValues({ color: 'var(--wp--preset--color--accent-1)', 'background-color': 'var(--ns-pine)' }), { color: 'var(--wp--preset--color--accent-1)', 'background-color': 'var(--ns-pine)' });
+});

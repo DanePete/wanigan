@@ -1956,9 +1956,114 @@ export function livePage(): void {
     return els.length;
   }
 
+  /**
+   * The custom properties the rules of the page's own stylesheets declare on each of `els` (a rule whose selector the
+   * element matches), at most 20,000 rules read; a cross-origin sheet cannot be read and is passed over.
+   */
+  function declaredOn(els: Element[]): Map<Element, Set<string>> {
+    const out = new Map<Element, Set<string>>(els.map((el) => [el, new Set<string>()]));
+    let read = 0;
+    const walk = (rules: CSSRuleList, depth: number): void => {
+      for (const rule of Array.from(rules)) {
+        if (++read > 20_000) return;
+        if (rule instanceof CSSStyleRule) {
+          let own: string[] | null = null;
+          for (const el of els) {
+            let hit = false;
+            try { hit = el.matches(rule.selectorText); } catch { hit = false; }
+            if (!hit) continue;
+            own ??= Array.from({ length: rule.style.length }, (_, i) => rule.style.item(i)).filter((p) => p.startsWith('--'));
+            for (const p of own) out.get(el)?.add(p);
+          }
+        } else if (depth < 4 && 'cssRules' in rule) {
+          // @media, @supports, @layer and the like hold rules of their own.
+          walk((rule as CSSGroupingRule).cssRules, depth + 1);
+        }
+      }
+    };
+    for (const sheet of Array.from(document.styleSheets)) {
+      let rules: CSSRuleList;
+      try { rules = sheet.cssRules; } catch { continue; }
+      walk(rules, 0);
+    }
+    return out;
+  }
+
+  /** A computed value the browser reads as a colour of its own: not transparent, currentcolor or a keyword, never one still naming var(). */
+  const colourOf = (v: string): boolean =>
+    !!v && v.length <= 100 && !/^(?:transparent|currentcolor|inherit|initial|unset|revert)$/i.test(v) && !/var\(/i.test(v) && CSS.supports('color', v);
+
+  /** Whether a computed colour shows nothing: alpha 0. */
+  const clearColour = (v: string): boolean => v === 'transparent' || /^rgba\(.*,\s*0\)$/.test(v) || /\/\s*0\)$/.test(v);
+
+  /**
+   * The site's own colours as the page shows them, for Try a style (src/shared/site-colours.ts checks and ranks them):
+   * - `tokens`: the custom properties that hold a colour on the page's root, on <body>, and on <body>'s first few
+   *   element children (the theme's top containers), each read where it is set, the root's first. Whatever the
+   *   browser lists for the root, and whatever the page's own rules declare on each.
+   * - `used`: the computed colour, background and border colours of the visible elements (at most 4,000, in document
+   *   order), each with the area it covers: a background its box, words their own boxes, a border its length times
+   *   its width. Elements Wanigan's layer or a style being tried colours are left out: those colours are not the
+   *   site's.
+   */
+  function layerColors(): { tokens: { name: string; value: string; on: string }[]; used: { value: string; as: string; weight: number; elements: number }[] } {
+    const root = document.documentElement;
+    const body = document.body;
+    const containers = body ? Array.from(body.children).filter((el) => !/^(script|style|link|noscript|template)$/i.test(el.localName) && el.id !== HOST_ID).slice(0, 6) : [];
+    const where: [Element, string][] = [[root, 'root'], ...(body ? [[body, 'body'] as [Element, string]] : []), ...containers.map((el) => [el, 'container'] as [Element, string])];
+    const declared = declaredOn(where.map(([el]) => el));
+    const listed = getComputedStyle(root);
+    for (let i = 0; i < listed.length; i++) { const p = listed.item(i); if (p.startsWith('--')) declared.get(root)?.add(p); }
+    const tokens: { name: string; value: string; on: string }[] = [];
+    const seen = new Set<string>();
+    for (const [el, on] of where) {
+      const s = getComputedStyle(el);
+      for (const name of declared.get(el) ?? []) {
+        if (tokens.length >= 48) break;
+        if (seen.has(name) || name.startsWith('--wl-')) continue;
+        const value = s.getPropertyValue(name).trim();
+        if (!colourOf(value)) continue;
+        seen.add(name);
+        tokens.push({ name, value, on });
+      }
+    }
+
+    const used = new Map<string, { value: string; as: string; weight: number; elements: number }>();
+    const add = (value: string, as: string, weight: number): void => {
+      if (!(weight > 0) || clearColour(value) || !colourOf(value)) return;
+      const key = `${as} ${value}`;
+      const u = used.get(key);
+      if (u) { u.weight += weight; u.elements += 1; } else if (used.size < 400) used.set(key, { value, as, weight, elements: 1 });
+    };
+    const els = [root, ...(body ? [body, ...Array.from(body.querySelectorAll('*')).slice(0, 4000)] : [])];
+    const range = document.createRange();
+    for (const el of els) {
+      if (el.closest('[data-wl-edit], [data-wl-try]')) continue;
+      const b = el.getBoundingClientRect();
+      if (b.width <= 0 || b.height <= 0) continue;
+      const s = getComputedStyle(el);
+      if (s.visibility !== 'visible' || Number(s.opacity) === 0) continue;
+      add(s.backgroundColor, 'background', b.width * b.height);
+      let words = 0;
+      for (const n of Array.from(el.childNodes)) {
+        if (n.nodeType !== Node.TEXT_NODE || !n.textContent?.trim()) continue;
+        range.selectNodeContents(n);
+        const r = range.getBoundingClientRect();
+        words += r.width * r.height;
+      }
+      add(s.color, 'text', words);
+      for (const side of ['top', 'right', 'bottom', 'left'] as const) {
+        const width = Number.parseFloat(s.getPropertyValue(`border-${side}-width`));
+        if (!(width > 0) || /^(none|hidden)$/.test(s.getPropertyValue(`border-${side}-style`))) continue;
+        add(s.getPropertyValue(`border-${side}-color`), 'border', width * (side === 'top' || side === 'bottom' ? b.width : b.height));
+      }
+    }
+    return { tokens, used: [...used.values()] };
+  }
+
   w.__wl = {
     scan, outline, clear, pick, cancelPick, choose, css, problems, texts, fingerprints, styleOf, paint, where, reveal, arrange, disarm, preview, unpreview,
-    layerFind, layerSet, layerPick, layerSnap, layerOf, layerAreas, layerPage, layerLate, layerType, layerTry, retypeAt,
+    layerFind, layerSet, layerPick, layerSnap, layerOf, layerAreas, layerPage, layerLate, layerType, layerTry, layerColors, retypeAt,
     /** End typing on the page from the window: keep the words typed so far, or put back what was there. */
     layerTypeEnd: (keep: unknown) => endTyping(keep === true),
     /** Picking, or typing on the page: the page's keys are its, not the live view's (live-page-goto.ts asks). */

@@ -253,6 +253,12 @@ final class Wanigan_Live_Adapter_Elementor extends Wanigan_Live_Adapter implemen
 	}
 }
 Wanigan_Live_Stored::adapt('Wanigan_Live_Adapter_Elementor');
+// Elementor's own global colours are not read yet: its source is not on hand to read the API they are kept behind, so
+// the palette says so by name rather than guess at one. Custom properties its pages print are still read, by the page.
+Wanigan_Live::colour_source(function () {
+	if (!Wanigan_Live_Adapter_Elementor::active()) return null;
+	return array('id' => 'elementor', 'name' => 'Elementor', 'why' => 'Elementor’s global colours are not read from Elementor yet. Where its pages set them as custom properties, they show among the theme’s tokens.');
+});
 // For the live view's own requests only, Elementor renders every element afresh rather than from its element cache
 // (Document::print_elements() reads elementor_element_cache_ttl, and "disable" skips the cache): on a cache hit no
 // element is rendered, so the trace would see none of them, and a page read back after a save could show the old ones.

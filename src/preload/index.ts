@@ -95,6 +95,7 @@ const live: LiveBridge = {
   layerType: () => ipcRenderer.invoke('live:layerType') as ReturnType<LiveBridge['layerType']>,
   layerTypeEnd: (keep) => ipcRenderer.invoke('live:layerTypeEnd', keep === true) as Promise<void>,
   layerTry: (values, scope) => ipcRenderer.invoke('live:layerTry', values ?? null, scope ?? 'this') as Promise<number>,
+  siteColours: () => ipcRenderer.invoke('live:siteColours') as ReturnType<LiveBridge['siteColours']>,
   // The Go to launcher (src/main/live-find.ts).
   find: (projectId, query, options) => ipcRenderer.invoke('live:find', projectId, query ?? '', options ?? null) as ReturnType<LiveBridge['find']>,
   findHere: (projectId) => ipcRenderer.invoke('live:findHere', projectId) as ReturnType<LiveBridge['findHere']>,
