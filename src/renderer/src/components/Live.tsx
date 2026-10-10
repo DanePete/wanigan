@@ -486,6 +486,16 @@ function LiveShown({ site, url, project, follow, card, compact, following, shots
     onSaved: (label) => setSaved((was) => ({ ...was, parts: new Set([...was.parts, label.replace(/^(Moved|Added) /, '').split(',')[0] as string]) })),
   });
   const helperSite = site.platform === 'drupal' || site.platform === 'wordpress';
+  // What Layers lists: the page's parts once the trace that names them has come as well. A reload's parts are scanned
+  // a moment before its trace arrives, and in between every part only the trace names read "A part of the page" (a
+  // frame of it showed in every take that saved). Held at most 3 s, for a trace that never comes.
+  const traceWaited = helperSite && (trace === null || trace.state === 'none');
+  const [layered, setLayered] = useState({ regions, partName });
+  useEffect(() => {
+    if (!traceWaited) { setLayered({ regions, partName }); return undefined; }
+    const late = window.setTimeout(() => setLayered({ regions, partName }), 3000);
+    return () => window.clearTimeout(late);
+  }, [regions, partName, traceWaited]);
   const fetchTrace = useCallback(async (): Promise<void> => {
     if (!helperSite) { setTrace(null); return; }
     // A helper another Wanigan set up says so, rather than that there is none.
@@ -1176,9 +1186,9 @@ function LiveShown({ site, url, project, follow, card, compact, following, shots
                 <>
                   {/* A helper another Wanigan set up ignores this one: said first, where the owner looks, with the way out. */}
                   {!env && trace?.state === 'other' ? <TraceNote answer={trace} site={site} project={project} /> : null}
-                  {regions.length ? (
-                    <Layers regions={regions} components={components} selected={selection?.region?.index ?? null}
-                      changed={changed} onHover={hover} onSelect={select} partName={partName} onDevtools={(r) => void inspectIn(r.index)} />
+                  {layered.regions.length ? (
+                    <Layers regions={layered.regions} components={components} selected={selection?.region?.index ?? null}
+                      changed={changed} onHover={hover} onSelect={select} partName={layered.partName} onDevtools={(r) => void inspectIn(r.index)} />
                   ) : (
                     <NothingMarked platform={env ? null : site.platform} loading={!!view?.loading} hosted={!!env} />
                   )}

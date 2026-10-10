@@ -52,7 +52,7 @@ import { compileLayer, trySheet } from '../src/shared/design-layer.ts';
 import { siteColoursOf } from '../src/shared/site-colours.ts';
 import { fitProblems } from './ui-fit.mjs';
 import { pageScriptSource } from '../src/main/live-page-source.ts';
-import { ADMIN_ATTR, ADMIN_CSS, SITE_MESSAGES_CSS } from '../src/shared/live-admin.ts';
+import { ADMIN_ATTR, ADMIN_CSS, ADMIN_CSS_AT_ONCE, SITE_MESSAGES_CSS } from '../src/shared/live-admin.ts';
 
 const out = join(root, '.artifacts', 'live');
 
@@ -2245,6 +2245,11 @@ try {
     if (hidden.bars.some((d) => d !== 'none') || hidden.html !== '0px' || hidden.body !== '0px' || hidden.main !== '0px' || hidden.header !== '0px') fail(`admin bars: switched on, something stayed ${JSON.stringify(hidden)}`);
     await admin.evaluate((a) => document.documentElement.toggleAttribute(a, false), ADMIN_ATTR);
     if (JSON.stringify(await read()) !== JSON.stringify(before)) fail('admin bars: switched off, the page did not come back as it was');
+    // The rules for a page's first paint, before its switch can be set: the same, with no attribute needed.
+    const early = await admin.addStyleTag({ content: ADMIN_CSS_AT_ONCE });
+    if (JSON.stringify(await read()) !== JSON.stringify(hidden)) fail(`admin bars: the first-paint rules hide less than the switch does ${JSON.stringify(await read())}`);
+    await early.evaluate((el) => el.remove());
+    if (JSON.stringify(await read()) !== JSON.stringify(before)) fail('admin bars: taking the first-paint rules out did not bring the page back');
     await admin.close();
   }
   {

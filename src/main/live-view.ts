@@ -20,7 +20,7 @@ import { loopbackAddress } from '../shared/live-envs.ts';
 import type { LiveBounds, LiveViewState } from '../shared/bridge.ts';
 import { envId, hostedPage } from './live-compare-request.ts';
 import { PAGE_HAS_SCRIPT, pageScriptSource } from './live-page-source.ts';
-import { ADMIN_CSS, SITE_MESSAGES_CSS, adminSwitch, siteMessagesOf } from '../shared/live-admin.ts';
+import { ADMIN_CSS, ADMIN_CSS_AT_ONCE, SITE_MESSAGES_CSS, adminSwitch, siteMessagesOf } from '../shared/live-admin.ts';
 
 /** The isolated world the page script runs in: the page's own scripts cannot reach it. */
 const WORLD = 4242;
@@ -465,10 +465,19 @@ export function wireLiveView(options: {
       if (/^https?:\/\//i.test(url)) void shell.openExternal(url);
       return { action: 'deny' };
     });
+    // Hidden from the first paint when the owner asked: as soon as a new page commits, the rules go in without their
+    // switch, and once the switch is set (dom-ready) they come out again, so switching stays the attribute's alone.
+    let atOnce: Promise<string | null> | null = null;
+    wc.on('did-navigate', () => { if (hideAdmin) atOnce = wc.insertCSS(ADMIN_CSS_AT_ONCE, { cssOrigin: 'user' }).catch(() => null); });
+    const dropAtOnce = (): void => {
+      const key = atOnce;
+      atOnce = null;
+      void key?.then((k) => (k && !wc.isDestroyed() ? wc.removeInsertedCSS(k) : undefined)).catch(() => {});
+    };
     wc.on('dom-ready', () => {
       void inject();
       // The site's admin bars, hidden when the owner asked: the sheet goes into every page, inert until switched on.
-      void wc.insertCSS(ADMIN_CSS, { cssOrigin: 'user' }).then(() => (hideAdmin ? run(adminSwitch(true), false) : false)).catch(() => {});
+      void wc.insertCSS(ADMIN_CSS, { cssOrigin: 'user' }).then(() => (hideAdmin ? run(adminSwitch(true), false) : false)).then(dropAtOnce, dropAtOnce);
       // The site's own status messages, always hidden: their words are said Wanigan's way once the page has loaded.
       void wc.insertCSS(SITE_MESSAGES_CSS, { cssOrigin: 'user' }).catch(() => {});
     });

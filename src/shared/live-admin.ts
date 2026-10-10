@@ -28,6 +28,12 @@ export const ADMIN_CSS = [
 ].join('\n');
 
 /**
+ * The same rules without the switch, for the moment a page first paints: the attribute is set once the page's DOM is
+ * ready, and a reload painted the site's admin bars for a frame before it (seen in a take, after every save).
+ */
+export const ADMIN_CSS_AT_ONCE = ADMIN_CSS.split(on).join('html');
+
+/**
  * The site's own status messages, hidden in the view and in every render window, always: Drupal core prints them in the
  * page (`[data-drupal-messages]`, and the empty fallback core/misc/message.js fills), where they push the page down and
  * come and go between one render and the next (a one-time login's, a save's). Wanigan says their words instead, in a
