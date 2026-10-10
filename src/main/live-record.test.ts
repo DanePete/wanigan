@@ -189,3 +189,26 @@ test('narration is kept at the moment the words began, inside the recording, and
     rmSync(data, { recursive: true, force: true });
   }
 });
+
+test('the sentence heard just after Stop still joins the recording while it is saved, in time order', async () => {
+  const data = mkdtempSync(join(tmpdir(), 'wanigan-record-'));
+  try {
+    const r = setup(data, () => null);
+    await r.call('live:recordStart');
+    await wait(10);
+    r.tick(3_000);
+    assert.equal(await r.call('live:recordSay', 'First this.', T0 + 500), true);
+    const stopping = r.call('live:recordStop') as Promise<LiveRecording>;
+    // Voice input finishes the last sentence a moment later: it began at 2.6 s, before the stop.
+    assert.equal(await r.call('live:recordSay', 'And then it breaks.', T0 + 2_600), true);
+    const rec = await stopping;
+    assert.deepEqual(rec.steps.filter((s) => s.type === 'said').map((s) => s.at), [500, 2_600]);
+    assert.deepEqual(rec.steps.map((s) => s.at), [...rec.steps.map((s) => s.at)].sort((a, b) => a - b), 'the log stays in time order');
+    const kept = JSON.parse(readFileSync(join(rec.folder, 'recording.json'), 'utf8')) as LiveRecording;
+    assert.equal(kept.steps.filter((s) => s.type === 'said').length, 2, 'written to disk with it');
+    // Once it is saved, narration has nowhere to go.
+    assert.equal(await r.call('live:recordSay', 'Too late.', T0 + 2_900), false);
+  } finally {
+    rmSync(data, { recursive: true, force: true });
+  }
+});
