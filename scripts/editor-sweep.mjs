@@ -313,9 +313,9 @@ try {
       await page.goto(`${base}#/p/${ns}/live`);
       await page.waitForSelector('.live-bar', { timeout: 8000 }).catch(() => fail('the live view did not open'));
       // Picked once the page has loaded and its parts are known, as the owner would.
-      await page.waitForSelector('.live-side .live-layer', { timeout: 8000 }).catch(() => fail('the live view listed no parts'));
+      await page.waitForSelector('.live-structure .live-layer', { timeout: 8000 }).catch(() => fail('the live view listed no parts'));
       await page.waitForTimeout(400);
-      await page.click('.live-bar button:has-text("Pick")');
+      await page.click('.live-bar button[aria-keyshortcuts="P"]');
       // Code, one of the four verbs on the part (its key is .): the template, at the words picked.
       await page.waitForSelector('.live-verbs button[aria-keyshortcuts="."]:not([disabled])', { timeout: 8000 }).catch(() => fail('a picked part has no Code'));
       await page.focus('.live-inspector .live-side-title');
@@ -381,7 +381,8 @@ try {
       if (tabs.join() !== 'Board,Sessions,Changes,Code,Live') fail(`the project's tabs are ${tabs.join(', ')}`);
       await page.click('.topbar .project-more');
       const more = await page.$$eval('.menu-list [role="menuitemradio"]', (items) => items.map((i) => i.querySelector('.sel-text')?.textContent?.trim()));
-      if (more.join() !== 'History,Decisions,Activity,List') fail(`the project's other views are ${more.join(', ')}`);
+      // List is the board's other mode (its toolbar's Board | List), so ··· holds the rest.
+      if (more.join() !== 'History,Decisions,Activity') fail(`the project's other views are ${more.join(', ')}`);
       await page.keyboard.press('Escape');
       const tip = await page.getAttribute('.topbar .tabs a:text-is("Code")', 'data-tip');
       if (tip !== 'Code (G then E)') fail(`the Code tab's tip is "${tip}"`);
@@ -532,9 +533,8 @@ try {
       await page.waitForSelector('.editor-tab.active:not(.unsaved)', { timeout: 3000 }).catch(() => fail('Revert left the file unsaved'));
 
       // ⌘J on the Code tab puts the editor away: back to the view before it, the drawer closed.
-      await page.click('.topbar .project-more');
-      await page.click('.menu-list [role="menuitemradio"]:has-text("List")');
-      await page.waitForSelector('.table tbody tr');
+      await page.click('nav[aria-label="Show the cards as"] a:text-is("List")');
+      await page.waitForSelector('.list-table tbody tr[data-key]');
       await page.click('.topbar .tabs a:text-is("Code")');
       await page.waitForSelector('.editor-drawer[data-mode="page"]');
       await page.keyboard.press('Meta+j');

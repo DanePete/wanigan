@@ -1,8 +1,8 @@
-// The page's parts as layers: what holds what, named the way the site names
-// them. Pointing at a row outlines the part on the page; choosing it opens its
-// details beside the tree, which marks it (however it was chosen) and brings
-// it into view. Folded, the tree shows only the way down to the chosen part;
-// unfolded again it is as it was. Arrow keys walk the tree as in any tree
+// The page's parts as layers, in the Structure panel: what holds what, named
+// the way the site names them. Pointing at a row outlines the part on the page;
+// choosing it opens its details in the Inspector, and the tree marks it
+// (however it was chosen) and brings it into view. Folded (`fold`), the tree
+// shows only the way down to the chosen part; unfolded again it is as it was. Arrow keys walk the tree as in any tree
 // (WAI-ARIA tree pattern). Show in DevTools stands beside the row pointed at
 // or walked to (one button, after the tree, so the tree holds only its rows):
 // ⇧D on a row does the same.
@@ -12,7 +12,8 @@ import { liveKey } from '@shared/live-keys';
 import { nameOf, type LiveKind } from '@shared/live-names';
 import { layersOf, pathTo, type Layer } from '@shared/live-tree';
 import { Icon, type IconName } from '../icons';
-import { IconButton } from '../ui';
+import { IconButton, Toggle } from '../ui';
+import { LIVE_TIP } from './keys';
 
 export const KIND_ICON: Record<LiveKind, IconName> = {
   component: 'pieces', content: 'content', field: 'field', block: 'block', region: 'region', view: 'list', menu: 'menu',
@@ -196,7 +197,7 @@ export function Layers({ regions, components, selected, fold = false, changed, o
             <li key={layer.key} role="treeitem" aria-level={depth + 1} aria-selected={chosen}
               aria-expanded={layer.children.length ? isOpen : undefined} tabIndex={layer.key === current ? 0 : -1} data-key={layer.key}
               className={`live-layer${chosen ? ' on' : ''}${theirs ? ' theirs' : ''}`} style={{ '--depth': depth } as CSSProperties}
-              title={layer.merged.length ? layer.merged.map((m) => nameOf(m).title).join(' › ') : undefined}
+              data-tip={layer.merged.length ? layer.merged.map((m) => nameOf(m).title).join(' › ') : undefined} data-tip-side="right"
               onFocus={() => { setFocus(layer.key); setPointedKey(null); }}
               onMouseEnter={(e) => { if (pointed(e)) { onHover(layer.regions, label); setPointedKey(layer.key); } }}
               onClick={() => { setFocus(layer.key); onSelect(layer.region); }}>
@@ -209,21 +210,18 @@ export function Layers({ regions, components, selected, fold = false, changed, o
               <Icon name={KIND_ICON[layer.name.icon]} size={14} className="live-layer-icon" />
               <span className="live-layer-title">{layer.name.title}</span>
               {layer.regions.length > 1 ? <span className="live-layer-count">×{layer.regions.length}</span> : null}
-              {changedKeys.has(layer.key) ? <span className="live-layer-changed" title="The last edit changed this" /> : null}
+              {changedKeys.has(layer.key) ? <span className="live-layer-changed" role="img" aria-label="The last edit changed this" /> : null}
             </li>
           );
         })}
       </ul>
       {onDevtools && actRow && actAt ? (
         <span className="live-layer-act" style={{ top: actAt.top, height: actAt.height }}>
-          <IconButton icon="devtools" label={`Show ${actRow.layer.name.title} in DevTools (⇧D)`} aria-keyshortcuts="Shift+D"
+          <IconButton icon="devtools" size="s" label={`Show ${actRow.layer.name.title} in DevTools`} keys={LIVE_TIP.devtools} tipSide="right"
             onClick={() => onDevtools(actRow.layer.region)} />
         </span>
       ) : null}
-      <label className="live-layers-all small">
-        <input type="checkbox" checked={all} onChange={toggleAll} />
-        Show icons, images and form fields too
-      </label>
+      <Toggle className="live-layers-all" checked={all} onChange={toggleAll} label="Icons, images and form fields too" />
     </div>
   );
 }

@@ -9,17 +9,18 @@
 // or closed, height and dock are left as they were, to come back when the tab
 // is left. One editor, never a second: nothing here remounts between the two.
 //
-// In the live view the drawer is its dock: tabs for Code and for what the view
-// adds (its notes, problems and request, drawn here by components/live/Dock.tsx
-// through `useDockHost`). Closed there, a strip of those tabs stays under the
-// page; ⇧[ and ⇧] open it, then step through them. ⌘J stays the code editor's.
+// In the live view the drawer is its dock: Code and what the view adds (its
+// notes, problems, request and DevTools, drawn here by components/live/Dock.tsx
+// through `useDockHost`). Their tabs wait in the status line, open or closed
+// (Dock.tsx DockTabs); ⇧[ and ⇧] open the dock, then step through them. ⌘J stays
+// the code editor's.
 // Design: docs/design/2026-10-09-code-editor.md, docs/design/2026-10-08-live-view.md.
 import { Suspense, lazy, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type MouseEvent, type PointerEvent } from 'react';
 import type { ProjectSummary } from '@shared/model';
 import { shortcutFor } from '@shared/shortcuts';
 import { bridge, useQuery } from '../lib/api';
 import { Icon } from '../components/icons';
-import { Button, Dialog, Empty, IconButton, KeyCaps, Segmented } from '../components/ui';
+import { Button, Dialog, Empty, IconButton, KeyCaps } from '../components/ui';
 import { ViewBoundary } from '../components/ViewBoundary';
 import { FileTree, focusFileTree } from './FileTree';
 import { MIN_SIZE, setPrefs, useEditorPrefs } from './prefs';
@@ -113,20 +114,8 @@ export function EditorDrawer({ project, page = false }: {
   const files = tabs.length === 1 ? (tabs[0]?.path.split('/').pop() ?? '') : `${tabs.length} files`;
   return (
     <>
-      {project && !visible && !onPage && docked.length > 1 ? (
-        // The live view's dock, closed: its tabs stay under the page, each opening it there.
-        <div className="dock-collapsed dock-tabs" role="group" aria-label="The dock beneath the page, closed: open it on">
-          {docked.map((t) => (
-            <button key={t.id} type="button" className="dock-collapsed-tab" onClick={() => showDock(t.id)}
-              title={t.id === CODE_TAB.id ? `The code editor (${mac ? '⌘J' : 'Ctrl+J'})` : t.hint ?? `Open the dock on ${t.label}`}>
-              {t.id === CODE_TAB.id ? <Icon name="code" size={14} /> : null}
-              <span>{t.id === CODE_TAB.id && tabs.length ? `Code · ${files}` : t.label}</span>
-              {t.id === CODE_TAB.id && unsavedHere ? <span className="editor-collapsed-unsaved">{unsavedHere} unsaved</span> : null}
-            </button>
-          ))}
-          <span className="dock-collapsed-keys faint" aria-hidden="true"><kbd>⇧[</kbd> <kbd>⇧]</kbd></span>
-        </div>
-      ) : project && !visible && !onPage && tabs.length ? (
+      {/* The live view's dock, closed: its tabs wait in the status line (components/live/Dock.tsx DockTabs), each opening it. */}
+      {project && !visible && !onPage && docked.length > 1 ? null : project && !visible && !onPage && tabs.length ? (
         <button type="button" className="editor-collapsed" onClick={() => showDock(CODE_TAB.id)} title={`Show the code editor (${mac ? '⌘J' : 'Ctrl+J'})`}>
           <Icon name="code" size={14} />
           <span>Code · {files}</span>
@@ -149,11 +138,8 @@ export function EditorDrawer({ project, page = false }: {
         ) : null}
         {project ? (
           <header className="editor-head">
-            {!onPage && docked.length > 1 ? (
-              <div className="dock-tabs">
-                <Segmented<string> size="s" label="Show in the dock" value={shows ?? CODE_TAB.id} options={docked.map((t) => ({ value: t.id, label: t.label, hint: t.hint }))} onChange={showDock} />
-              </div>
-            ) : null}
+            {/* The live view's tabs are in the status line; here, which one the dock shows. */}
+            {!onPage && docked.length > 1 && !code ? <h2 className="dock-title">{docked.find((t) => t.id === shows)?.label ?? 'The dock'}</h2> : null}
             {code ? (
             <nav className="editor-tabs" aria-label="Open files">
               <ul>

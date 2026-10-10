@@ -487,11 +487,9 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   const [latestId, setLatestId] = useState<number | null>(null);
   const [floating, setFloating] = useState<Floating[]>([]);
   const [lines, setLines] = useState(0);
-  const [ownLines, setOwnLines] = useState(0);
   const [slot, setSlot] = useState<HTMLElement | null>(null);
   const [, setTick] = useState(0);
   const linesNow = useRef(0);
-  const ownNow = useRef(0);
   const next = useRef(1);
 
   const dismissFloating = useCallback((id: number) => setFloating((t) => t.filter((x) => x.id !== id)), []);
@@ -505,7 +503,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
     const action = options?.action ?? null;
     const now = Date.now();
     const urgent = tone === 'error' && !!action;
-    const onScreen = linesNow.current > 0 && ownNow.current === 0;
+    const onScreen = linesNow.current > 0;
     setList((current) => {
       // The same failure again is counted, not repeated; so is the same outcome within a moment.
       const same = current.find((n) => n.text === text && n.tone === tone && (tone === 'error' || now - n.at < 2000));
@@ -552,11 +550,6 @@ export function ToastProvider({ children }: { children: ReactNode }) {
     setLines(linesNow.current);
     return () => { linesNow.current--; setLines(linesNow.current); };
   }, []);
-  const ownLine = useCallback(() => {
-    ownNow.current++;
-    setOwnLines(ownNow.current);
-    return () => { ownNow.current--; setOwnLines(ownNow.current); };
-  }, []);
 
   const value = useMemo(() => {
     const latest = latestId === null ? null : list.find((n) => n.id === latestId) ?? null;
@@ -572,12 +565,12 @@ export function ToastProvider({ children }: { children: ReactNode }) {
       clear: () => { setList([]); setLatestId(null); },
       markRead: () => setList((l) => (l.some((n) => !n.read) ? l.map((n) => ({ ...n, read: true })) : l)),
       quiet: () => setLatestId(null),
-      lines, ownLines, showLine, ownLine, slot, setSlot,
+      lines, showLine, slot, setSlot,
     };
-  }, [list, latestId, dismiss, settle, act, lines, ownLines, showLine, ownLine, slot]);
+  }, [list, latestId, dismiss, settle, act, lines, showLine, slot]);
 
   // A failure waiting for its Retry floats only where no status line can hold it; where one can, it moves there.
-  const lineShown = lines > 0 && ownLines === 0;
+  const lineShown = lines > 0;
   const urgentIds = new Set(value.urgent.map((n) => n.id));
   const urgentFloating = lineShown ? [] : value.urgent.filter((n) => !floating.some((t) => t.id === n.id));
   const floats = lineShown ? floating.filter((t) => !urgentIds.has(t.id)) : floating;

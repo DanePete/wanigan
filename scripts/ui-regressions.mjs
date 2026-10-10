@@ -649,6 +649,8 @@ try {
       };
     }, async (page) => {
       await page.goto(`${base}#/p/NS/board?card=NS-13`);
+      // The card's branch is the drawer's Branch tab.
+      await page.locator('.drawer [role="tab"]', { hasText: 'Branch' }).click();
       await page.waitForSelector('.drawer .branch-line');
       const branch = page.locator('.drawer .branch-line').locator('..');
       await page.waitForFunction(() => !document.querySelector('.drawer .branch-line')?.parentElement.textContent.includes('Reading changes'));
@@ -737,6 +739,8 @@ try {
     }, async (page) => {
       await page.goto(`${base}#/p/NS/board?card=NS-7`);
       await page.waitForSelector('#criterion-new');
+      // The project's changes are under the drawer's Branch tab, for a card with no branch of its own.
+      await page.locator('.drawer [role="tab"]', { hasText: 'Branch' }).click();
       await page.waitForFunction(() => window.__changesRead);
       await page.evaluate(() => new Promise(requestAnimationFrame));
       assert.match(await page.locator('.drawer').textContent(), /Project changes could not be read/);
@@ -754,6 +758,7 @@ try {
       };
     }, async (page) => {
       await page.goto(`${base}#/p/NS/board?card=NS-13`);
+      await page.locator('.drawer [role="tab"]', { hasText: 'Branch' }).click();
       await page.locator('.drawer').getByRole('button', { name: 'Remove branch', exact: true }).click();
       assert.equal(await page.evaluate(() => window.__removeBranchCalls), 0, 'opening confirmation must not remove anything');
       const confirm = page.getByRole('dialog', { name: 'Remove branch and worktree?' });

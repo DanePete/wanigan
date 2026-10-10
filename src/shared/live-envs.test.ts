@@ -15,7 +15,7 @@ test('a hosted address is https, with no credentials, no query and not this Mac'
   assert.match(hostedUrl('https://www.acme.example/?token=abc').refused ?? '', /query/);
   // Found in a project's files, an address on this Mac is the local site or a tool's, not another environment.
   for (const local of ['https://localhost:8443', 'https://acme.ddev.site', 'https://acme.lndo.site', 'https://127.0.0.1', 'https://intranet']) {
-    assert.match(hostedUrl(local).refused ?? '', /on this Mac/, local);
+    assert.match(hostedUrl(local).refused ?? '', /on this computer/, local);
     // Typed by the owner, it may be a copy of the site on this Mac (Live's database under another name): the core
     // refuses only the Local tab's own address.
     assert.equal(hostedUrl(local, { onThisMac: true }).refused, null, local);
@@ -29,7 +29,7 @@ test('a hosted address is https, with no credentials, no query and not this Mac'
 test('a tab’s name is short and plain, and Local is taken', () => {
   assert.deepEqual(envName('  Live '), { name: 'Live', refused: null });
   assert.deepEqual(envName('QA 2'), { name: 'QA 2', refused: null });
-  assert.match(envName('local').refused ?? '', /Local is the site on this Mac/);
+  assert.match(envName('local').refused ?? '', /Local is the site on this computer/);
   assert.match(envName('').refused ?? '', /Give the environment a name/);
   assert.match(envName('<b>Live</b>').refused ?? '', /up to 24/);
   assert.match(envName('x'.repeat(25)).refused ?? '', /up to 24/);

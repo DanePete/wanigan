@@ -1,0 +1,57 @@
+name: A site edit was refused or landed wrong
+description: The live editor refused a change, saved it somewhere unexpected, or Verify disagreed with what you see.
+labels: [live-view]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you: every site built a different way teaches the editor something.
+        **Keep private sites private.** Don't paste a client's or your own site's address, page text or screenshots.
+        Describe the kind of part instead ("a paragraph inside a reusable block"), or reproduce it on a fresh install
+        or Wanigan's demo sites if you can.
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      options: [Drupal, WordPress]
+    validations:
+      required: true
+  - type: input
+    id: platform-version
+    attributes:
+      label: Platform version
+      placeholder: "Drupal 11.2, or WordPress 6.8 with PHP 8.3"
+    validations:
+      required: true
+  - type: textarea
+    id: built
+    attributes:
+      label: How the part is built
+      description: The kind of thing, without names from a private site. For example "a field on a node", "a block placed in Layout Builder", "a Paragraphs item", "a block in a synced pattern", "an Elementor widget", "a menu link".
+    validations:
+      required: true
+  - type: textarea
+    id: said
+    attributes:
+      label: What Wanigan said or did
+      description: Its words (a refusal says whether core keeps no such thing or Wanigan doesn't do it yet), where the change went, or the Verify verdict.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Wanigan version
+      description: Settings › Updates shows it.
+    validations:
+      required: true
+  - type: input
+    id: helper
+    attributes:
+      label: Plugins or modules involved
+      description: Public ones only (a page builder, a fields plugin), with their versions, if you think they matter.

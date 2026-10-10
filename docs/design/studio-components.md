@@ -222,7 +222,6 @@ Where detail waits: a heading that is its button, with a quiet `summary` beside 
 | An outcome with an action (Undo) | The status line offers the action for 12 s; so does the tray. |
 | A failure without an action | The status line, in red, until another outcome or the owner puts it away; the tray (the bell turns red). |
 | A failure with an action (Retry) | A **toast** in the status line's own place, above it, until done or dismissed; then it stays in the tray. |
-| A view with its own status line (`useOwnStatusLine`) | The frame's line steps aside there, and outcomes float as toasts, as before Studio. |
 
 ### `StatusLine` and `StatusSlot` (StatusLine.tsx)
 
@@ -234,9 +233,9 @@ and the ? that opens the keys. A view fills the end with `StatusSlot`, drawn the
 <StatusSlot><Segmented size="s" … /> or the dock's tabs, a count, a mode</StatusSlot>
 ```
 
-`lib/notices.ts` has the store (`useNotices()`: the list, the latest, unread counts) and `useOwnStatusLine(active)`,
-which the live view uses until its pass moves `.live-status` into the frame's line: delete that call and render
-the live view's message through `toast()` and its keys and dock tabs through `StatusSlot`.
+`lib/notices.ts` has the store (`useNotices()`: the list, the latest, unread counts). Every view, the live editor
+included, says its outcomes through `toast()` and puts its own tabs, modes and counts at the line's end through
+`StatusSlot`; no view draws a status line of its own.
 
 ### `NotificationBell` (NotificationTray.tsx)
 

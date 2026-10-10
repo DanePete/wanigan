@@ -1,6 +1,29 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { dropSlot, finalIndex, pairParts } from './live-page.ts';
+import { readFileSync } from 'node:fs';
+import { parseColour, themeTokens } from '../../shared/contrast.ts';
+import { ACTION_BAR, PAGE_COLORS, dropSlot, finalIndex, pairParts } from './live-page.ts';
+
+test('what the page script draws in the site’s page carries the Studio tokens’ values, in both themes', () => {
+  // The outline, the chosen part's name chip and its action bar are drawn where the window's CSS cannot reach: their
+  // colours are written into the page script, and must stay the ones tokens.css says.
+  const themes = themeTokens(readFileSync(new URL('./styles/tokens.css', import.meta.url), 'utf8'));
+  for (const theme of ['light', 'dark'] as const) {
+    for (const [name, value] of Object.entries(PAGE_COLORS[theme])) {
+      const token = themes[theme].get(`--${name}`);
+      assert.ok(token, `${theme}: tokens.css has no --${name}`);
+      if (name.startsWith('elev-')) assert.equal(value.replace(/\s+/g, ' '), token.replace(/\s+/g, ' '), `${theme}: --${name}`);
+      else assert.deepEqual(parseColour(value, themes[theme]), parseColour(token, themes[theme]), `${theme}: --${name} is ${token}, the page script draws ${value}`);
+    }
+  }
+  // Never amber in the page: amber means something needs the owner.
+  assert.ok(!JSON.stringify(PAGE_COLORS).match(/amber|#E09A26|#F2A93B|#985600/i));
+});
+
+test('the chosen part’s action bar holds what the spec says, each answering the window as a key or a gesture', () => {
+  assert.deepEqual(ACTION_BAR.map((a) => a.label), ['Style', 'Move', 'Take out', 'Ask an agent']);
+  assert.deepEqual(ACTION_BAR.map((a) => a.id), ['style', 'move', 'take-out', 'ask']);
+});
 
 test('a part holding the same content as a region gives that region its id', () => {
   const { byRegion, alone } = pairParts(

@@ -109,6 +109,30 @@ export function finalIndex(positions: readonly number[], slot: number, count: nu
   return (positions[positions.length - 1] as number) + 1;
 }
 
+/**
+ * The Studio tokens' values the page script draws with (src/renderer/src/styles/tokens.css, light and dark): the
+ * outline, the chosen part's name chip and its action bar are drawn inside the site's page, where the window's CSS
+ * cannot reach, so they carry the same values as text here. live-page.test.ts reads tokens.css and holds them equal.
+ * Never amber: in Wanigan, amber means something needs the owner.
+ */
+export const PAGE_COLORS = {
+  light: {
+    water: '#1E6FD9', 'water-fill': '#1E6FD9', 'water-ink': '#FFFFFF', 'water-text': '#1A62C0', 'water-soft': 'rgb(30 111 217 / 0.1)',
+    raised: '#FFFFFF', fg: '#111A22', muted: '#4C5967', hover: '#EAEEF2',
+    'elev-float': '0 10px 28px rgb(16 26 36 / 0.16), 0 0 0 1px rgb(16 26 36 / 0.06)',
+  },
+  dark: {
+    water: '#4D9BFF', 'water-fill': '#2B74D6', 'water-ink': '#FFFFFF', 'water-text': '#4D9BFF', 'water-soft': 'rgb(77 155 255 / 0.16)',
+    raised: '#172028', fg: '#E8EDF2', muted: '#A9B5C1', hover: '#1F2830',
+    'elev-float': '0 10px 30px rgb(0 0 0 / 0.55), 0 0 0 1px rgb(255 255 255 / 0.08)',
+  },
+} as const;
+
+/** The chosen part's action bar, drawn in the page: what each button answers the window (live-page-goto.ts answerWindow). */
+export const ACTION_BAR: readonly { id: 'style' | 'move' | 'take-out' | 'ask'; label: string }[] = [
+  { id: 'style', label: 'Style' }, { id: 'move', label: 'Move' }, { id: 'take-out', label: 'Take out' }, { id: 'ask', label: 'Ask an agent' },
+];
+
 export function livePage(): void {
   type Rect = { x: number; y: number; width: number; height: number };
   type Info = {
@@ -126,8 +150,11 @@ export function livePage(): void {
   type Landing =
     | { kind: 'collection'; c: SpecCollection; index: number; line: Box; across: boolean; ref: number | null; place: 'before' | 'after' | 'into' }
     | { kind: 'sibling'; ref: number; place: 'before' | 'after'; line: Box; across: boolean };
-  /** `type`: the element being typed on. */
-  type Tone = 'edit' | 'pick' | 'hover' | 'type';
+  /**
+   * `pick`: the chosen part (its name chip and action bar); `edit`: what an edit changed; `hover`: pointed at in the
+   * window; `aim`: under the pointer while selecting on the page; `type`: the element being typed on.
+   */
+  type Tone = 'edit' | 'pick' | 'hover' | 'aim' | 'type';
 
   const w = window as unknown as { __wl?: unknown };
   if (w.__wl) return;
@@ -145,9 +172,9 @@ export function livePage(): void {
   const PART_END = /^\s*\/wl:part id="([^"]{1,200})"\s*$/;
   /** Past this many, a region's parent is not worked out: the page is a runaway, not a site. */
   const MAX_NESTED = 900;
-  // Wanigan's water blue for what changed and what is pointed at; a deeper blue for what is being picked. Never amber:
-  // in Wanigan, amber means something needs the owner.
-  const COLORS: Record<Tone, string> = { edit: '#63b3e4', hover: '#63b3e4', pick: '#2f86c9', type: '#2f86c9' };
+  /** Studio's values for the colour scheme the page is shown in (PAGE_COLORS): the window's own unless Wanigan's theme is set apart from the system's. */
+  const studio = (): (typeof PAGE_COLORS)['light'] | (typeof PAGE_COLORS)['dark'] => (matchMedia('(prefers-color-scheme: dark)').matches ? PAGE_COLORS.dark : PAGE_COLORS.light);
+  const FONT = 'system-ui,-apple-system,"Segoe UI",Roboto,sans-serif';
 
   let regions: Region[] = [];
   let picking: { resolve: (v: unknown) => void; cleanup: () => void } | null = null;
@@ -165,7 +192,7 @@ export function livePage(): void {
   } | null = null;
   /** Parts moved on the page to show a new order before it is saved, and where each was. */
   const previews: { nodes: Node[]; marker: Comment }[] = [];
-  const DRAG = '#2f86c9';
+  const DRAG = (): string => studio()['water-fill'];
   let hovered: Element | null = null;
   let frame = 0;
   let mutations = 0;
@@ -410,22 +437,93 @@ export function livePage(): void {
     return el.shadowRoot as ShadowRoot;
   }
 
-  function box(root: ShadowRoot, rect: DOMRect, label: string, tone: Tone): void {
-    const color = COLORS[tone];
-    const b = document.createElement('div');
-    b.style.cssText = `position:absolute;left:${rect.left}px;top:${rect.top}px;width:${rect.width}px;height:${rect.height}px;box-sizing:border-box;`
-      // Around the words being typed, not over them: the caret at their end stays in sight.
-      + `outline:2px ${tone === 'hover' ? 'dashed' : 'solid'} ${color};outline-offset:${tone === 'type' ? 3 : -1}px;`
-      + `background:${tone === 'pick' ? 'rgba(47,134,201,0.12)' : tone === 'edit' ? 'rgba(99,179,228,0.08)' : 'transparent'};`;
-    if (label) {
-      const tag = document.createElement('span');
-      tag.textContent = label;
-      const above = rect.top > 22;
-      tag.style.cssText = `position:absolute;left:-1px;top:${above ? -21 : 0}px;max-width:min(520px,100vw);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;`
-        + `font:500 11px/19px -apple-system,system-ui,sans-serif;padding:0 6px;color:${tone === 'pick' || tone === 'type' ? '#ffffff' : '#06131c'};background:${color};border-radius:${above ? '3px 3px 0 0' : '0 0 3px 0'};`;
-      b.appendChild(tag);
+  /** A small label drawn at a box's corner: the chosen part's name in water, anything else on the raised surface. */
+  function chip(rect: DOMRect, text: string, strong: boolean): HTMLElement {
+    const c = studio();
+    const tag = document.createElement('span');
+    tag.textContent = text;
+    const above = rect.top > 30;
+    tag.style.cssText = `position:absolute;left:${Math.max(4, rect.left - 2)}px;top:${above ? rect.top - 26 : Math.max(4, rect.top + 4)}px;max-width:min(460px,calc(100vw - 16px));`
+      + 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;box-sizing:border-box;'
+      + `font:500 11px/20px ${FONT};padding:0 8px;border-radius:6px;letter-spacing:0;`
+      + (strong ? `color:${c['water-ink']};background:${c['water-fill']};` : `color:${c['water-text']};background:${c.raised};box-shadow:${c['elev-float']};`);
+    return tag;
+  }
+
+  /**
+   * The chosen part's action bar, floating above its right edge (below it when there is no room above): Style, Move,
+   * Take out, Ask an agent. A press answers the window, which acts as its button there does; the page never hears it.
+   */
+  const BAR_H = 32;
+  /** The bar, made once and kept across redraws (a page that changes itself redraws often), so a press is never lost between down and up. */
+  let bar: { el: HTMLElement; dark: boolean } | null = null;
+  function actionBar(): HTMLElement {
+    const c = studio();
+    const bar = document.createElement('div');
+    bar.setAttribute('role', 'toolbar');
+    bar.setAttribute('aria-label', 'For the chosen part');
+    bar.style.cssText = `position:absolute;z-index:1;display:flex;gap:2px;padding:3px;box-sizing:border-box;height:${BAR_H}px;`
+      + `border-radius:10px;background:${c.raised};box-shadow:${c['elev-float']};pointer-events:auto;font:500 12px/1 ${FONT};`;
+    for (const a of ACTION_BAR) {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.tabIndex = -1;
+      b.textContent = a.label;
+      const ask = a.id === 'ask';
+      const rest = ask ? `background:${c['water-soft']};color:${c['water-text']};` : `background:transparent;color:${c.fg};`;
+      b.style.cssText = `all:unset;box-sizing:border-box;display:inline-flex;align-items:center;gap:5px;height:26px;padding:0 9px;border-radius:7px;cursor:pointer;font:500 12px/1 ${FONT};white-space:nowrap;${rest}`;
+      if (ask) {
+        const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+        svg.setAttribute('width', '13'); svg.setAttribute('height', '13'); svg.setAttribute('viewBox', '0 0 24 24'); svg.setAttribute('aria-hidden', 'true');
+        const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+        path.setAttribute('d', 'M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z');
+        path.setAttribute('fill', 'currentColor');
+        svg.appendChild(path);
+        b.prepend(svg);
+      }
+      b.addEventListener('pointerenter', () => { if (!ask) b.style.background = c.hover; });
+      b.addEventListener('pointerleave', () => { if (!ask) b.style.background = 'transparent'; });
+      const keep = (e: Event): void => { e.preventDefault(); e.stopPropagation(); };
+      for (const name of ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'dblclick', 'auxclick']) b.addEventListener(name, keep);
+      b.addEventListener('click', (e) => {
+        keep(e);
+        const wl = (window as unknown as { __wl?: { answerWindow?: (id: string) => boolean } }).__wl;
+        wl?.answerWindow?.(a.id);
+      });
+      bar.appendChild(b);
     }
+    return bar;
+  }
+
+  /** Put the bar over the chosen part (above it, or below it when there is no room), made again only when the colour scheme changed; null takes it away. */
+  function placeBar(root: ShadowRoot, rect: DOMRect | null, name: HTMLElement | null = null): void {
+    if (!rect) { bar?.el.remove(); return; }
+    const dark = matchMedia('(prefers-color-scheme: dark)').matches;
+    if (!bar || bar.dark !== dark) { bar?.el.remove(); bar = { el: actionBar(), dark }; }
+    const below = rect.bottom + BAR_H + 16 < innerHeight ? rect.bottom + 8 : null;
+    const top = rect.top > BAR_H + 14 ? rect.top - BAR_H - 8 : below ?? Math.max(4, rect.top + 4);
+    bar.el.style.top = `${top}px`;
+    bar.el.style.right = `${Math.max(4, innerWidth - rect.right - 2)}px`;
+    if (bar.el.parentNode !== root) root.appendChild(bar.el);
+    // A narrow part: its name and its bar would meet above it, so the bar goes under it instead.
+    const a = name?.getBoundingClientRect();
+    const b = bar.el.getBoundingClientRect();
+    if (a && below !== null && a.right > b.left - 4 && a.left < b.right && a.bottom > b.top && a.top < b.bottom) bar.el.style.top = `${below}px`;
+  }
+
+  function box(root: ShadowRoot, rect: DOMRect, label: string, tone: Tone, withBar = false): boolean {
+    const c = studio();
+    const b = document.createElement('div');
+    const outline = tone === 'hover' ? `1.5px dashed ${c.water}` : tone === 'edit' ? `1.5px solid ${c.water}` : `2px solid ${c.water}`;
+    b.style.cssText = `position:absolute;left:${rect.left}px;top:${rect.top}px;width:${rect.width}px;height:${rect.height}px;box-sizing:border-box;`
+      // Around the chosen part and the words being typed, not over them: the caret at their end stays in sight.
+      + `outline:${outline};outline-offset:${tone === 'pick' || tone === 'type' ? 3 : -1}px;border-radius:2px;`
+      + `background:${tone === 'aim' ? c['water-soft'] : 'transparent'};`;
     root.appendChild(b);
+    const name = label ? chip(rect, label, tone === 'pick' || tone === 'type' || tone === 'aim') : null;
+    if (name) root.appendChild(name);
+    if (withBar) placeBar(root, rect, name);
+    return withBar;
   }
 
   /** `#rrggbb` at an opacity. */
@@ -447,7 +545,7 @@ export function livePage(): void {
       const tag = document.createElement('span');
       tag.textContent = p.label;
       tag.style.cssText = 'position:absolute;left:2px;top:2px;max-width:calc(100% - 4px);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;'
-        + `font:500 11px/17px -apple-system,system-ui,sans-serif;padding:0 5px;border-radius:3px;color:${light ? '#0b1014' : '#ffffff'};background:${p.color};`;
+        + `font:500 11px/17px ${FONT};padding:0 5px;border-radius:3px;color:${light ? '#0b1014' : '#ffffff'};background:${p.color};`;
       b.appendChild(tag);
     }
     root.appendChild(b);
@@ -464,7 +562,9 @@ export function livePage(): void {
     const existing = document.getElementById(HOST_ID)?.shadowRoot ?? null;
     const root = existing ?? (shown || hovered || painted.length || arranging || typing ? host() : null);
     if (!root) return;
-    root.replaceChildren();
+    // Everything drawn again, but the chosen part's bar, which is moved rather than made again.
+    for (const n of [...root.childNodes]) if (n !== bar?.el) n.remove();
+    let barShown = false;
     for (const p of painted) {
       const r = regions[p.index];
       const rect = r ? viewRect(r) : null;
@@ -472,18 +572,24 @@ export function livePage(): void {
     }
     // While words are typed, their element's own outline says so; the chosen part's would sit over it.
     if (shown && !typing) {
+      // The chosen part's action bar, while nothing else has the page: not while selecting, dragging or placing.
+      const bar = shown.tone === 'pick' && shown.indexes.length === 1 && !picking && !dragging && !arranging?.spec.placing;
       for (const i of shown.indexes) {
         const r = regions[i];
         const rect = r ? viewRect(r) : null;
-        if (r && rect && rect.bottom > 0 && rect.top < innerHeight) box(root, rect, shown.label ?? labelOf(info(r)), shown.tone);
+        if (r && rect && rect.bottom > 0 && rect.top < innerHeight) barShown = box(root, rect, shown.label ?? labelOf(info(r)), shown.tone, bar) || barShown;
       }
     }
     if (hovered?.isConnected) {
       const innermost = around(hovered)[0];
-      box(root, hovered.getBoundingClientRect(), innermost ? labelOf(info(innermost)) : hovered.tagName.toLowerCase(), 'pick');
+      box(root, hovered.getBoundingClientRect(), innermost ? labelOf(info(innermost)) : hovered.tagName.toLowerCase(), 'aim');
     }
     if (arranging) drawArrange(root);
-    if (typing?.el.isConnected) box(root, typing.el.getBoundingClientRect(), 'Typing · Enter keeps · Esc puts back', 'type');
+    if (typing?.el.isConnected) {
+      const name = shown?.tone === 'pick' && shown.label ? `${shown.label} · ` : '';
+      box(root, typing.el.getBoundingClientRect(), `${name}typing · Enter keeps · Esc puts back`, 'type');
+    }
+    if (!barShown) placeBar(root, null);
   }
 
   /* ── moving parts by hand ────────────────────────────────────────────── */
@@ -552,9 +658,9 @@ export function livePage(): void {
       const r = grab !== null ? regions[grab] : undefined;
       const b = r ? viewRect(r) : null;
       if (b && b.bottom > 0 && b.top < innerHeight) {
-        root.appendChild(el('div', `position:absolute;left:${b.left}px;top:${b.top}px;width:${b.width}px;height:${b.height}px;box-sizing:border-box;outline:1.5px dashed ${DRAG};outline-offset:-1px;`));
+        root.appendChild(el('div', `position:absolute;left:${b.left}px;top:${b.top}px;width:${b.width}px;height:${b.height}px;box-sizing:border-box;outline:1.5px dashed ${DRAG()};outline-offset:-1px;`));
         const handle = el('div', `position:absolute;left:${Math.max(0, b.left + 4)}px;top:${Math.max(0, b.top + 4)}px;width:22px;height:22px;display:flex;align-items:center;justify-content:center;`
-          + `pointer-events:auto;cursor:grab;border-radius:5px;background:${DRAG};color:#fff;font:700 13px/1 -apple-system,system-ui,sans-serif;box-shadow:0 1px 3px rgba(0,0,0,0.35);touch-action:none;`, '⋮⋮');
+          + `pointer-events:auto;cursor:grab;border-radius:5px;background:${DRAG()};color:#fff;font:700 13px/1 ${FONT};box-shadow:0 1px 3px rgba(0,0,0,0.35);touch-action:none;`, '⋮⋮');
         handle.title = 'Drag to move';
         handle.addEventListener('pointerdown', (e) => startDrag(e as PointerEvent, grab as number));
         root.appendChild(handle);
@@ -570,25 +676,25 @@ export function livePage(): void {
         if (!z || z.y + z.height < 0 || z.y > innerHeight) continue;
         // Where it may go is outlined; where it may not is dimmed.
         root.appendChild(el('div', `position:absolute;left:${z.x}px;top:${z.y}px;width:${z.width}px;height:${z.height}px;box-sizing:border-box;`
-          + (allowed.has(c.id) ? `outline:2px dashed ${DRAG};outline-offset:2px;background:rgba(47,134,201,0.06);` : 'background:rgba(20,24,28,0.32);')));
+          + (allowed.has(c.id) ? `outline:2px dashed ${DRAG()};outline-offset:2px;background:${studio()["water-soft"]};` : 'background:rgba(20,24,28,0.32);')));
       }
     }
     if (d) {
       const origin = regions[d.region] ? viewRect(regions[d.region] as Region) : null;
-      if (origin) root.appendChild(el('div', `position:absolute;left:${origin.left}px;top:${origin.top}px;width:${origin.width}px;height:${origin.height}px;background:rgba(255,255,255,0.45);outline:1.5px dashed ${DRAG};outline-offset:-1px;`));
+      if (origin) root.appendChild(el('div', `position:absolute;left:${origin.left}px;top:${origin.top}px;width:${origin.width}px;height:${origin.height}px;background:rgba(255,255,255,0.45);outline:1.5px dashed ${DRAG()};outline-offset:-1px;`));
     }
     const l = d?.landing ?? null;
     if (l) {
       const css = l.across
         ? `left:${l.line.x - 1.5}px;top:${l.line.y}px;width:3px;height:${l.line.height}px;`
         : `left:${l.line.x}px;top:${l.line.y - 1.5}px;width:${l.line.width}px;height:3px;`;
-      root.appendChild(el('div', `position:absolute;${css}background:${DRAG};border-radius:2px;box-shadow:0 0 0 1px rgba(255,255,255,0.9);`));
+      root.appendChild(el('div', `position:absolute;${css}background:${DRAG()};border-radius:2px;box-shadow:0 0 0 1px rgba(255,255,255,0.9);`));
     }
     if (d) {
       const of = (c: SpecCollection): number => c.items.filter((i) => d.from.kind !== 'item' || i.part !== d.from.part).length + 1;
       const what = d.from.kind === 'loose' ? 'A note for an agent: its order is in the template' : l?.kind === 'collection' ? `${l.index + 1} of ${of(l.c)} in ${l.c.label}` : 'Not here';
       const ghost = el('div', `position:absolute;left:${d.pointer.x + 14}px;top:${d.pointer.y + 10}px;max-width:280px;padding:6px 10px;border-radius:7px;`
-        + `background:rgba(15,20,25,0.92);color:#fff;font:500 12px/16px -apple-system,system-ui,sans-serif;box-shadow:0 6px 20px rgba(0,0,0,0.3);`);
+        + `background:rgba(15,20,25,0.92);color:#fff;font:500 12px/16px ${FONT};box-shadow:0 6px 20px rgba(0,0,0,0.3);`);
       ghost.appendChild(el('div', 'font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;', d.label));
       ghost.appendChild(el('div', 'opacity:0.75;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;', what));
       root.appendChild(ghost);
@@ -742,7 +848,13 @@ export function livePage(): void {
         document.documentElement.style.removeProperty('user-select');
         cancelAnimationFrame(scroller);
         const value = l ? answer(l, d) : null;
-        if (value) { if (e.type === 'pointerup') addEventListener('click', swallowClick, true); finish(value); return; }
+        if (value) {
+          // The click a drop's release makes (if any, it comes in the same task) is the drop's, never the page's; a release
+          // that makes none (the drag ended elsewhere) must not leave the next click anywhere swallowed (the action bar's).
+          if (e.type === 'pointerup') { addEventListener('click', swallowClick, true); setTimeout(() => removeEventListener('click', swallowClick, true), 0); }
+          finish(value);
+          return;
+        }
         if (d.from.kind === 'entry') return;
         draw();
       };

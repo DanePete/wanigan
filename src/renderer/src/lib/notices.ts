@@ -6,11 +6,7 @@
 //   time, until dismissed;
 // - a toast appears only for what the owner must act on now (a failure with
 //   Retry), and in the status line's place, never over a control.
-//
-// A view that still draws its own status line (the live view, until its pass)
-// says so with `useOwnStatusLine`: the frame's line steps aside there, and
-// outcomes float as toasts, as they did before Studio, so nothing goes unsaid.
-import { createContext, useContext, useEffect } from 'react';
+import { createContext, useContext } from 'react';
 
 export type NoticeTone = 'info' | 'done' | 'error';
 
@@ -51,11 +47,9 @@ export interface NoticesValue {
   markRead: () => void;
   /** Put the status line's message away (it stays in the tray). */
   quiet: () => void;
-  /** How many status lines are on screen, and how many views draw their own. */
+  /** How many status lines are on screen: where none is, an outcome that must be acted on floats as a toast. */
   lines: number;
-  ownLines: number;
   showLine: () => () => void;
-  ownLine: () => () => void;
   /** Where a view's own content goes in the status line (StatusSlot). */
   slot: HTMLElement | null;
   setSlot: (el: HTMLElement | null) => void;
@@ -66,19 +60,10 @@ const nothing = (): (() => void) => () => {};
 export const NoticesContext = createContext<NoticesValue>({
   list: [], latest: null, urgent: [], unread: 0, unreadErrors: 0,
   dismiss: () => {}, settle: () => {}, act: () => {}, clear: () => {}, markRead: () => {}, quiet: () => {},
-  lines: 0, ownLines: 0, showLine: nothing, ownLine: nothing, slot: null, setSlot: () => {},
+  lines: 0, showLine: nothing, slot: null, setSlot: () => {},
 });
 
 export const useNotices = (): NoticesValue => useContext(NoticesContext);
-
-/**
- * This view draws its own status line (the live view's, until the live pass
- * moves it into StatusLine): the frame's line steps aside while it is shown.
- */
-export function useOwnStatusLine(active = true): void {
-  const { ownLine } = useNotices();
-  useEffect(() => (active ? ownLine() : undefined), [active, ownLine]);
-}
 
 /** Whether a notice's action can still be taken. */
 export const actionable = (n: Notice, now = Date.now()): boolean => !!n.action && (n.actionUntil === null || now < n.actionUntil);
