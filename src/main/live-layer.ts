@@ -1141,7 +1141,7 @@ export function wireLiveLayer(options: LiveLayerOptions): { hooks: LiveViewHooks
       // Drupal: say which it is. Words a template writes are code (an agent changes the template), or an interface
       // translation Wanigan does not change yet; anything else is made by code from what is not saved here yet.
       const written = writtenIn(answer.trace, edit.target.part, at.words);
-      if (written?.id.startsWith('words.tpl.')) return toAgent(written.why);
+      if (written?.id.startsWith('words.tpl.')) return toAgent(written.why ?? DRUPAL_NOTHING_HOLDS);
       return { ok: false, id, route: 'none', why: written?.why ?? DRUPAL_NOTHING_HOLDS };
     }
     if (!found.ok) return found.route === 'agent' ? toAgent(found.why) : { ok: false, id, route: found.route, why: found.why };
