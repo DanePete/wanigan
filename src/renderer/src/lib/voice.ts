@@ -275,10 +275,12 @@ export async function startListening(owner: symbol, onFinal: (text: string, at: 
     await ctx.audioWorklet.addModule(workletUrl);
     if (run !== r) { finishRun(r); return; }
     const source = ctx.createMediaStreamSource(mic.stream);
-    // No outputs: a node that only listens, pulled by the context on its own.
-    const node = new AudioWorkletNode(ctx, 'wanigan-voice-capture', { numberOfInputs: 1, numberOfOutputs: 0, channelCount: 1 });
+    const node = new AudioWorkletNode(ctx, 'wanigan-voice-capture', { numberOfInputs: 1, numberOfOutputs: 1, channelCount: 1 });
     node.port.onmessage = (e: MessageEvent<{ samples: Float32Array }>) => chunk(r, e.data.samples);
-    source.connect(node);
+    // Chromium runs only the nodes the speakers pull: the worklet reaches them through a gain of zero, so nothing is heard.
+    const mute = ctx.createGain();
+    mute.gain.value = 0;
+    source.connect(node).connect(mute).connect(ctx.destination);
     r.node = node;
     if (ctx.state === 'suspended') await ctx.resume();
   } catch (e) {
