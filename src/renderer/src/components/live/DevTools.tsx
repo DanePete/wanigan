@@ -109,7 +109,7 @@ export function DevtoolsTab({ project, keyed }: {
       <div className="live-devtools-foot">
         <p className="faint small live-devtools-said">
           Wanigan’s marks are in this page’s HTML while the live view is on.
-          {keyed ? ' The Network panel shows the helper’s X-Wanigan-Live key on the page’s own loads: leave it out of what you share.' : null}
+          {keyed ? ' The Network panel shows the helper’s key (X-Wanigan-Live) on the page’s own loads: keep it out of what you share.' : null}
           {' '}<span className="live-devtools-keys">{chord.text} opens or closes this tab.</span>
         </p>
         <Button size="s" tone="quiet" icon="open" disabled={mode === 'detached'} onClick={detach}
