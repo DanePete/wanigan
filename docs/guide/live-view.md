@@ -1,6 +1,6 @@
 # Live view
 
-The live view in depth: your local site inside Wanigan, the editor laid around it, what each part does, and what has been seen working. Back to the [README](../../README.md).
+The live view in depth: your local site inside Wanigan, the editor laid around it, what each part does, and what has been seen working. Back to the [README](../../README.md). The website takes it step by step: [the editor](https://wanigan.ai/docs/editor).
 
 Your local Drupal, WordPress or other site, inside Wanigan, following the
 agents as they work. Every project has a **Live** tab. The view is off until

@@ -1,6 +1,6 @@
 # How it works
 
-Wanigan's parts, one row each, and the `wanigan` command agents use. Back to the [README](../../README.md).
+Wanigan's parts, one row each, and the `wanigan` command agents use. Back to the [README](../../README.md). On the website: [the board](https://wanigan.ai/docs/board) and [the `wanigan` command](https://wanigan.ai/docs/reference/cli).
 
 | | |
 |---|---|

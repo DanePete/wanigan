@@ -1,6 +1,6 @@
 # Try it
 
-Installing Wanigan 2, building it from source, starting with the demo, and what it does on your Mac. Back to the [README](../../README.md).
+Installing Wanigan 2, building it from source, starting with the demo, and what it does on your Mac. Back to the [README](../../README.md). The website walks through it too: [getting started](https://wanigan.ai/docs/get-started).
 
 This source tree targets Wanigan 2 beta.4, a limited beta for macOS on Apple
 silicon. Its scope is the existing project boards, terminal sessions, saved

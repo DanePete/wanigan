@@ -1,6 +1,6 @@
 # Not done yet
 
-Everything not done yet, or not yet seen working end to end. Wanigan 2 is a beta and a work in progress. Back to the [README](../../README.md).
+Everything not done yet, or not yet seen working end to end. Wanigan 2 is a beta and a work in progress. Back to the [README](../../README.md). On the website: [honest status](https://wanigan.ai/docs/status), and [how to tell us](https://wanigan.ai/docs/status/feedback).
 
 - Voice input has been seen transcribing in its built worker (a utilityProcess)
   and through the real app's ports on macOS (Apple silicon), but not yet with a

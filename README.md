@@ -67,9 +67,9 @@ style and watch it change as you move the control. What you change waits in
 Wanigan's design layer until you **Make real**: words are saved through the
 site's own core (or a module's or plugin's own save, where it keeps them), with
 a revision where the site keeps one, and **Verify** renders the page with and
-without the layer to check they match. A style goes
-to an agent as a brief, and anything Wanigan cannot save says why. Drupal and
-WordPress today; more platforms are coming.
+without the layer to check they match. A style goes to an agent as a brief,
+and anything Wanigan cannot save says why. Drupal and WordPress today; more
+platforms are coming.
 
 More: [the live view guide](docs/guide/live-view.md) ·
 [Make real](https://wanigan.ai/docs/editor/make-real) ·
@@ -131,8 +131,9 @@ More: [components](https://wanigan.ai/docs/components)
 Every project gets a board. Cards move from Inbox to Done; agents file into the
 Inbox and need evidence to reach Review, and only you approve. Claude Code,
 Codex, Gemini CLI and shell sessions run in real terminals that keep going when
-the window closes, **Watch** shows up to twelve at once, and **Needs you** ranks
-every permission prompt, question, review and failure across every project.
+the window closes, **Watch** shows up to twelve of them at once, and
+**Needs you** ranks every permission prompt, question, review and failure
+across every project.
 Changes, branches, per-turn checkpoints with undo, and pull requests are in the
 same window.
 

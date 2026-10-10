@@ -1,6 +1,6 @@
 # Code editor
 
-The code editor: the drawer, the Code tab, and how a save never lands over an agent's work. Back to the [README](../../README.md).
+The code editor: the drawer, the Code tab, and how a save never lands over an agent's work. Back to the [README](../../README.md). On the website: [DevTools and the code editor](https://wanigan.ai/docs/devtools).
 
 Change files by hand without leaving Wanigan: a drawer beneath the view (or
 beside it) with a real editor, CodeMirror 6, loaded the first time you open a

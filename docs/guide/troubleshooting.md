@@ -1,6 +1,6 @@
 # If something goes wrong
 
-Fixes for the common problems, where the logs are, and how to report the rest. Back to the [README](../../README.md).
+Fixes for the common problems, where the logs are, and how to report the rest. Back to the [README](../../README.md). On the website: [troubleshooting](https://wanigan.ai/docs/reference/troubleshooting).
 
 - **`npm install` fails compiling node-pty or better-sqlite3:** install the
   Xcode Command Line Tools, then run `npm run rebuild`.
