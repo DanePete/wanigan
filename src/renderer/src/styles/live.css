@@ -1738,6 +1738,22 @@
   background: var(--raised);
 }
 
+/* A save that shows beyond this page: where, under the sheet's title, and the question in place of its buttons. */
+.live-sheet-reach {
+  color: var(--fg);
+}
+
+.live-sheet-foot.ask {
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.live-sheet-ask {
+  flex-basis: 100%;
+  margin: 0;
+  color: var(--fg);
+}
+
 .live-check {
   display: flex;
   align-items: center;

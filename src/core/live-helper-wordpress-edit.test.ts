@@ -94,7 +94,11 @@ function wp_is_numeric_array($a) { return is_array($a) && array_keys($a) === ran
 function wp_slash($v) { return $v; }
 function wp_unslash($v) { return $v; }
 function wp_hash($data, $scheme = 'auth') { return hash_hmac('md5', $data, 'wl-stand-in-salt'); }
-function get_option($k, $d = false) { return $GLOBALS['wl']['options'][$k] ?? $d; }
+/** get_option(), and the helper's option_blogname / option_blogdescription filters, which this add_filter() does not keep. */
+function get_option($k, $d = false) {
+  if (($k === 'blogname' || $k === 'blogdescription') && class_exists('Wanigan_Live', false)) Wanigan_Live::option_seen($k);
+  return $GLOBALS['wl']['options'][$k] ?? $d;
+}
 function update_option($k, $v) { $GLOBALS['wl']['options'][$k] = $v; return true; }
 function get_transient($k) { return $GLOBALS['wl']['transients'][$k] ?? false; }
 function set_transient($k, $v) { $GLOBALS['wl']['transients'][$k] = $v; return true; }
@@ -579,6 +583,7 @@ function render_block_core_navigation_submenu($a, $content, $block) {
 function render_block_core_image($a, $content) { return $content; }
 function render_block_core_post_featured_image($a, $content, $block) { $id = get_post_thumbnail_id($block->context['postId']); return $id ? '<figure class="wp-block-post-featured-image"><img src="/uploads/image-' . $id . '.jpg" alt=""></figure>' : ''; }
 function render_block_core_site_logo() { return '<div class="wp-block-site-logo"><img src="/uploads/logo.png" alt=""></div>'; }
+function render_block_core_site_title() { return '<p class="wp-block-site-title">' . esc_html(get_option('blogname')) . '</p>'; }
 function get_theme_mod($k, $d = false) { return $GLOBALS['S']['theme_mods'][$k] ?? $d; }
 
 $text = array('type' => 'rich-text', 'source' => 'rich-text', 'role' => 'content');
@@ -601,6 +606,7 @@ WP_Block_Type_Registry::$types = array(
   'core/image' => new WP_Block_Type('core/image', $dynamic('render_block_core_image', array('title' => 'Image', 'attributes' => array('id' => array('type' => 'number'), 'url' => array('type' => 'string', 'source' => 'attribute', 'selector' => 'img', 'attribute' => 'src'), 'alt' => array('type' => 'string', 'source' => 'attribute', 'selector' => 'img', 'attribute' => 'alt', 'default' => ''), 'caption' => $text + array('selector' => 'figcaption'))))),
   'core/post-featured-image' => new WP_Block_Type('core/post-featured-image', $dynamic('render_block_core_post_featured_image', array('title' => 'Featured Image', 'attributes' => array('isLink' => array('type' => 'boolean', 'default' => false))))),
   'core/site-logo' => new WP_Block_Type('core/site-logo', $dynamic('render_block_core_site_logo', array('title' => 'Site Logo', 'attributes' => array('width' => array('type' => 'number'))))),
+  'core/site-title' => new WP_Block_Type('core/site-title', $dynamic('render_block_core_site_title', array('title' => 'Site Title', 'attributes' => array('level' => array('type' => 'number', 'default' => 1))))),
 );
 
 /* the made-up site */
@@ -772,6 +778,7 @@ describe('what a WordPress page offers to change, and what saving it writes, und
     const r = run(page(content, { saves: [{ find: 'Paragraph block', value: { content: 'Warm <em>rolls</em> &amp; tea<script>alert(1)</script>' } }] }));
     const e = target(r, 'Paragraph block');
     assert.equal(e.why, undefined, 'the block can change here');
+    assert.equal(e.shows, undefined, 'a page’s own words change that page alone: nothing to ask');
     const content_ = prop(e, 'content');
     assert.equal(content_.readOnly, undefined, 'formatted words are no longer read-only');
     assert.equal(content_.contentMediaType, 'text/html', 'its value is HTML, as the block attribute is');
@@ -884,6 +891,8 @@ describe('what a WordPress page offers to change, and what saving it writes, und
     assert.equal(placements.length, 2, 'one per placement');
     assert.deepEqual(placements.map((x) => x.value), [{ content: 'Fresh bread' }, { content: 'Rye today' }], 'the pattern’s words where nothing overrides them, the placement’s own where it does');
     assert.equal(placements[0]?.why, undefined);
+    assert.equal(own.shows, 'every page that uses the synced pattern “Hero”', 'the pattern’s own words say where they show, so the window asks first');
+    assert.equal(placements[0]?.shows, undefined, 'a placement’s own words in the page are the page’s');
     assert.equal(edits(r).filter((x) => x.label.startsWith('Paragraph words in this placement')).length, 0, 'a block the pattern does not let be overridden has no per-placement words');
 
     assert.ok(r.answers[0]?.data.ok, r.answers[0]?.data.error);
@@ -914,6 +923,8 @@ describe('what a WordPress page offers to change, and what saving it writes, und
     assert.match(inPart.label, /first save makes a database copy of the theme’s file/);
     assert.equal(inPart.why, undefined);
     assert.equal(inPart.revisions, true);
+    assert.equal(inPart.shows, 'every page that uses the template part “Header”');
+    assert.equal(target(r, 'Heading block in the template “Page”').shows, 'every page that uses the template “Page”');
     assert.match(target(r, 'Heading block in the template “Page”').label, /shows on every page that uses this template/);
     for (const a of r.answers) assert.ok(a.data.ok, a.data.error);
     assert.deepEqual(r.rest.map(([m, route]) => `${m} ${route}`), ['POST /wp/v2/template-parts/northwind//header', 'POST /wp/v2/templates/northwind//page']);
@@ -934,6 +945,7 @@ describe('what a WordPress page offers to change, and what saving it writes, und
     const top = run(site([{ find: 'Custom Link block in navigation menu “Main”', value: { label: 'Our <em>menu</em>' } }]));
     const link = target(top, 'Custom Link block in navigation menu “Main”');
     assert.match(link.label, /shows wherever this menu shows/);
+    assert.equal(link.shows, 'everywhere the menu “Main” shows');
     assert.equal(prop(link, 'label').contentMediaType, 'text/html', 'core prints a label through wp_kses_post(): it is HTML, and the window sends it as such');
     assert.equal(link.why, undefined);
     assert.equal(link.revisions, true, 'wp_navigation keeps revisions');
@@ -974,6 +986,7 @@ describe('what a WordPress page offers to change, and what saving it writes, und
     const text = target(r, 'Settings of the Text widget');
     assert.equal(text.why, undefined, 'show_instance_in_rest is off, and that no longer stops it');
     assert.match(text.label, /shows on every page that shows the widget area “Sidebar”/);
+    assert.equal(text.shows, 'every page that shows the widget area “Sidebar”');
     assert.deepEqual(text.value, { title: 'Hours', text: 'Open <b>daily</b>', filter: true, visual: true });
     assert.ok(r.answers[0]?.data.ok, r.answers[0]?.data.error);
     const [method, route, params] = r.rest[0] ?? [];
@@ -999,13 +1012,25 @@ describe('what a WordPress page offers to change, and what saving it writes, und
     assert.equal(alt.why, undefined);
     assert.equal(alt.revisions, false, 'core keeps no revisions of it');
     assert.match(alt.label, /featured image/);
+    assert.equal(alt.shows, 'everywhere WordPress prints the image “image-12.jpg” from the media library');
     const block = target(r, 'Image block in page “Welcome”');
+    assert.equal(block.shows, undefined, 'the image block’s own alt is the page’s');
     assert.equal((block.value as Record<string, unknown>).alt, 'Block alt');
     assert.match(String(prop(block, 'alt').description), /media library/);
     assert.ok(r.answers[0]?.data.ok, r.answers[0]?.data.error);
     assert.deepEqual(r.rest, [['POST', '/wp/v2/media/12', { alt_text: 'Loaves on a board' }]]);
     assert.equal(r.meta[12]?._wp_attachment_image_alt, 'Loaves on a board');
     assert.equal(r.posts[7]?.includes('alt="Block alt"'), true, 'the image block keeps its own alt');
+  });
+
+  test('the site’s title, read while a block renders, is a setting saved through /wp/v2/settings, said to show on every page that shows it', () => {
+    const r = run(page('<!-- wp:site-title /-->', { options: { blogname: 'Acme Bakery' }, saves: [{ find: 'Site title', value: 'Acme Bakery & Café' }] }));
+    const title = target(r, 'Site title');
+    assert.equal(title.kind, 'option');
+    assert.equal(title.value, 'Acme Bakery');
+    assert.equal(title.shows, 'every page that shows the site’s title');
+    assert.ok(r.answers[0]?.data.ok, r.answers[0]?.data.error);
+    assert.equal(r.options.blogname, 'Acme Bakery & Café');
   });
 
   test('a static block’s own settings stay read-only, saying WordPress keeps no PHP save() to write them', () => {

@@ -96,7 +96,7 @@ function modelPage() {
 /** What the stand-in site answers a schema save (`POST /_wanigan/edit/<id>`): a status and its JSON. */
 interface SiteAnswer { status: number; body: unknown }
 
-function wire(over: { edits?: LayerEdit[]; url?: string; trace?: LiveTrace | null; trusted?: boolean; enabled?: boolean; render?: LayerRender; renderMs?: number; saved?: { ok: boolean; error: string | null }; refuseMark?: string; site?: SiteAnswer } = {}) {
+function wire(over: { edits?: LayerEdit[]; url?: string; trace?: LiveTrace | null; trusted?: boolean; enabled?: boolean; render?: LayerRender; renderMs?: number; saved?: { ok: boolean; error: string | null }; refuseMark?: string; site?: SiteAnswer; now?: () => number } = {}) {
   const handlers = new Map<string, (...args: unknown[]) => unknown>();
   const dataDir = mkdtempSync(join(tmpdir(), 'wanigan-layer-'));
   const { page, run } = modelPage();
@@ -160,7 +160,7 @@ function wire(over: { edits?: LayerEdit[]; url?: string; trace?: LiveTrace | nul
     dataDir,
     render: async (r) => { renders.push(r); return over.render ? over.render(r) : { error: 'no render in this test' }; },
     encode: async () => Buffer.from('diff-png'),
-    now: () => 1_000,
+    now: over.now ?? (() => 1_000),
     ...(over.renderMs ? { renderMs: over.renderMs } : {}),
   });
   const invoke = <T>(channel: string, ...args: unknown[]): Promise<T> => (handlers.get(channel) as (...a: unknown[]) => Promise<T>)({}, ...args);
@@ -678,6 +678,43 @@ test('WordPress: words between a paragraph’s tags are saved in their run with 
       why: 'These words are formatted text (Paragraph block in post “Paddling 101”) and the change it crosses its formatting (a link, bold or another inline tag): Wanigan saves new words between tags only where the change falls within one run of words. An agent can make the change from a brief.',
     });
     assert.deepEqual([b.posts, b.marks], [[], []], 'nothing sent, nothing marked');
+  } finally { b.done(); }
+});
+
+test('WordPress: words kept in something shown beyond this page are said with where, and saved only when made real again', async () => {
+  // A paragraph in the single template: its words show on every page that uses the template.
+  const inTemplate: PartIdentity = { kind: 'block', store: 'tpl:acme//single', path: [2], name: 'core/paragraph' };
+  const shared = paragraphTarget('Open daily', {
+    id: 'block-tpl-2', label: 'Paragraph block in the template “Single” (shows on every page that uses this template)', shows: 'every page that uses the template “Single”',
+  });
+  const traced = wpTrace({ parts: [...wpTrace().parts, { id: 'b5', kind: 'block', label: 'Paragraph', parent: 'w0', identity: inTemplate, edits: [shared.id] }], edits: [...postEdits(), titleAttributes, shared] });
+  const retyped = retype(inTemplate, 'Open every day', 'Open daily');
+  let now = 1_000;
+  const w = wire({ edits: [retyped], trace: traced, now: () => now });
+  try {
+    w.page.parts = { b5: { '': [words('Open daily')] } };
+    await w.apply();
+    const asked = 'These words are kept in Paragraph block in the template “Single” (shows on every page that uses this template): saving them changes it wherever it shows (every page that uses the template “Single”), not only on this page. Make it real again to save them there.';
+    assert.deepEqual(await w.implement(retyped.id), { ok: false, id: retyped.id, route: 'none', why: asked });
+    assert.deepEqual([w.posts, w.marks], [[], []], 'nothing saved until asked again');
+    // Asked again after five minutes: said again, not saved.
+    now += 5 * 60_000 + 1;
+    assert.deepEqual(await w.implement(retyped.id), { ok: false, id: retyped.id, route: 'none', why: asked });
+    assert.deepEqual(w.posts, []);
+    now += 1_000;
+    assert.deepEqual(await w.implement(retyped.id), { ok: true, id: retyped.id, state: 'implemented', revision: '43' });
+    assert.deepEqual(w.posts.map((x) => x.body), [{ trace: '0123456789abcdef', value: { content: 'Open every day', dropCap: false } }]);
+  } finally { w.done(); }
+
+  // Refused as formatted, it says where the words show too: the brief an agent gets carries it.
+  const across = retype(inTemplate, 'See a trail guide', 'Read the trail guide');
+  const linked = { ...shared, value: { content: 'Read <a href="/trails/">the trail guide</a>', dropCap: false } };
+  const b = wire({ edits: [across], trace: { ...traced, edits: [...postEdits(), titleAttributes, linked] } });
+  try {
+    b.page.parts = { b5: { '': [words('Read the trail guide')] } };
+    await b.apply();
+    const refused = await b.implement(across.id);
+    assert.ok(!refused.ok && refused.route === 'agent' && refused.why.endsWith('Saved there, they would change it wherever it shows (every page that uses the template “Single”).'), JSON.stringify(refused));
   } finally { b.done(); }
 });
 

@@ -30,7 +30,9 @@
 //   'text/html'`) is sent as HTML: words alone escaped (`&`, `<`, `>` and quotes as the helper writes text), words
 //   between tags written into the one run the change falls in, every tag kept (src/shared/rich-text.ts). A change
 //   across formatting, a post's content and markup nothing says how to write go to an agent as a brief, as do styles
-//   and tokens; anything else says why.
+//   and tokens; anything else says why. Words for something the helper says shows beyond this page (a target's
+//   `shows`: a template, a synced pattern, a menu, a widget, a setting) are said with where, and saved only when the
+//   edit is made real again.
 // - Verifying ("Stage 3: verify", steps 1–3): the design (the page with the layer) and the result (the page without
 //   it) rendered in hidden windows in the view's session at each width (live-capture.ts), each twice for the noise
 //   floor, and every width judged against the one floor the verdict states (the largest over both and every width); the comparisons are src/shared/layer-verify.ts's.
@@ -347,6 +349,9 @@ function listed(labels: string[]): string {
   return shown.length > 1 ? `${shown.slice(0, -1).join(', ')} and ${shown.at(-1)}` : shown[0] ?? '';
 }
 
+/** What a refusal adds when what holds the words shows beyond this page: where (the helper's `shows`). */
+const beyond = (t: EditTarget): string => (t.shows ? ` Saved there, they would change it wherever it shows (${t.shows}).` : '');
+
 /**
  * The one edit target of a trace that holds exactly an element's words, as the site rendered them, for saving new
  * words to: looked for in the parts the edit's identity names (as resolveLayer matches them), then outward a level at a
@@ -388,14 +393,14 @@ export function wordsTarget(trace: LiveTrace, identity: PartIdentity, words: str
     }
     const [h] = all;
     if (h?.kept === 'formatted') {
-      return { ok: false, route: 'agent', why: `These words are formatted text (${h.target.label}): the site keeps them with their markup, which Wanigan does not save from here. An agent can make the change from a brief.` };
+      return { ok: false, route: 'agent', why: `These words are formatted text (${h.target.label}): the site keeps them with their markup, which Wanigan does not save from here. An agent can make the change from a brief.${beyond(h.target)}` };
     }
     if (h?.target.why) return { ok: false, route: 'none', why: h.target.why };
     if (h?.kept === 'html') {
       // Words alone go escaped (& < > and quotes as the helper writes them); between tags, only within one run.
       const written = retypeRich(h.value, words, after);
       if (!written.ok) {
-        return { ok: false, route: 'agent', why: `These words are formatted text (${h.target.label}) and the change ${written.why}: Wanigan saves new words between tags only where the change falls within one run of words. An agent can make the change from a brief.` };
+        return { ok: false, route: 'agent', why: `These words are formatted text (${h.target.label}) and the change ${written.why}: Wanigan saves new words between tags only where the change falls within one run of words. An agent can make the change from a brief.${beyond(h.target)}` };
       }
       return { ok: true, target: h.target, key: h.key, value: written.html };
     }
@@ -764,6 +769,22 @@ export function wireLiveLayer(options: LiveLayerOptions): { hooks: LiveViewHooks
 
   /* ── making an edit real ── */
 
+  /**
+   * Words for something the helper says shows beyond this page (an edit target's `shows`): the first time, said with
+   * where, and nothing saved; made real again within five minutes, for the same target, reach and words, saved. The
+   * edit sheet asks the same way before it saves such a target (src/shared/live-trace.ts editNotice()).
+   */
+  const asked = new Map<string, { target: string; shows: string; value: string; until: number }>();
+  const askBeyond = (id: string, found: Extract<WordsTarget, { ok: true }>): string | null => {
+    const shows = found.target.shows;
+    if (!shows) return null;
+    const was = asked.get(id);
+    asked.delete(id);
+    if (was && was.target === found.target.id && was.shows === shows && was.value === found.value && was.until > clock()) return null;
+    asked.set(id, { target: found.target.id, shows, value: found.value, until: clock() + 5 * 60_000 });
+    return `These words are kept in ${found.target.label}: saving them changes it wherever it shows (${shows}), not only on this page. Make it real again to save them there.`;
+  };
+
   /** Words the site has, on an edit the core would not mark: said, so they are not saved twice. */
   const inSiteUnmarked = (revision: string | null, refused: string): string =>
     `The words are saved in the site${revision ? ` (revision ${revision})` : ''}, but the layer could not mark this edit implemented: ${refused} Do not save it again; it is in the site.`;
@@ -816,6 +837,9 @@ export function wireLiveLayer(options: LiveLayerOptions): { hooks: LiveViewHooks
     if (answer.state !== 'ok') return none(untraced(answer));
     const found = wordsTarget(answer.trace, edit.target.part, at.words, value);
     if (!found.ok) return { ok: false, id, route: found.route, why: found.why };
+    // Something shown beyond this page (a template, a synced pattern, a menu, a widget, a setting) is said first.
+    const ask = askBeyond(id, found);
+    if (ask) return none(ask);
     // An object's other properties go back as the trace gave them (a menu link's address with its new text).
     const next = found.key === null ? found.value : { ...(found.target.value as Record<string, unknown>), [found.key]: found.value };
     // The save reloads the page once the site has the words; the layer applies again after the load.

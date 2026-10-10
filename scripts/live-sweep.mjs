@@ -26,8 +26,8 @@ import { LIVE_DEFAULTS } from './ui-live-defaults.mjs';
 const out = join(root, '.artifacts', 'live');
 
 /**
- * The made-up trace, as a WordPress helper's: the opening hours block offers a paragraph's words alone, and a paragraph
- * with a link and bold in it, each the HTML its schema says it is.
+ * The made-up trace, as a WordPress helper's: the opening hours block offers a paragraph's words alone, a paragraph
+ * with a link and bold in it, each the HTML its schema says it is, and a paragraph kept in a template part.
  */
 function richTrace(base) {
   const words = (id, label, content) => ({
@@ -37,6 +37,8 @@ function richTrace(base) {
   const added = [
     words('e-rich-words', 'Paragraph block in page “Hours”', 'Fish &amp; chips on Fridays'),
     words('e-rich-markup', 'Paragraph block with a link in page “Hours”', 'Ask about <a href="/cakes">cakes</a> &amp; <strong>pies</strong>'),
+    // Kept in a template part: the save shows on every page that uses it (helper 4's `shows`).
+    { ...words('e-rich-shared', 'Paragraph block in the template part “Footer” (shows on every page that uses this template part)', 'Open daily'), shows: 'every page that uses the template part “Footer”' },
   ];
   return {
     ...base, platform: 'wordpress',
@@ -987,6 +989,30 @@ try {
       await p5.keyboard.press('Escape');
       await p5.waitForSelector('.live-sheet', { state: 'detached', timeout: 3000 }).catch(() => fail(t('rich: Escape did not close the sheet')));
       if ((await p5.evaluate(() => window.__wgLive.calls.filter((c) => c.startsWith('editSave')).length)) !== 1) fail(t('rich: closing the HTML sheet saved something'));
+
+      // Something shown beyond this page: the Edit menu and the sheet say so, and Save asks first; Back saves nothing.
+      await p5.getByRole('button', { name: /^Edit Opening hours/ }).click();
+      const item = p5.getByRole('menuitem', { name: /^Paragraph block in the template part “Footer”/ });
+      if (!(await item.innerText().catch(() => '')).includes('shows beyond this page')) fail(t('reach: the Edit menu does not say the target shows beyond this page'));
+      await item.click();
+      await p5.waitForSelector('.live-sheet form', { timeout: 3000 }).catch(() => fail(t('reach: the sheet did not open')));
+      if (!(await p5.locator('.live-sheet-reach').innerText().catch(() => '')).includes('Saving it changes every page that uses the template part “Footer”, not only this page.')) fail(t('reach: the sheet does not say where the save shows'));
+      const saves = () => p5.evaluate(() => window.__wgLive.calls.filter((c) => c.startsWith('editSave')).length);
+      await p5.getByLabel('Words', { exact: true }).fill('Open every day');
+      await p5.locator('.live-sheet button[type="submit"]').click();
+      const ask = p5.locator('.live-sheet-foot.ask');
+      await ask.waitFor({ timeout: 3000 }).catch(() => fail(t('reach: Save did not ask first')));
+      if (!(await ask.innerText()).includes('This changes it wherever it shows (every page that uses the template part “Footer”), not only on this page. Save it there?')) fail(t(`reach: the question reads "${await ask.innerText()}"`));
+      if ((await p5.evaluate(() => document.activeElement?.textContent ?? '')) !== 'Save wherever it shows') fail(t('reach: the question did not take the focus to its answer'));
+      if ((await saves()) !== 1) fail(t('reach: something was saved before the owner said yes'));
+      await s5('edit-reach-ask');
+      await ask.getByRole('button', { name: 'Back' }).click();
+      if ((await saves()) !== 1 || !(await p5.locator('.live-sheet form').isVisible())) fail(t('reach: Back saved, or closed the sheet'));
+      await p5.locator('.live-sheet button[type="submit"]').click();
+      await p5.getByRole('button', { name: 'Save wherever it shows' }).click();
+      await p5.waitForSelector('.toast-info:has-text("Saved Paragraph block in the template part")', { timeout: 3000 }).catch(() => fail(t('reach: the yes did not save')));
+      const shared = await p5.evaluate(() => window.__wgLive.calls.find((c) => c.startsWith('editSave e-rich-shared')));
+      if (shared !== 'editSave e-rich-shared {"content":"Open every day"}') fail(t(`reach: saved ${shared}`));
       await ctx.close();
     }
   }

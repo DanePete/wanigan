@@ -6,14 +6,17 @@
 // through the main process. Either way the page reloads with the change.
 // Formatted text (a string the schema calls HTML) is edited as its words when it
 // holds no tag, sent escaped, and as its HTML when it holds inline tags, with the
-// tags the site keeps said (shared/live-schema.ts htmlMode()).
+// tags the site keeps said (shared/live-schema.ts htmlMode()). A target that
+// shows beyond this page (a template, a synced pattern, a menu, a widget, a
+// setting) says where, and its save is asked first (shared/live-trace.ts
+// editNotice()), as taking out a shared item is.
 import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react';
 import type { LiveRegion } from '@shared/live';
 import { placeSheet, type Box } from '@shared/live-lens';
 import { draftOf, htmlMode, schemaForm, valueOf, type Draft, type SchemaField, type SchemaForm } from '@shared/live-schema';
 import { WORDPRESS_INLINE_TAGS, tagsIn } from '@shared/rich-text';
 import type { SaveAi } from '@shared/live-ai';
-import { saveOf, type EditTarget, type LiveTrace } from '@shared/live-trace';
+import { editNotice, saveOf, type EditTarget, type LiveTrace } from '@shared/live-trace';
 import { liveBridge, useCoversLive, useLiveCovers } from '../../lib/live';
 import { Select } from '../Select';
 import { Button, IconButton, useFocusTrap, useSingleFlight } from '../ui';
@@ -78,6 +81,7 @@ export function EditSheet({ request, stage, device, cms, trace, onClose, onSaved
             {native ? `${cms}’s own form, saved by ${cms} as you${target.revisions ? ', as a new revision' : ''}.`
               : `Checked by ${cms} when you save${target.revisions ? ', and kept as a new revision' : ''}.`}
           </p>
+          {target.shows ? <p className="small live-sheet-reach">Saving it changes {target.shows}, not only this page.</p> : null}
         </div>
         <IconButton icon="close" label="Close without saving (Escape)" onClick={onClose} />
       </header>
@@ -137,6 +141,9 @@ function SchemaEdit({ target, cms, wordpress, aiClient, onSaved, onClose, onErro
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
   const [noSiteAi, setNoSiteAi] = useState(false);
+  /** A save of something shown beyond this page, waiting for the owner's yes. */
+  const [asking, setAsking] = useState(false);
+  const notice = editNotice(target);
   const once = useSingleFlight();
   if (!form) {
     return (
@@ -147,10 +154,13 @@ function SchemaEdit({ target, cms, wordpress, aiClient, onSaved, onClose, onErro
     );
   }
   const set = (name: string, v: Draft[string]): void => { setDraft((d) => ({ ...d, [name]: v })); setErrors((e) => { const { [name]: _gone, ...rest } = e; return rest; }); };
-  const save = async (): Promise<void> => {
+  const save = async (confirmed = false): Promise<void> => {
     onError(null);
     const out = valueOf(form, draft, target.value);
-    if ('errors' in out) { setErrors(out.errors); return; }
+    if ('errors' in out) { setErrors(out.errors); setAsking(false); return; }
+    // Shown beyond this page: said, and saved only on the owner's yes.
+    if (notice && !confirmed) { setAsking(true); return; }
+    setAsking(false);
     setSaving(true);
     const result = await live?.editSave(target.id, out.value, noSiteAi ? { noSiteAi: true } : undefined);
     setSaving(false);
@@ -178,10 +188,19 @@ function SchemaEdit({ target, cms, wordpress, aiClient, onSaved, onClose, onErro
           </p>
         </div>
       ) : null}
-      <div className="live-sheet-foot">
-        <Button tone="quiet" onClick={onClose}>Cancel</Button>
-        <Button type="submit" tone="primary" icon="check" disabled={saving}>{saving ? 'Saving…' : 'Save'}</Button>
-      </div>
+      {/* Keyed apart: reused, Back's button would turn into Save's submit while its click is still running, and ask again. */}
+      {asking && notice ? (
+        <div key="ask" className="live-sheet-foot ask" role="group" aria-labelledby="live-sheet-ask">
+          <p className="small live-sheet-ask" id="live-sheet-ask">{notice} Save it there?</p>
+          <Button tone="quiet" onClick={() => setAsking(false)}>Back</Button>
+          <Button tone="primary" icon="check" autoFocus disabled={saving} onClick={() => once(() => save(true))}>{saving ? 'Saving…' : 'Save wherever it shows'}</Button>
+        </div>
+      ) : (
+        <div key="foot" className="live-sheet-foot">
+          <Button tone="quiet" onClick={onClose}>Cancel</Button>
+          <Button type="submit" tone="primary" icon="check" disabled={saving}>{saving ? 'Saving…' : 'Save'}</Button>
+        </div>
+      )}
     </form>
   );
 }
