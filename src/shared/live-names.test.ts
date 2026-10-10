@@ -37,6 +37,17 @@ test('content: the node, its id and view mode, from the suggestions core lists',
   assert.equal(editPath(region('paragraph', 'p.html.twig', ['paragraph--hero'])), null, 'a paragraph has no page of its own');
 });
 
+test('a paragraph the helper marked is named as itself, with the revision of it the page shows', () => {
+  // Its own mark (data-wl-paragraph id:uuid:revision) beside the entity mark, as the helper writes both.
+  const both = region('paragraph', 'p.html.twig', ['paragraph--text'], { entity: 'paragraph:text:5:default', paragraph: '5:0a1b-f6:50' });
+  assert.deepEqual([nameOf(both).title, nameOf(both).kind], ['Text 5', 'Paragraph · default view · revision 50']);
+  // A theme that drops the entity mark keeps the paragraph's: its id still names it.
+  const own = region('paragraph', 'p.html.twig', ['paragraph--text'], { paragraph: '5:0a1b-f6:50' });
+  assert.deepEqual(entityOf(own), { type: 'paragraph', id: '5', bundle: 'text', viewMode: null });
+  assert.equal(nameOf(own).title, 'Text 5');
+  assert.equal(nameOf(region('node', null, ['node--9'], { entity: 'node:article:9:full' })).kind, 'Node · full view', 'nothing else says a revision');
+});
+
 test('the helper’s mark wins over the suggestions', () => {
   const marked = region('node', null, ['node--9'], { entity: 'node:article:12:teaser' });
   assert.deepEqual(entityOf(marked), { type: 'node', bundle: 'article', id: '12', viewMode: 'teaser' });

@@ -22,6 +22,7 @@ import { pageHelpers } from './ui-crawl-page.mjs';
 import { LIVE_STUB } from './ui-goto-stub.mjs';
 import { LIVE_DEFAULTS } from './ui-live-defaults.mjs';
 import { liveFixture, liveStub } from './ui-live-stub.mjs';
+import { snapStub } from './ui-snap-stub.mjs';
 import { PICK_STUB } from './ui-pick-stub.mjs';
 import { crawlTarget } from './ui-crawl-target.mjs';
 import { qualifyStoppedResize } from './ui-crawl-refusals.ts';
@@ -573,6 +574,11 @@ const LIVE_STANDINS = {
     scripts: [`(${liveStub})(${JSON.stringify(liveFixture)});`, LIVE_DEFAULTS],
     prepare: async () => {},
   },
+  // The same, with Snap and Record played (ui-snap-stub.mjs): what ⇧S and ⇧R act on.
+  snap: {
+    scripts: [`(${liveStub})(${JSON.stringify(liveFixture)});`, LIVE_DEFAULTS, `(${snapStub})();`],
+    prepare: async () => {},
+  },
   // One part whose template is the demo's own (ui-pick-stub.mjs): what the Code key opens in the code editor.
   pick: {
     // The demo's Northstar has no Drupal of its own, so the stand-in site says where its web root is: the project's web/.
@@ -748,13 +754,15 @@ function keyChecks(w) {
       { standIn: 'live', at: live, ready: '.live-tree', keys: ['['], expect: tabIs('Add') },
       { standIn: 'live', at: live, ready: '.live-tree', keys: [']'], expect: tabIs('Add') },
     ],
-    'Previous or next tab of the dock beneath the page (code, notes, problems, request)': [
+    'Previous or next tab of the dock beneath the page (code, notes, problems, request, DevTools)': [
       { standIn: 'live', at: live, ready: '.live-tree', setup: dockWas, keys: ['Shift+BracketLeft'], expect: dockMoved },
       { standIn: 'live', at: live, ready: '.live-tree', setup: dockWas, keys: ['Shift+BracketRight'], expect: dockMoved },
     ],
     'Compare Local with a hosted environment': [{ standIn: 'compare', at: live, ready: '.live-bar', keys: ['Shift+C'], expect: shows('.live-stage .live-stage-compare .cmp-head') }],
     'The site’s component library': [{ standIn: 'live', at: live, ready: '.live-tree', keys: ['Shift+B'], expect: shows('.live-library-entry') }],
     'Your edits to the page, in the design layer': [{ standIn: 'live', at: live, ready: '.live-tree', keys: ['Shift+E'], expect: shows('.live-tray .live-side-title') }],
+    'Snap a picture of the page to mark up and send to an agent': [{ standIn: 'snap', at: live, ready: '.live-tree', keys: ['Shift+S'], expect: shows('.live-stage-snap[data-phase="area"]') }],
+    'Start or stop recording the page (Escape stops it too)': [{ standIn: 'snap', at: live, ready: '.live-tree', keys: ['Shift+R'], expect: shows('.live-record-btn.on') }],
     // Words alone are typed on in the page (the status line says so); a part that is more than words opens Edit ▾.
     'Type on the chosen part’s words on the page, or every way to edit it': [
       { standIn: 'live', at: live, ready: '.live-tree', setup: choose('Search'), keys: ['e'], expect: shows('.live-status:has-text("Typing on the page")') },
@@ -768,6 +776,13 @@ function keyChecks(w) {
     // A content item: taken out at once, so the site was asked (the stand-in plays it).
     'Take the chosen part out of the page': [{ standIn: 'live', at: live, ready: '.live-tree', setup: choose('Quote paragraph'), keys: ['Shift+X'],
       expect: focused(() => window.__wgLive.calls.includes('remove {"collection":"c-paras","item":"p-para-1"}')) }],
+    // The page's DevTools: Chrome's chord (this window says it is a Mac: ⌥⌘I) opens its tab in the dock, and closes it;
+    // ⇧D points it at the chosen part (the stand-in records where).
+    'The page’s DevTools, in the dock beneath it: open or close': [
+      { standIn: 'live', at: live, ready: '.live-tree', keys: ['Meta+Alt+KeyI'], expect: shows('.editor-drawer:not([hidden]) .live-docked[data-tab="devtools"]') },
+    ],
+    'Show the chosen part, or the row of the tree, in DevTools': [{ standIn: 'live', at: live, ready: '.live-tree', setup: choose('Search'), keys: ['Shift+D'],
+      expect: focused(() => window.__wgLive.calls.some((c) => c.startsWith('devtoolsInspect '))) }],
     'Add the note to the notes (in the note box)': [{ standIn: 'live', at: live, ready: '.live-tree', setup: noting, keys: ['Meta+Enter'], expect: shows('.dock-tabs button:has-text("Notes 1")') }],
     'Send the note now, or the notes waiting': [{ standIn: 'live', at: live, ready: '.live-tree', setup: noting, keys: ['Meta+Shift+Enter'], expect: shows('.toast:has-text("Sent to")') }],
     // Compare, opened from the live view. It starts on the slider, at the first change, at the view's 1440 px.

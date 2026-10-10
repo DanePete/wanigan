@@ -1,7 +1,7 @@
 // ? or ⌘/: every keyboard shortcut, searchable, read from the same table the
 // key handler and the app menu use (shared/shortcuts.ts).
 import { useMemo, useState } from 'react';
-import { SHORTCUTS, SHORTCUT_GROUPS, keyLabel, shortcutText, type Shortcut } from '@shared/shortcuts';
+import { SHORTCUTS, SHORTCUT_GROUPS, keyLabel, keySets, shortcutText, type Shortcut } from '@shared/shortcuts';
 import { bridge } from '../lib/api';
 import { Dialog } from '../components/ui';
 
@@ -11,7 +11,7 @@ export function ShortcutSheet({ onClose }: { onClose: () => void }) {
   const groups = useMemo(() => {
     const words = query.toLowerCase().split(/\s+/).filter(Boolean);
     const hit = (s: Shortcut): boolean => {
-      const text = `${s.label} ${s.group} ${shortcutText(s, mac)} ${[s.keys, ...(s.alt ?? [])].flat().join(' ')}`.toLowerCase();
+      const text = `${s.label} ${s.group} ${shortcutText(s, mac)} ${keySets(s, mac).flat().join(' ')}`.toLowerCase();
       return words.every((w) => text.includes(w));
     };
     return SHORTCUT_GROUPS.map((group) => ({ group, items: SHORTCUTS.filter((s) => s.group === group && hit(s)) })).filter((g) => g.items.length);
@@ -49,7 +49,8 @@ export function ShortcutSheet({ onClose }: { onClose: () => void }) {
 }
 
 function Keys({ s, mac }: { s: Shortcut; mac: boolean }) {
-  const sets = [s.keys, ...(s.alt ?? [])];
+  // This platform's keys: Chrome's DevTools chord is ⌥⌘I on a Mac and Ctrl+Shift+I elsewhere.
+  const sets = keySets(s, mac);
   return (
     <span className="shortcut-keys" aria-label={shortcutText(s, mac)}>
       {sets.map((keys, i) => (

@@ -8,10 +8,10 @@
 // one the helper stores once the page's buffer has said which parts it kept.
 // What it proves: a post's content, title and excerpt are the post's fields, a
 // block in stored markup is named by its store and path, a template, template
-// part, widget and menu item are configuration, a menu is its term, a block
-// with no store of its own is a component by where it sits, and what has
-// nothing stable to name (or an odd id) has no identity. Nothing here touches
-// a site; it needs PHP.
+// part, widget and menu item are configuration, a theme's PHP template file is
+// the theme and its path there, a menu is its term, a block with no store of
+// its own is a component by where it sits, and what has nothing stable to name
+// (or an odd id) has no identity. Nothing here touches a site; it needs PHP.
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
@@ -97,6 +97,7 @@ function get_template() { return 'northwind'; }
 function get_stylesheet_directory() { return WP_CONTENT_DIR . '/themes/northwind'; }
 function get_template_directory() { return WP_CONTENT_DIR . '/themes/northwind'; }
 function is_child_theme() { return false; }
+function wp_get_theme($s = null) { return new class { public function exists() { return true; } public function get($k) { return 'Northwind'; } }; }
 function wp_is_block_theme() { return true; }
 function get_queried_object() { return get_post(7); }
 final class WP_Post {
@@ -340,6 +341,7 @@ const SAMPLES: PartIdentity[] = [
   { kind: 'config', type: 'wp_template_part', id: 'northwind//header' },
   { kind: 'config', type: 'widget', id: 'text-3', plugin: 'text' },
   { kind: 'block', store: 'tpl:northwind//page', path: [2, 0], name: 'core/post-content' },
+  { kind: 'template', theme: 'northwind', path: 'template-parts/header/site-branding.php', role: 'parent' },
 ];
 
 describe('what each part of a WordPress page names, under a stand-in WordPress', { skip: php ? false : 'PHP is not installed here' }, () => {
@@ -397,7 +399,10 @@ describe('what each part of a WordPress page names, under a stand-in WordPress',
       { kind: 'component', name: 'core/paragraph', within: identityKey(synced), nth: 0 },
       { kind: 'component', name: 'core/paragraph', within: identityKey(synced), nth: 1 },
     ], 'a synced pattern’s two paragraphs: the first and second of their name inside it');
-    assert.deepEqual(one(parts, 'Paragraph', 3).identity, { kind: 'component', name: 'core/paragraph', within: null, nth: 0 }, 'a block a theme file renders, inside nothing identified');
+    // A theme's PHP template file is the theme and its path there; a block it renders is inside it.
+    const sidebar = one(parts, 'sidebar.php');
+    assert.deepEqual(sidebar.identity, { kind: 'template', theme: 'northwind', path: 'sidebar.php', role: 'theme' }, 'a theme’s template file');
+    assert.deepEqual(one(parts, 'Paragraph', 3).identity, { kind: 'component', name: 'core/paragraph', within: identityKey(sidebar.identity!), nth: 0 }, 'a block a theme file renders, inside that file');
     assert.equal(kindKey(one(parts, 'Paragraph', 3).identity!), kindKey(one(parts, 'Paragraph').identity!), 'a paragraph is one kind, stored or not');
 
     assert.deepEqual(one(parts, 'Text widget').identity, { kind: 'config', type: 'widget', id: 'text-3' }, 'a widget');
@@ -409,7 +414,7 @@ describe('what each part of a WordPress page names, under a stand-in WordPress',
     assert.equal(one(parts, 'Excerpt', 1).identity, undefined, 'an excerpt WordPress made from the content is not the excerpt field');
 
     // Nothing stable to name.
-    for (const label of ['Block template canvas', 'sidebar.php', 'Widget area: Sidebar', '[gallery]']) assert.equal(one(parts, label).identity, undefined, label);
+    for (const label of ['Block template canvas', 'Widget area: Sidebar', '[gallery]']) assert.equal(one(parts, label).identity, undefined, label);
   });
 
   test('after an edit elsewhere on the page, every part is found again by its key, though its part id moved', () => {

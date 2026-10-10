@@ -138,7 +138,9 @@ export const LIVE_STUB = String.raw`(() => {
     cover: async (covered) => (covered ? FRAME : null),
     reload: async () => {}, css: async () => 0,
     go: async (url) => { L.went.push(url); view = { url, title: url }; setTimeout(tell, 0); return true; },
-    back: async () => {}, forward: async () => {}, open: async () => {}, devtools: async () => {},
+    back: async () => {}, forward: async () => {}, open: async () => {},
+    // The page's DevTools, quiet: this stand-in draws no page to inspect.
+    devtoolsShow: async () => 'closed', devtoolsBounds: () => {}, devtoolsHide: async () => null, devtoolsClose: async () => {}, devtoolsDetach: async () => false, devtoolsInspect: async () => false, onDevtools: () => () => {}, reveal: async () => null,
     scan: async () => [], outline: async () => 0, clear: async () => {}, pick: async () => null, choose: async () => null, cancelPick: async () => {},
     capture: async () => null, problems: async () => [], mutations: async () => 0, picked: async () => null,
     helperChanged: async () => null, helperSave: async () => ({ ok: false, error: 'stand-in', label: null }), hasScript: async () => true,

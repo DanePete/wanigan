@@ -263,6 +263,9 @@ test('a brief to an agent names the edit’s element as the site stores it, and 
     '   No picture of it is attached: it was made on /events, and the live view shows /about.',
   ]);
   assert.equal(layerNoteLines({ ...note, noPicture: null }, true).length, 2, 'pictured: nothing to say');
+  // Why making it real handed it to an agent: the template, its line and the child theme the change belongs in.
+  const why = 'These words are written in wp-content/themes/acme/header.php, a template of the parent theme “Acme”: code. They are on line 12.';
+  assert.equal(layerNoteLines({ ...note, noPicture: null, why }, true)[2], `   Why Wanigan did not make it real itself: ${why}`);
 });
 
 test('what a verification says whatever it decided: the page before compared or why not, how far down, what was held, and what was left out', () => {

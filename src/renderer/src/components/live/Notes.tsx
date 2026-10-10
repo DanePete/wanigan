@@ -1,7 +1,7 @@
 // Writing notes on the live page and sending them to an agent: the box under a
 // chosen part, the list of notes waiting (the dock's Notes tab, with the words
 // saved by hand), and the one message they become.
-import { useState } from 'react';
+import { useState, type KeyboardEvent, type ReactNode } from 'react';
 import type { LayerSnapshot } from '@shared/design-layer';
 import type { LiveComponent, LiveEdit } from '@shared/live';
 import type { ProjectSummary, Session } from '@shared/model';
@@ -34,10 +34,12 @@ const sessionLabel = (s: Session): string => (s.cardKey ? `${s.cardKey} · ${s.t
  */
 async function send(notes: readonly LiveNote[], to: Session, components: Map<string, LiveComponent>): Promise<true> {
   const ids: string[] = [];
+  const save = async (name: string, data: string): Promise<void> => { ids.push((await call('attachments.save', { to: { session: to.id }, name, data })).id); };
   for (const [i, n] of notes.entries()) {
-    if (!n.shot) continue;
-    ids.push((await call('attachments.save', { to: { session: to.id }, name: `live-note-${i + 1}.png`, data: n.shot })).id);
-    if (n.after) ids.push((await call('attachments.save', { to: { session: to.id }, name: `live-note-${i + 1}-wanted.png`, data: n.after })).id);
+    // A snap's picture, or a part's; then the order wanted; then a recording's key frames (pictures only: never its video).
+    if (n.shot) await save(n.kind === 'snap' ? `live-snap-${i + 1}.png` : `live-note-${i + 1}.png`, n.shot);
+    if (n.shot && n.after) await save(`live-note-${i + 1}-wanted.png`, n.after);
+    for (const [k, frame] of (n.frames ?? []).entries()) await save(`live-recording-${i + 1}-frame-${k + 1}.jpg`, frame);
   }
   await call('sessions.queue', { id: to.id, text: notesText(notes, (id) => components.get(id)?.dir ?? null), attachments: ids });
   return true;
@@ -49,11 +51,28 @@ function SendTo({ agents, value, onChange }: { agents: Session[]; value: string;
   return <Select<string> label="Send to" size="s" value={value} onChange={onChange} options={agents.map((s) => ({ value: s.id, label: sessionLabel(s) }))} />;
 }
 
+/** What a snap or a recording hands the composer: its pictures, the words it fills in, and what is said about it. */
+export interface ComposeWith {
+  kind: 'snap' | 'recording';
+  /** The marked-up picture (a snap's), PNG base64. */
+  shot?: string | null;
+  /** Key frames (a recording's), JPEG base64, in time order. */
+  frames?: string[];
+  /** The context it fills in: shown, and the owner's to edit. */
+  context: string;
+  /** Said under the boxes: what an agent gets (a recording: no video). */
+  notice?: ReactNode;
+}
+
 /**
  * The box under a chosen part: what should change, kept as a note or sent at
  * once. A change tried by hand (new words, a style) rides along in the draft.
+ * A snap or a recording opens it `with` its pictures and context: the owner's
+ * explanation goes first, the context (theirs to edit) under it, and `voice`
+ * sits beside the explanation box (where voice input goes; empty until it is
+ * built).
  */
-export function NoteComposer({ project, draft, components, prefer, compact = false, picture = true, onDone }: {
+export function NoteComposer({ project, draft, components, prefer, compact = false, picture = true, with: given, voice, onDone }: {
   project: ProjectSummary;
   draft: Draft;
   components: Map<string, LiveComponent>;
@@ -61,24 +80,33 @@ export function NoteComposer({ project, draft, components, prefer, compact = fal
   compact?: boolean;
   /** Attach a picture of the view: false when the view shows another page than the one the note is about. */
   picture?: boolean;
+  /** A snap's or a recording's pictures and context, in place of a picture of the view. */
+  with?: ComposeWith;
+  /** A control beside the explanation box: voice input. */
+  voice?: ReactNode;
   onDone?: () => void;
 }) {
   const toast = useToast();
   const agents = useAgents(project);
   const [text, setText] = useState('');
+  const [context, setContext] = useState(given?.context ?? '');
   const [to, setTo] = useState(prefer ?? '');
   const target = agents.find((s) => s.id === to) ?? agents.find((s) => s.id === prefer) ?? agents[0];
   const mac = bridge().platform === 'darwin';
   const hasChange = !!draft.words || draft.style.length > 0;
-  const ready = text.trim().length > 0 || hasChange;
+  const ready = text.trim().length > 0 || hasChange || (!!given && context.trim().length > 0);
+  const said = (): string => (given ? [text.trim(), context.trim()].filter(Boolean).join('\n\n') : text.trim());
 
-  const note = async (): Promise<LiveNote> => ({ ...draft, text: text.trim(), shot: picture ? await liveBridge()?.capture() ?? null : null, id: '', at: Date.now() });
+  const note = async (): Promise<LiveNote> => (given
+    ? { ...draft, text: said(), kind: given.kind, shot: given.shot ?? null, frames: given.frames ?? [], id: '', at: Date.now() }
+    : { ...draft, text: text.trim(), shot: picture ? await liveBridge()?.capture() ?? null : null, id: '', at: Date.now() });
   const keep = async (): Promise<void> => {
     if (!ready) return;
     const n = await note();
     addNote(project.id, n);
     setText('');
-    toast('Added to the notes. Send them together from the Notes tab.');
+    toast(given ? `Saved to Notes, ${given.kind === 'snap' ? 'with the picture' : `with ${given.frames?.length ?? 0} key frames`}. Send it from the Notes tab.`
+      : 'Added to the notes. Send them together from the Notes tab.');
     onDone?.();
   };
   const now = async (): Promise<void> => {
@@ -91,18 +119,37 @@ export function NoteComposer({ project, draft, components, prefer, compact = fal
     onDone?.();
   };
 
+  const keys = (e: KeyboardEvent<HTMLTextAreaElement>): void => {
+    // ⇧⌘↩ sends it now (the live view's key for sending); ⌘↩ keeps it with the others.
+    if (isSendKey(e, mac)) { e.preventDefault(); e.stopPropagation(); if (agents.length) void now(); else toast(`Start a session in ${project.name} to send it.`, 'error'); }
+    else if (isAddKey(e, mac)) { e.preventDefault(); void keep(); }
+  };
+  const chord = (...k: string[]): string => k.map((x) => keyLabel(x, mac)).join(mac ? '' : '+');
+  const explain = (
+    <textarea aria-label={given ? 'What is wrong, in your words' : 'What should change here?'} rows={compact ? 1 : 3} value={text}
+      placeholder={given ? `Explain what is wrong${given.kind === 'recording' ? ' and what you expected' : ''}` : hasChange ? 'Anything to add? (optional)' : 'What should change here?'}
+      onChange={(e) => setText(e.target.value)} onKeyDown={keys} />
+  );
   return (
-    <form className={`live-compose${compact ? ' compact' : ''}`} onSubmit={(e) => { e.preventDefault(); void keep(); }}>
-      <textarea aria-label="What should change here?" rows={compact ? 1 : 3} value={text}
-        placeholder={hasChange ? 'Anything to add? (optional)' : 'What should change here?'}
-        onChange={(e) => setText(e.target.value)}
-        onKeyDown={(e) => {
-          // ⇧⌘↩ sends it now (the live view's key for sending); ⌘↩ keeps it with the others.
-          if (isSendKey(e, mac)) { e.preventDefault(); e.stopPropagation(); if (agents.length) void now(); else toast(`Start a session in ${project.name} to send it.`, 'error'); }
-          else if (isAddKey(e, mac)) { e.preventDefault(); void keep(); }
-        }} />
+    <form className={`live-compose${compact ? ' compact' : ''}${given ? ' with' : ''}`} onSubmit={(e) => { e.preventDefault(); void keep(); }}>
+      {given ? (
+        <>
+          {/* The explanation, with voice input's place beside it (data-slot="voice"). */}
+          <div className="live-compose-say">
+            {explain}
+            <div className="live-compose-voice" data-slot="voice">{voice}</div>
+          </div>
+          <label className="live-compose-context">
+            <span className="small faint">Sent with it, yours to edit</span>
+            <textarea aria-label="Context sent with it" rows={8} value={context} spellCheck={false} className="mono"
+              onChange={(e) => setContext(e.target.value)} onKeyDown={keys} />
+          </label>
+          {given.notice ? <p className="small faint live-compose-notice">{given.notice}</p> : null}
+        </>
+      ) : explain}
       <div className="live-compose-actions">
-        <Button size="s" tone="primary" type="submit" icon="note" disabled={!ready}>Add to notes</Button>
+        <Button size="s" tone="primary" type="submit" icon="note" disabled={!ready} aria-keyshortcuts={mac ? 'Meta+Enter' : 'Control+Enter'}
+          title={`${chord('Mod', 'Enter')} ${given ? 'saves it to Notes without sending' : 'adds it to the notes'}`}>{given ? 'Save to Notes' : 'Add to notes'}</Button>
         {agents.length ? (
           <>
             <SendTo agents={agents} value={target?.id ?? ''} onChange={setTo} />
@@ -112,7 +159,12 @@ export function NoteComposer({ project, draft, components, prefer, compact = fal
           </>
         ) : null}
       </div>
-      {!compact ? (
+      {given ? (
+        <p className="faint small">
+          {chord('Mod', 'Enter')} saves it to Notes{agents.length ? <>, {chord('Shift', 'Mod', 'Enter')} sends it now</> : null}.
+          {agents.length ? '' : ` Start a session in ${project.name} to send it; until then it waits in Notes.`}
+        </p>
+      ) : !compact ? (
         <p className="faint small">
           {keyLabel('Mod', mac)}{mac ? '' : '+'}{keyLabel('Enter', mac)} adds it{agents.length ? <>, {keyLabel('Shift', mac)}{mac ? '' : '+'}{keyLabel('Mod', mac)}{mac ? '' : '+'}{keyLabel('Enter', mac)} sends it now</> : null}. Notes go to an agent together, with a picture of each part.
           {agents.length ? '' : ` Start a session in ${project.name} to send them.`}
@@ -178,14 +230,16 @@ export function NotesTab({ project, components, sender, onShow }: {
               <span className="live-note-num" aria-hidden="true">{i + 1}</span>
               <div className="live-note-body">
                 <span className="live-note-what">
-                  {name ? <Icon name={KIND_ICON[name.icon]} size={13} /> : null}
-                  {name?.title ?? n.pick?.tag ?? 'Part'}
+                  {n.kind ? <Icon name={n.kind === 'snap' ? 'camera' : 'record'} size={13} /> : name ? <Icon name={KIND_ICON[name.icon]} size={13} /> : null}
+                  {n.kind === 'snap' ? 'Snap' : n.kind === 'recording' ? `Recording, ${n.frames?.length ?? 0} key ${n.frames?.length === 1 ? 'frame' : 'frames'}` : name?.title ?? n.pick?.tag ?? 'Part'}
                 </span>
-                {n.text ? <span className="small">{n.text}</span> : null}
+                {/* A snap's or a recording's words run long (its context, its step log): their first line here. */}
+                {n.text ? <span className="small">{n.kind ? n.text.split('\n')[0] : n.text}</span> : null}
                 {n.words ? <span className="small faint">“{n.words.before}” → “{n.words.after}”</span> : null}
                 {n.style.length ? <span className="small faint">{n.style.map((s) => `${s.property} ${s.to}`).join(' · ')}</span> : null}
               </div>
-              {n.shot ? <img className="live-note-shot" src={`data:image/png;base64,${n.shot}`} alt="" /> : null}
+              {n.shot ? <img className="live-note-shot" src={`data:image/png;base64,${n.shot}`} alt="" />
+                : n.frames?.[0] ? <img className="live-note-shot" src={`data:image/jpeg;base64,${n.frames[0]}`} alt="" /> : null}
               <IconButton icon="close" label={`Remove note ${i + 1}`} onClick={() => removeNote(project.id, n.id)} />
             </li>
           );

@@ -85,6 +85,8 @@ test('what the app answers is bounded and checked before anything reads it', () 
   assert.equal(regions[0]!.file!.length, 300);
   assert.deepEqual(regions[0]!.rect, { x: 1_000_000, y: 0, width: 0, height: 10 });
   assert.deepEqual(regions[0]!.suggestions, ['a', 'b']);
+  assert.equal('paragraph' in regions[0]!, false, 'no paragraph mark: none kept');
+  assert.equal(cleanRegions([{ index: 0, paragraph: '5:0a1b-f6:50' }])[0]!.paragraph, '5:0a1b-f6:50', 'a paragraph’s mark is kept');
   const page = cleanRendered({ url: SITE, regions: [], texts: { 0: '  a   b  ', x: 'no', 1: 5 }, image: { data: '<script>', width: 10 }, source: 'elsewhere', problems: [{ text: 'boom', source: 'weird' }] });
   assert.deepEqual(page.texts, { 0: 'a b' });
   assert.equal(page.image, null, 'not base64: no picture');

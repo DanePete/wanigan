@@ -246,7 +246,14 @@ shows only in the floor.
    words also changed in one other place"), never a failure; anything else
    that changed is a difference named by its element. Pixels are compared
    only inside elements that kept their place and size and hold nothing that
-   moved. With no page from before (an edit made real elsewhere), or another
+   moved. What the page decides for itself is set aside, with everything in
+   it, and named among what was masked: an element a script added after the
+   page arrived (not in the HTML the server sent, found by lining the page up
+   with that HTML child by child, so it does not move its siblings' paths
+   either: a marketing form, a chat bubble), and an element the page's two
+   renders of the same version did not agree on (present in one only, or with
+   other words or values). An element the server sent, that both renders
+   agree on and the save changed, still fails. With no page from before (an edit made real elsewhere), or another
    edit made real on the page since, the verdict says this could not run, and
    why.
 4. **States and edges.** Hover, focus and active forced on the touched
@@ -303,6 +310,10 @@ before adding it:
   verified, and named in the verdict. What nothing declares (a theme's own
   `rand()` or `time()`, remote embeds, script-driven content) is not masked:
   it raises the noise floor.
+- What a script adds after the page arrives, and whatever the page does not
+  agree on with itself between two renders, is set aside, not compared;
+  a script that changes the server's own elements in the same way on every
+  visit is compared, as the page shows it.
 - Step 3 against the page from before runs only where one was kept just
   before the edit was made real, and no other edit has been made real on
   that page since; otherwise the verdict says it did not run.
@@ -355,7 +366,9 @@ helper can name carries `identity`:
   `Section::toRenderArray()` gives it in its region, so a reorder or a move
   to another section or region keeps it, on the stored entity it is rendered
   for (`<entity type>:<entity UUID>/<component UUID>`), with its block plugin
-  so `kind` reaches every component of that plugin in a layout. The entity is
+  so `kind` reaches every component of that plugin in a layout. A paragraph
+  (a composite) is named as itself, and its identity and its fields' add the
+  `revision` the page showed, which neither the key nor `kind` counts. The entity is
   part of it because one UUID can name two stored things: a display's
   default layout is shared by every entity without its own, and an entity's
   own layout starts as a copy of the default, UUIDs and all. A placement and
@@ -373,7 +386,13 @@ helper can name carries `identity`:
   `entity` `term`; `post_title`, `post_content`, `post_excerpt` or a
   registered meta key as `field`. A block in stored markup is `block` (its
   store, path and name). A widget, menu item, template and template part are
-  `config`. WordPress keeps no id for a block, so a block's path is a place:
+  `config`. A theme's PHP template file (header.php, a template part, the page
+  template a classic theme's hierarchy chose) is `template`: the theme's
+  folder, the file's path in it, and whether that theme is the active one, its
+  child or the parent of the active child (the role is not in the key). A
+  plugin's or core's file has none. Such a file runs once for each place it is
+  loaded, so an edit for one element in it reaches only the places that show
+  the words it was made on. WordPress keeps no id for a block, so a block's path is a place:
   after a reorder its identity stays with the place (seen on the Fieldnotes
   demo). What keeps an edit from landing on the block that moved there is
   the target's text hash, which is therefore taken over all of the element's
@@ -445,14 +464,32 @@ or the project.
      storage is saved (an entity's own layout as a new revision); a default
      layout every entity of a bundle shares answers first with how far it
      reaches and a token, and is saved when made real again, the layer
-     sending that token back.
+     sending that token back. Words in a paragraph (any composite its host
+     pins by revision, known by its type naming its parent fields) are never
+     saved in the paragraph: the Paragraphs site adapter walks up to the root
+     content, refuses on its state (any newer revision, whose draft keeps its
+     own copy of the paragraph; access; the workflow and every violation),
+     goes down its default revision to the item pinning the revision the page
+     showed (else the page is stale), changes that paragraph, marks it and
+     every paragraph above it as needing a save, and saves the root as a new
+     revision with its log, user and changed time. A Paragraphs Library item
+     asks first with its reach and a token, as a default layout does; an open
+     Layout Paragraphs builder holding a copy, an orphan, a composite it
+     cannot walk, a translatable paragraphs field, and a paragraph with no
+     translation in the page's language are refused. Every answer carries the
+     saved content's address after the save and before it, and a save that
+     moved the page shown (a new alias) takes the view to the new address
+     instead of reloading the old one.
    - Otherwise (WordPress's helper marks no field; it saves fields through
      schema targets, as both helpers save configuration): the one
      `via: 'schema'` edit target of the page's trace whose value, or a string
      property of it, equals the words as the site rendered them (whitespace
      folded, wptexturize's quotes, dashes and ellipsis read as typed): a title,
      an excerpt, a string meta, the site title or tagline, a menu link's text
-     (its address sent back as it was), a WordPress block's words; on Drupal a
+     (its address sent back as it was), a WordPress block's words, a term's
+     name a menu built from the term or an archive's heading shows (saved
+     through `wp_update_term()`, and asked first: it shows wherever the term
+     does); on Drupal a
      block's title, the site's name or slogan, one run of a view's header,
      footer or empty text (offered run by run, so its markup is never in the
      value), a content menu link's text, or a webform's words through the
@@ -514,7 +551,22 @@ or the project.
      strings, which are interface translation; a caption; words across
      formatting; a draft; words code makes from what is not saved here). The
      Drupal helper lists each template part's own words, read by Drupal's
-     Twig lexer, for this. Nothing holding the words, more than one thing
+     Twig lexer, for this, and the WordPress helper each PHP template file's,
+     read with PHP's tokenizer (never run; bounded, a file not read saying
+     why): the runs of words typed into its HTML, cut wherever its PHP runs,
+     and the literal first argument of the gettext functions, by text domain,
+     each with its line. On WordPress a theme template's words and strings
+     answer `route: 'agent'` with the file, the line and a string's text
+     domain (a translation file is the way without code; a parent theme's file
+     under an active child is changed as a copy at the same path in the child
+     theme); a plugin's or core's template says whose it is; words in no
+     template are said by what made their part (a plugin or the theme's own
+     code, named from its file; the template's PHP, never guessed at; a
+     template not read).
+     An element no part with an identity names is looked up the same way from
+     the trace's parts around it (the page script's `layerOf` lists them), on
+     both platforms, and only an element outside every traced part is said to
+     be unknown. A brief to an agent carries the answer's why. Nothing holding the words, more than one thing
      holding them (named), a changed page, a target the trace says this user
      may not change, or a refusal from the site (passed on as the site said
      it) answers `route: 'none'`, with why.

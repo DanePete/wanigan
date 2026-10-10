@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron';
-import type { CoreProblem, CoreStatus, LiveBridge, LiveViewState, PickedFiles, WaniganBridge } from '../shared/bridge.ts';
+import type { CoreProblem, CoreStatus, LiveBridge, LiveRecordState, LiveViewState, PickedFiles, WaniganBridge } from '../shared/bridge.ts';
 import type { LiveEdited } from '../shared/live-lens.ts';
 import type { AppState } from '../shared/settings.ts';
 
@@ -16,7 +16,19 @@ const live: LiveBridge = {
   back: () => ipcRenderer.invoke('live:back') as Promise<void>,
   forward: () => ipcRenderer.invoke('live:forward') as Promise<void>,
   open: () => ipcRenderer.invoke('live:open') as Promise<void>,
-  devtools: () => ipcRenderer.invoke('live:devtools') as Promise<void>,
+  // The page's own DevTools, in the dock or its own window (src/main/live-devtools.ts).
+  devtoolsShow: (bounds, focus) => ipcRenderer.invoke('live:devtoolsShow', bounds, focus === true) as ReturnType<LiveBridge['devtoolsShow']>,
+  devtoolsBounds: (bounds) => ipcRenderer.send('live:devtoolsBounds', bounds),
+  devtoolsHide: (frame) => ipcRenderer.invoke('live:devtoolsHide', frame === true) as Promise<string | null>,
+  devtoolsClose: () => ipcRenderer.invoke('live:devtoolsClose') as Promise<void>,
+  devtoolsDetach: () => ipcRenderer.invoke('live:devtoolsDetach') as Promise<boolean>,
+  devtoolsInspect: (x, y) => ipcRenderer.invoke('live:devtoolsInspect', x, y) as Promise<boolean>,
+  onDevtools(listener) {
+    const handler = (_e: IpcRendererEvent, mode: unknown): void => { if (mode === 'closed' || mode === 'docked' || mode === 'detached') listener(mode); };
+    ipcRenderer.on('live:devtoolsMode', handler);
+    return () => { ipcRenderer.off('live:devtoolsMode', handler); };
+  },
+  reveal: (index) => ipcRenderer.invoke('live:reveal', index) as ReturnType<LiveBridge['reveal']>,
   scan: () => ipcRenderer.invoke('live:scan') as ReturnType<LiveBridge['scan']>,
   outline: (indexes, label, tone) => ipcRenderer.invoke('live:outline', indexes, label, tone ?? 'edit') as Promise<number>,
   clear: () => ipcRenderer.invoke('live:clear') as Promise<void>,
@@ -89,6 +101,19 @@ const live: LiveBridge = {
   gotoFocus: () => ipcRenderer.invoke('live:gotoFocus') as Promise<boolean>,
   gotoReturn: () => ipcRenderer.invoke('live:gotoReturn') as Promise<void>,
   openInBrowser: (projectId, path) => ipcRenderer.invoke('live:openInBrowser', projectId, path) as Promise<boolean>,
+  // Snap and Record (src/main/live-snap.ts, src/main/live-record.ts).
+  snap: (mode) => ipcRenderer.invoke('live:snap', mode) as ReturnType<LiveBridge['snap']>,
+  recordStart: () => ipcRenderer.invoke('live:recordStart') as ReturnType<LiveBridge['recordStart']>,
+  recordStop: () => ipcRenderer.invoke('live:recordStop') as ReturnType<LiveBridge['recordStop']>,
+  recordSay: (text) => ipcRenderer.invoke('live:recordSay', text) as Promise<boolean>,
+  onRecord(listener) {
+    const handler = (_e: IpcRendererEvent, state: LiveRecordState): void => listener(state);
+    ipcRenderer.on('live:record', handler);
+    return () => { ipcRenderer.off('live:record', handler); };
+  },
+  recordFile: (projectId, id, file) => ipcRenderer.invoke('live:recordFile', projectId, id, file) as Promise<string | null>,
+  recordReveal: (projectId, id) => ipcRenderer.invoke('live:recordReveal', projectId, id) as Promise<boolean>,
+  recordDelete: (projectId, id) => ipcRenderer.invoke('live:recordDelete', projectId, id) as Promise<boolean>,
 };
 
 const bridge: WaniganBridge = {

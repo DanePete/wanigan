@@ -370,6 +370,7 @@ export function cleanRegions(raw: unknown): LiveRegion[] {
       index: r.index as number,
       file: str(r.file), entity: str(r.entity), block: str(r.block), view: str(r.view), element: str(r.element),
       component: str(r.component), piece: str(r.piece), hook: str(r.hook), field: str(r.field),
+      ...(typeof r.paragraph === 'string' ? { paragraph: r.paragraph.slice(0, MAX_FIELD) } : {}),
       suggestions: Array.isArray(r.suggestions) ? r.suggestions.filter((s): s is string => typeof s === 'string').slice(0, 12).map((s) => s.slice(0, 120)) : [],
       parent: Number.isInteger(r.parent) ? r.parent as number : null,
       order: Number.isInteger(r.order) ? r.order as number : r.index as number,

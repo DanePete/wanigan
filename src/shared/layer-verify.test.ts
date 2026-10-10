@@ -3,8 +3,8 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import {
-  against, applyMask, compareElements, compareOutside, comparePixels, diffBitmaps, diffPicture, editsAt, judge, maskedOf, masksAmong, noiseFloor, onlyWhere, parseVerdict,
-  reachOf, sameWordsMoved, traceMasks, unionDiff, varyWhy, verdictNoise, verifyWidths, withinNoise, zonesOf,
+  LATE_WHY, UNSTABLE_WHY, against, applyMask, compareElements, compareOutside, comparePixels, diffBitmaps, diffPicture, editsAt, judge, lateMasks, maskedOf, masksAmong,
+  noiseFloor, onlyWhere, parseVerdict, reachOf, sameWordsMoved, traceMasks, unionDiff, unstableOf, varyWhy, verdictNoise, verifyWidths, withinNoise, zonesOf,
   type Bitmap, type ElementSnap, type PageSnap, type PixelArea, type RenderMask, type WidthFindings,
 } from './layer-verify.ts';
 import type { TracePart } from './live-trace.ts';
@@ -391,4 +391,44 @@ test('a difference outside the edited elements and the save’s reach are read s
   ] as const) assert.equal(parseVerdict({ ...v, ...over }), null, what);
   const failed = judge([{ width: 390, noise: { maxDiff: 0, pixels: 0 }, elements: [], pixels: { near: { maxDiff: 0, pixels: 0, differences: [] }, rest: { maxDiff: 0, pixels: 0, differences: [] } }, outside: v.differences as never }]);
   assert.deepEqual([failed.failed, failed.differences.length], ['rest', 1], 'a difference outside fails the rest of the page');
+});
+
+test('what the page does not agree on with itself in two renders is set aside, the outermost of it, and named; what it agrees on is compared', () => {
+  const first = pageOf([
+    ['body > main:nth-of-type(1)', 'main', [0, 0, 64, 100], null],
+    ['body > main:nth-of-type(1) > p:nth-of-type(1)', 'p.lead', [0, 0, 64, 40], 'Learn the strokes.'],
+    ['body > div:nth-of-type(1)', 'div.acme-signup-frame', [0, 120, 64, 30], null],
+    ['body > div:nth-of-type(1) > form:nth-of-type(1)', 'form', [0, 120, 64, 30], 'Sign up'],
+    ['body > aside:nth-of-type(1)', 'aside.quote', [0, 160, 64, 20], 'Quote one'],
+    ['body > h1:nth-of-type(1)', 'h1.title', [0, 190, 64, 10], 'A', undefined, true],
+  ]);
+  const second = pageOf([
+    ['body > main:nth-of-type(1)', 'main', [0, 0, 64, 100], null],
+    ['body > main:nth-of-type(1) > p:nth-of-type(1)', 'p.lead', [0, 0, 64, 40], 'Learn the strokes.'],
+    ['body > aside:nth-of-type(1)', 'aside.quote', [0, 160, 64, 20], 'Quote two'],
+    ['body > h1:nth-of-type(1)', 'h1.title', [0, 190, 64, 10], 'B', undefined, true],
+  ]);
+  const found = unstableOf(first, second);
+  assert.deepEqual(found.paths, ['body > div:nth-of-type(1)', 'body > aside:nth-of-type(1)'], 'a form in one render only (not its form for itself), a quote that rotates; never an edited element');
+  assert.deepEqual(found.masks.map((m) => [m.label, m.why, m.rects]), [
+    ['div.acme-signup-frame', UNSTABLE_WHY, [{ x: 0, y: 120, width: 64, height: 30 }]],
+    ['aside.quote', UNSTABLE_WHY, [{ x: 0, y: 160, width: 64, height: 20 }, { x: 0, y: 160, width: 64, height: 20 }]],
+  ]);
+  assert.deepEqual(unstableOf(first, first), { paths: [], masks: [] }, 'a page that agrees with itself sets nothing aside');
+  // Step 3 leaves what was set aside, and everything in it, uncompared; what the page agreed on is still compared.
+  const before = pageOf([
+    ['body > main:nth-of-type(1)', 'main', [0, 0, 64, 100], null],
+    ['body > main:nth-of-type(1) > p:nth-of-type(1)', 'p.lead', [0, 0, 64, 40], 'Learn the basics.'],
+    ['body > aside:nth-of-type(1)', 'aside.quote', [0, 160, 64, 20], 'Quote three'],
+  ]);
+  const compared = compareOutside({ before, result: first, width: 390, against: { edit: 'e1', at: 5 }, words: null, masked: { before: [], result: [] }, unstable: found.paths });
+  assert.deepEqual(compared.differences.map((d) => (d.kind === 'outside' ? [d.element, d.property, d.result] : null)), [['p.lead', 'text', 'Learn the strokes.']],
+    'the server’s paragraph that changed still fails; the form and the rotating quote do not');
+});
+
+test('what a script added after the page loaded is named among what was left out, with why', () => {
+  assert.deepEqual(lateMasks({ late: [{ name: 'div.acme-signup-frame', box: { x: 0, y: 120, width: 64, height: 30 } }, { name: 'iframe', box: { x: 0, y: 0, width: 0, height: 0 } }] }),
+    [{ label: 'div.acme-signup-frame', why: LATE_WHY, rects: [{ x: 0, y: 120, width: 64, height: 30 }], held: false }], 'one that takes no room left nothing out');
+  assert.equal(LATE_WHY, 'added by a script after the page loaded');
+  assert.deepEqual(lateMasks(null), []);
 });

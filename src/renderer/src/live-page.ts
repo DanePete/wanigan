@@ -22,8 +22,8 @@
 // - The Wanigan helpers' marks: `<!-- wl:begin file="..." -->` /
 //   `<!-- wl:end file="..." -->` (WordPress template files),
 //   `<!-- wl:begin entity="post:page:42:full" -->` (a post's content), and the
-//   attributes data-wl-entity, data-wl-block, data-wl-view, data-wl-piece and
-//   data-wl-field.
+//   attributes data-wl-entity, data-wl-block, data-wl-view, data-wl-piece,
+//   data-wl-field and data-wl-paragraph.
 // - Elementor's own data-element_type, data-widget_type and data-id.
 // - The helpers' trace marks: `<!-- wl:part id="p12" -->` … `<!-- /wl:part
 //   id="p12" -->` around each part the page's trace describes
@@ -113,7 +113,7 @@ export function livePage(): void {
   type Rect = { x: number; y: number; width: number; height: number };
   type Info = {
     file: string | null; entity: string | null; block: string | null; view: string | null; element: string | null;
-    hook: string | null; component: string | null; piece: string | null; field: string | null; suggestions: string[]; part: string | null;
+    hook: string | null; component: string | null; piece: string | null; field: string | null; paragraph: string | null; suggestions: string[]; part: string | null;
   };
   /** `at`: where its opening mark is among the page's marks, for pairing with the trace's parts. */
   type Region = Info & { index: number; range: Range | null; el: Element | null; parent: number | null; order: number; at: number };
@@ -239,7 +239,7 @@ export function livePage(): void {
   function info(r: Region): Info {
     return {
       file: r.file, entity: r.entity, block: r.block, view: r.view, element: r.element, hook: r.hook,
-      component: r.component, piece: r.piece, field: r.field, suggestions: r.suggestions, part: r.part,
+      component: r.component, piece: r.piece, field: r.field, paragraph: r.paragraph, suggestions: r.suggestions, part: r.part,
     };
   }
 
@@ -289,7 +289,7 @@ export function livePage(): void {
 
   function scan(): (Info & { index: number; rect: Rect; parent: number | null; order: number })[] {
     regions = [];
-    const blank: Info = { file: null, hook: null, entity: null, block: null, view: null, element: null, component: null, piece: null, field: null, suggestions: [], part: null };
+    const blank: Info = { file: null, hook: null, entity: null, block: null, view: null, element: null, component: null, piece: null, field: null, paragraph: null, suggestions: [], part: null };
     // What has begun and not yet ended, by what will end it: a template's file, a component's id, a trace part's id.
     const open: { key: string; info: Info; begin: Comment; at: number }[] = [];
     /** The trace's parts, as ranges, until they are paired with the regions they are. */
@@ -352,7 +352,7 @@ export function livePage(): void {
       if (e) close(`file ${unescape(e[1] as string)}`, comment);
     }
     const commented = regions.filter((r) => r.component);
-    const marked = document.querySelectorAll('[data-wl-entity], [data-wl-block], [data-wl-view], [data-wl-piece], [data-wl-field], [data-component-id], [data-element_type][data-id]');
+    const marked = document.querySelectorAll('[data-wl-entity], [data-wl-block], [data-wl-view], [data-wl-piece], [data-wl-field], [data-wl-paragraph], [data-component-id], [data-element_type][data-id]');
     for (const el of Array.from(marked)) {
       if (el.closest(`#${HOST_ID}`)) continue;
       const type = el.getAttribute('data-element_type');
@@ -367,9 +367,10 @@ export function livePage(): void {
         component: el.getAttribute('data-component-id'),
         piece: el.getAttribute('data-wl-piece'),
         field: el.getAttribute('data-wl-field'),
+        paragraph: el.getAttribute('data-wl-paragraph'),
       };
       // A component the debug comments already found is one region, not two.
-      const only = !region.entity && !region.block && !region.view && !region.element && !region.piece && !region.field;
+      const only = !region.entity && !region.block && !region.view && !region.element && !region.piece && !region.field && !region.paragraph;
       if (only && commented.some((r) => r.component === region.component && contains(r, el))) continue;
       regions.push(region);
     }
@@ -819,6 +820,41 @@ export function livePage(): void {
     const r = regions[index];
     const box = r ? viewRect(r) : null;
     return box ? { x: Math.round(box.left), y: Math.round(box.top), width: Math.round(box.width), height: Math.round(box.height) } : null;
+  }
+
+  /**
+   * A part's box in the view, the page scrolled to it first when none of it is on screen: a region from the last scan,
+   * or the picked element (null), with the viewport's size it was measured in. Show in DevTools points DevTools'
+   * inspector at the centre of what of it is on screen. Scrolled instantly, never smoothly: a site's smooth scrolling
+   * would leave the box where it was when it is read.
+   */
+  function reveal(index: number | null): (Rect & { viewWidth: number; viewHeight: number }) | null {
+    const r = index === null ? null : regions[index];
+    if (index !== null && !r) return null;
+    const box = (): DOMRect | null => {
+      if (r) return viewRect(r);
+      const b = target()?.getBoundingClientRect();
+      return b && (b.width >= 1 || b.height >= 1) ? b : null;
+    };
+    let b = box();
+    if (!b) return null;
+    if (b.bottom <= 0 || b.top >= innerHeight || b.right <= 0 || b.left >= innerWidth) {
+      // Its first element (a part marked by comments is the nodes between them), which scrolls any box it sits in.
+      let el: Element | null = r ? r.el : target();
+      if (!el && r?.range) {
+        let n: Node | null = r.range.startContainer.childNodes[r.range.startOffset] ?? r.range.startContainer;
+        while (n && !(n instanceof Element) && r.range.isPointInRange(n, 0)) n = n.nextSibling;
+        el = n instanceof Element ? n : r.range.startContainer instanceof Element ? r.range.startContainer : r.range.startContainer.parentElement;
+      }
+      el?.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'instant' });
+      b = box();
+      if (b && (b.bottom <= 0 || b.top >= innerHeight)) {
+        scrollBy({ top: b.top + b.height / 2 - innerHeight / 2, behavior: 'instant' });
+        b = box();
+      }
+      if (!b) return null;
+    }
+    return { x: Math.round(b.left), y: Math.round(b.top), width: Math.round(b.width), height: Math.round(b.height), viewWidth: innerWidth, viewHeight: innerHeight };
   }
 
   function outline(indexes: number[], label: string | null, tone: Tone = 'edit'): number {
@@ -1468,13 +1504,80 @@ export function livePage(): void {
     return { parts: out, vary };
   }
 
+  /** Elements a script added after the server sent the page, as layerLate last found them; null until it runs. */
+  let late: WeakSet<Element> | null = null;
+
+  /**
+   * For the verification: which elements of the page are not in the HTML the server sent (`html`, as the main process
+   * read the response), so a script added them after it arrived (a marketing form, a chat bubble, a consent banner).
+   * The page as sent is parsed apart (DOMParser runs no script), and each element's children are lined up with the
+   * children the server sent it, in order, by name, id and classes (a script may add classes to what it finds; it
+   * cannot make a server's element out of its own); a child with none to line up with was added, and so was all of
+   * it. What is never shown, and the page script's own overlay, are left out of the lining up. Answers the outermost
+   * of each, with its name and box; layerPage leaves them out after.
+   */
+  function layerLate(html: string): unknown {
+    late = null;
+    if (typeof html !== 'string' || !html || !document.body) return null;
+    let server: Document;
+    try { server = new DOMParser().parseFromString(html, 'text/html'); } catch { return null; }
+    if (!server.body) return null;
+    const found = new WeakSet<Element>();
+    const roots: Element[] = [];
+    const kids = (el: Element): Element[] => Array.from(el.children).filter((c) => !NOT_SHOWN.test(c.localName) && c.id !== HOST_ID);
+    const score = (l: Element, srv: Element): number => {
+      if (l.localName !== srv.localName) return 0;
+      let v = 1;
+      if (l.id || srv.id) v += l.id === srv.id ? 4 : -0.5;
+      const mine = Array.from(l.classList), theirs = new Set(Array.from(srv.classList));
+      if (mine.length || theirs.size) v += mine.filter((c) => theirs.has(c)).length / Math.max(mine.length, theirs.size);
+      // Between two alike, the one shaped like it: as many children, the same first one.
+      if (l.children.length === srv.children.length) v += 0.25;
+      if (l.firstElementChild?.localName === srv.firstElementChild?.localName) v += 0.25;
+      return v;
+    };
+    const added = (el: Element): void => { found.add(el); if (roots.length < 500) roots.push(el); };
+    const align = (live: Element, srv: Element, depth: number): void => {
+      const L = kids(live), S = kids(srv);
+      const n = L.length, m = S.length;
+      // Past what can be lined up quickly, or deeper than any page goes, nothing under here is called added.
+      if (depth > 200 || n * m > 250_000) return;
+      const w = m + 1;
+      const best = new Float64Array((n + 1) * w);
+      for (let i = n - 1; i >= 0; i--) {
+        for (let j = m - 1; j >= 0; j--) {
+          const sc = score(L[i] as Element, S[j] as Element);
+          best[i * w + j] = Math.max(best[(i + 1) * w + j]!, best[i * w + j + 1]!, sc > 0 ? sc + best[(i + 1) * w + j + 1]! : 0);
+        }
+      }
+      let i = 0, j = 0;
+      while (i < n) {
+        const l = L[i] as Element;
+        if (j < m) {
+          const sc = score(l, S[j] as Element);
+          if (sc > 0 && best[i * w + j] === sc + best[(i + 1) * w + j + 1]!) { align(l, S[j] as Element, depth + 1); i++; j++; continue; }
+          if (best[i * w + j] !== best[(i + 1) * w + j]) { j++; continue; }
+        }
+        added(l);
+        i++;
+      }
+    };
+    align(document.body, server.body, 0);
+    late = found;
+    return roots.map((el) => {
+      const b = el.getBoundingClientRect();
+      return { n: elementName(el), b: [b.left + scrollX, b.top + scrollY, b.width, b.height].map((v) => Math.round(v * 100) / 100) };
+    });
+  }
+
   /**
    * For step 3 against the page as it was: every element of the page (at most `max`, in document order, the page
    * script's own overlay and what is never shown left out), each by its path from <body> (`tag:nth-of-type(n)` steps,
    * so the same element is found in another render however the layout moved), what the tray calls it, its box in
    * document pixels, its own words (its text nodes', not its children's), its computed values for `props` (each an
    * index into one table of values, so a page of thousands of elements stays small), and whether it is an edited
-   * element or inside one.
+   * element or inside one. What a script added after the page arrived (layerLate) is left out, all of it, and not
+   * counted in its siblings' paths, so a form added before them does not move them; it is answered apart (`late`).
    */
   function layerPage(props: string[], max: number): unknown {
     const keys = (Array.isArray(props) ? props : []).filter((p) => typeof p === 'string' && /^[a-z-]{1,40}$/.test(p)).slice(0, 60);
@@ -1487,12 +1590,18 @@ export function livePage(): void {
       return i;
     };
     const elements: unknown[] = [];
+    const added: unknown[] = [];
     let cut = false;
     const walk = (parent: Element, path: string): void => {
       const seen = new Map<string, number>();
       for (const el of Array.from(parent.children)) {
         if (elements.length >= limit) { cut = true; return; }
         if (!STEP_NAME.test(el.localName)) continue;
+        if (late?.has(el)) {
+          const b = el.getBoundingClientRect();
+          if (added.length < 500) added.push({ n: elementName(el), b: [b.left + scrollX, b.top + scrollY, b.width, b.height].map((v) => Math.round(v * 100) / 100) });
+          continue;
+        }
         const n = (seen.get(el.localName) ?? 0) + 1;
         seen.set(el.localName, n);
         if (NOT_SHOWN.test(el.localName) || el.id === HOST_ID) continue;
@@ -1508,7 +1617,7 @@ export function livePage(): void {
       }
     };
     if (document.body) walk(document.body, 'body');
-    return { keys, table, elements, cut };
+    return { keys, table, elements, cut, ...(late ? { late: added } : {}) };
   }
 
   /**
@@ -1516,17 +1625,21 @@ export function livePage(): void {
    * as the site has them; and whether every one it tags is plain words, the same words, in the same field mark (`same`):
    * one stored thing shown more than once, which the main process saves once.
    */
-  function layerOf(id: string): { count: number; field: string | null; words: string | null; plain: boolean; same: boolean } {
+  function layerOf(id: string): { count: number; field: string | null; words: string | null; plain: boolean; same: boolean; parts: string[] } {
     const els = taggedFor(id);
     const el = els[0];
-    if (!el) return { count: 0, field: null, words: null, plain: false, same: false };
+    if (!el) return { count: 0, field: null, words: null, plain: false, same: false, parts: [] };
     const fieldOf = (x: Element): string | null => x.closest('[data-wl-field]')?.getAttribute('data-wl-field') ?? null;
     const plainOf = (x: Element): boolean => x instanceof HTMLElement && !x.children.length;
     const field = fieldOf(el);
     const words = siteWords(el);
+    // The trace's parts around its first element, innermost first: where its words are looked up when no part with an
+    // identity names it (a template region whose path inside could not be written, a plugin's template).
+    if (!regions.length || mutations !== scannedAt) scan();
+    const parts = around(el).flatMap((r) => (r.part ? [r.part] : [])).slice(0, 64);
     return {
       count: els.length, field, words, plain: plainOf(el),
-      same: words !== null && els.every((x) => plainOf(x) && siteWords(x) === words && fieldOf(x) === field),
+      same: words !== null && els.every((x) => plainOf(x) && siteWords(x) === words && fieldOf(x) === field), parts,
     };
   }
 
@@ -1728,8 +1841,8 @@ export function livePage(): void {
   }
 
   w.__wl = {
-    scan, outline, clear, pick, cancelPick, choose, css, problems, texts, fingerprints, styleOf, paint, where, arrange, disarm, preview, unpreview,
-    layerFind, layerSet, layerPick, layerSnap, layerOf, layerAreas, layerPage, layerType, layerTry, retypeAt,
+    scan, outline, clear, pick, cancelPick, choose, css, problems, texts, fingerprints, styleOf, paint, where, reveal, arrange, disarm, preview, unpreview,
+    layerFind, layerSet, layerPick, layerSnap, layerOf, layerAreas, layerPage, layerLate, layerType, layerTry, retypeAt,
     /** End typing on the page from the window: keep the words typed so far, or put back what was there. */
     layerTypeEnd: (keep: unknown) => endTyping(keep === true),
     /** Picking, or typing on the page: the page's keys are its, not the live view's (live-page-goto.ts asks). */
@@ -1738,5 +1851,7 @@ export function livePage(): void {
     mutations: () => mutations,
     /** The picked element described again. */
     picked: () => { const el = target(); return el ? describe(el) : null; },
+    /** Any element of the page described as a pick is (Record's clicks, live-page-record.ts); null for Wanigan's own overlay. */
+    describeEl: (el: unknown) => (el instanceof Element && !el.closest(`#${HOST_ID}`) ? describe(el) : null),
   };
 }

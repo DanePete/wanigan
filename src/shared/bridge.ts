@@ -10,6 +10,8 @@ import type { LiveSiteAiAnswer } from './live-ai.ts';
 import type { LiveFailure } from './live-site.ts';
 import type { LiveFindAnswer, LiveHere } from './live-goto.ts';
 import type { LiveGesture, LiveKeyId } from './live-keys.ts';
+import type { LiveDevtoolsMode, LiveRevealed } from './live-devtools.ts';
+import type { LiveStep } from './live-record.ts';
 import type { Need } from './model.ts';
 import type { EventName, Events, Method, Params, Result } from './protocol.ts';
 import type { AppSettings, AppState } from './settings.ts';
@@ -94,6 +96,73 @@ export type LiveCompareShot =
   }
   | { error: string };
 
+/** A picture of the live view for a snap: what it shows now, or the whole page taken again at its width. */
+export type LiveSnapShot =
+  | {
+    scope: 'view' | 'page';
+    /** PNG, base64. */
+    data: string;
+    /** Pixels of the image (the CSS size times the screen's scale). */
+    width: number;
+    height: number;
+    /** What it shows, in CSS pixels: the view's size, or the page's width and the height pictured. */
+    cssWidth: number;
+    cssHeight: number;
+    /** Where the view was scrolled (0 for the whole page). */
+    scrollX: number;
+    scrollY: number;
+    url: string;
+    /** The whole page's own regions, read as it was taken (null for the view: the window's last scan is the view's). */
+    regions: LiveRegion[] | null;
+    /** The page was taller than a picture holds and is shown down to there. */
+    cut: boolean;
+  }
+  | { error: string };
+
+/** Why a recording stopped: the owner (its control or its key), Escape on the page, the two-minute limit, the view going away, or a failure. */
+export type LiveRecordStop = 'owner' | 'escape' | 'limit' | 'view' | 'error';
+
+/** A recording of the live view, kept in Wanigan's data for the project (never in the site's files). */
+export interface LiveRecording {
+  id: string;
+  projectId: string;
+  /** The page it began on. */
+  url: string;
+  startedAt: number;
+  /** How long it ran. */
+  ms: number;
+  /** The view's width in CSS pixels as it began. */
+  viewWidth: number | null;
+  /** The folder it is kept in, in Wanigan's own data. */
+  folder: string;
+  /** The clip, a WebM video for the owner (never sent to an agent); null with `clipWhy`. */
+  clip: { file: string; bytes: number; width: number; height: number; frames: number } | null;
+  clipWhy: string | null;
+  /** The key frames an agent is sent, in time order: each a JPEG in the folder. */
+  keyFrames: { n: number; file: string; at: number; why: string; step: number | null }[];
+  steps: LiveStep[];
+  /** The log stopped at its limit. */
+  cut: boolean;
+  stopped: LiveRecordStop;
+}
+
+/** The recorder as the window sees it. */
+export interface LiveRecordState {
+  /** Recording now. */
+  on: boolean;
+  projectId: string | null;
+  startedAt: number | null;
+  /** The longest a recording runs. */
+  limitMs: number;
+  frames: number;
+  steps: number;
+  /** Stopped, and writing the clip and the key frames. */
+  saving: boolean;
+  /** What the last recording came to, once saved. */
+  done: LiveRecording | null;
+  error: string | null;
+}
+
 /**
  * The live view: the owner's local site laid over a placeholder in the window.
  * In the app the main process owns it (src/main/live-view.ts); the UI sweep's
@@ -120,7 +189,39 @@ export interface LiveBridge {
   forward(): Promise<void>;
   /** Open the page in the default browser. */
   open(): Promise<void>;
-  devtools(): Promise<void>;
+  /*
+   * The page's own Chromium DevTools (src/main/live-devtools.ts; the model is src/shared/live-devtools.ts): in a plain
+   * view of its own laid over the dock's DevTools tab, or in a window of its own. It is the page's DevTools: the page's
+   * WebContents has no Node and no Wanigan preload, and the view DevTools is drawn in is given neither.
+   */
+
+  /**
+   * The dock shows the DevTools tab over these bounds (window CSS pixels): DevTools opens there, or shows again as it
+   * was. Answers where DevTools is now: `detached` when it is in its own window (it stays there), `closed` with no page.
+   * `focus`: the owner opened it just now (its key, its control), so the keyboard goes to it, as Chrome's does.
+   */
+  devtoolsShow(bounds: LiveBounds, focus?: boolean): Promise<LiveDevtoolsMode>;
+  /** The tab's area moved or changed size. */
+  devtoolsBounds(bounds: LiveBounds): void;
+  /** The tab is not shown, or something covers it: DevTools steps aside, still open. With `frame`, its last picture comes back. */
+  devtoolsHide(frame?: boolean): Promise<string | null>;
+  /** Close DevTools, in the dock or in its own window: the owner left the project, or closed it. */
+  devtoolsClose(): Promise<void>;
+  /** DevTools in a window of its own, for a second screen; the dock's view closes. False with no page. */
+  devtoolsDetach(): Promise<boolean>;
+  /**
+   * Select the element at a point of the page (CSS pixels of the view) in DevTools' Elements panel: in its own window
+   * when it is there, else in the dock, opening it there when it is closed. False with no page or a point outside it.
+   */
+  devtoolsInspect(x: number, y: number): Promise<boolean>;
+  /** Where DevTools is, each time that changes (its own window closed by the owner, too). */
+  onDevtools(listener: (mode: LiveDevtoolsMode) => void): () => void;
+  /**
+   * A part's box in the view now (CSS pixels of the viewport; it may run off an edge) and the viewport's size it was
+   * measured in, after scrolling the page to it when none of it was on screen: a region from the last scan, or the
+   * picked element (null). Null when it is not on the page.
+   */
+  reveal(index: number | null): Promise<LiveRevealed | null>;
   /** The regions of the page and what produced each. */
   scan(): Promise<LiveRegion[]>;
   /** Outline regions by their index from the last scan: an edit's, a pointed-at row's (dashed), a pick's. Returns how many were drawn. */
@@ -265,6 +366,33 @@ export interface LiveBridge {
   gotoReturn(): Promise<void>;
   /** Open a path of a project's site in the default browser (never with the helper's token). */
   openInBrowser(projectId: string, path: string): Promise<boolean>;
+  /*
+   * Snap and Record (src/main/live-snap.ts, src/main/live-record.ts; the step log is src/shared/live-record.ts). Nothing
+   * here sends anything anywhere: what is kept goes to an agent only through the note composer, on the owner's click.
+   */
+
+  /**
+   * A picture for a snap: what the view shows now ('view', Wanigan's own outlines left out), or the whole page taken
+   * again in a hidden window at the view's width ('page', local site only). Null when the view shows nothing.
+   */
+  snap(mode: 'view' | 'page'): Promise<LiveSnapShot | null>;
+  /**
+   * Start recording the view: frames from its own frame subscription (Chromium's, never a screen capture), at most two
+   * minutes and about five a second, and a step log the page script and the main process keep. Answers the recorder.
+   */
+  recordStart(): Promise<LiveRecordState>;
+  /** Stop recording, and answer the recording once its clip and key frames are saved (null when none was running). */
+  recordStop(): Promise<LiveRecording | null>;
+  /** Narration while recording (voice input), kept in the step log as a `said` step. False when nothing is recording. */
+  recordSay(text: string): Promise<boolean>;
+  /** The recorder as it changes: started, a second later, stopped, saved. */
+  onRecord(listener: (state: LiveRecordState) => void): () => void;
+  /** One file of a kept recording, base64: its clip (WebM) or key frame n (JPEG). Null when it is not there. */
+  recordFile(projectId: string, id: string, file: 'clip' | `frame-${number}`): Promise<string | null>;
+  /** Show a kept recording's clip (or its folder) in the system's file manager. */
+  recordReveal(projectId: string, id: string): Promise<boolean>;
+  /** Delete a kept recording, folder and all. */
+  recordDelete(projectId: string, id: string): Promise<boolean>;
 }
 
 export interface WaniganBridge {

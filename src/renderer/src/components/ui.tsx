@@ -8,7 +8,7 @@ import {
 } from 'react';
 import { createPortal } from 'react-dom';
 import type { CardType, Priority, ProjectSummary, SessionState } from '@shared/model';
-import { keyLabel, shortcutFor, shortcutText, type CommandId, type Shortcut } from '@shared/shortcuts';
+import { keyLabel, keysOn, shortcutFor, shortcutText, type CommandId, type Shortcut } from '@shared/shortcuts';
 import { STATE_LABEL, TYPE_LABEL } from '../lib/format';
 import { Icon, type IconName } from './icons';
 import { useCoversLive } from '../lib/live';
@@ -266,7 +266,7 @@ export function ProjectTile({ project, active, href, keys }: { project: ProjectS
  * hand beside a command. Give it a shortcut, or keys as the table writes them.
  */
 export function KeyCaps({ shortcut, keys, sequence, mac = isMac() }: { shortcut?: Shortcut; keys?: readonly string[]; sequence?: boolean; mac?: boolean }) {
-  const list = shortcut?.keys ?? keys ?? [];
+  const list = shortcut ? keysOn(shortcut, mac) : keys ?? [];
   const then = shortcut?.sequence ?? sequence ?? false;
   return (
     <span className="keycaps">

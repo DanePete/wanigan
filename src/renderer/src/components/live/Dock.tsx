@@ -1,5 +1,6 @@
 // The live view's tabs in the dock beneath the page: its notes, the problems
-// the page reports, and the request behind it, beside the code editor. The
+// the page reports, the request behind it and the page's own DevTools
+// (DevTools.tsx), beside the code editor. The
 // dock is the code editor's drawer (editor/EditorDrawer.tsx), mounted once by
 // the window; the live view adds its tabs to it while it is on screen and
 // draws the one shown into it through a portal, so each stays part of the
@@ -10,7 +11,7 @@ import { useEffect, useId, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { dockShows, setDockTabs, useDockHost, useEditor, type DockTab } from '../../editor/store';
 
-export type LiveDockTab = 'notes' | 'problems' | 'request';
+export type LiveDockTab = 'notes' | 'problems' | 'request' | 'devtools';
 
 export function LiveDock({ tabs, children }: {
   tabs: readonly (DockTab & { id: LiveDockTab })[];

@@ -3,36 +3,42 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { test } from 'node:test';
 import { LIVE_KEYS, LIVE_PAGE_KEYS, isAddKey, isLiveKeyId, isSendKey, liveKey } from './live-keys.ts';
-import { SHORTCUTS, matchKey, type KeyInput } from './shortcuts.ts';
+import { SHORTCUTS, keysOn, matchKey, type KeyInput } from './shortcuts.ts';
 
 /** What a US keyboard types with Shift held, where it is not the capital: what a key event's `key` then says. */
 const SHIFTED: Record<string, string> = { '[': '{', ']': '}' };
 
-const press = (keys: string[]): KeyInput => {
+/** A press of keys as the table writes them: `Mod` is ⌘ on a Mac and Ctrl elsewhere. */
+const press = (keys: string[], mac = true): KeyInput => {
   const shift = keys.includes('Shift');
   const mod = keys.includes('Mod');
   const k = keys[keys.length - 1] as string;
   const key = k === 'Enter' ? 'Enter' : shift ? SHIFTED[k] ?? k.toUpperCase() : k.toLowerCase();
-  return { key, shiftKey: shift, metaKey: mod, ctrlKey: false, altKey: false };
+  return { key, ...(/^[A-Z]$/i.test(k) ? { code: `Key${k.toUpperCase()}` } : {}), shiftKey: shift, metaKey: mod && mac, ctrlKey: mod && !mac, altKey: keys.includes('Alt') };
 };
+const at = (mac: boolean) => ({ mac, typing: false, dialog: false, afterG: false });
 
 const listed = SHORTCUTS.filter((s) => s.group === 'In the live view');
 
 test('the shortcut sheet lists exactly the live view’s keys, and each does what it says', () => {
+  // A live view key, or (with an id) an app chord, which the window's own key handler runs (shared/shortcuts.ts).
   const said = listed.flatMap((s) => [s.keys, ...(s.alt ?? [])].map((keys) => {
     const e = press(keys);
-    return `${s.label}: ${liveKey(e) ?? (isSendKey(e, true) ? 'send' : isAddKey(e, true) ? 'add' : 'nothing')}`;
+    const app = s.id ? matchKey(e, at(true)) : null;
+    return `${s.label}: ${app && 'id' in app ? app.id : liveKey(e) ?? (isSendKey(e, true) ? 'send' : isAddKey(e, true) ? 'add' : 'nothing')}`;
   }));
   assert.deepEqual(said, [
     'Pick a part on the page, or stop picking: pick',
     'Colour the page by a lens: lens',
     'Phone, tablet or full width: width-phone', 'Phone, tablet or full width: width-tablet', 'Phone, tablet or full width: width-full',
     'Previous or next tab of the side panel: tab-previous', 'Previous or next tab of the side panel: tab-next',
-    'Previous or next tab of the dock beneath the page (code, notes, problems, request): dock-previous',
-    'Previous or next tab of the dock beneath the page (code, notes, problems, request): dock-next',
+    'Previous or next tab of the dock beneath the page (code, notes, problems, request, DevTools): dock-previous',
+    'Previous or next tab of the dock beneath the page (code, notes, problems, request, DevTools): dock-next',
     'Compare Local with a hosted environment: compare',
     'The site’s component library: library',
     'Your edits to the page, in the design layer: edits',
+    'Snap a picture of the page to mark up and send to an agent: snap',
+    'Start or stop recording the page (Escape stops it too): record',
     'Type on the chosen part’s words on the page, or every way to edit it: edit',
     'Move the chosen part: move',
     'The chosen part’s code, in the code editor: code',
@@ -40,7 +46,14 @@ test('the shortcut sheet lists exactly the live view’s keys, and each does wha
     'Take the chosen part out of the page: take-out',
     'Add the note to the notes (in the note box): add',
     'Send the note now, or the notes waiting: send',
+    'The page’s DevTools, in the dock beneath it: open or close: live-devtools',
+    'Show the chosen part, or the row of the tree, in DevTools: devtools-show',
   ]);
+  // On Windows and Linux the chord is Chrome's there, Ctrl+Shift+I, and the sheet lists that.
+  const devtools = listed.find((s) => s.id === 'live-devtools');
+  assert.ok(devtools);
+  assert.deepEqual(matchKey(press(keysOn(devtools, false), false), at(false)), { id: 'live-devtools' });
+  assert.equal(matchKey(press(keysOn(devtools, true), false), at(false)), null, '⌥⌘I is not the chord on Windows');
   // Every key the live view answers is on the sheet.
   const produced = new Set(listed.flatMap((s) => [s.keys, ...(s.alt ?? [])].map((k) => liveKey(press(k)))).filter(Boolean));
   assert.deepEqual(LIVE_KEYS.map((k) => k.id).filter((id) => !produced.has(id)), []);
@@ -84,6 +97,10 @@ test('modifiers other than Shift are never a live view key, and Shift is part of
   assert.equal(liveKey({ key: 'X', shiftKey: true, metaKey: false, ctrlKey: false, altKey: false }), 'take-out');
   assert.equal(liveKey({ key: 'B', shiftKey: true, metaKey: false, ctrlKey: false, altKey: false }), 'library');
   assert.equal(liveKey({ key: 'E', shiftKey: true, metaKey: false, ctrlKey: false, altKey: false }), 'edits', 'plain E edits the chosen part');
+  assert.equal(liveKey({ key: 'S', shiftKey: true, metaKey: false, ctrlKey: false, altKey: false }), 'snap');
+  assert.equal(liveKey({ key: 's', shiftKey: false, metaKey: false, ctrlKey: false, altKey: false }), null, 'plain S is Compare’s slider');
+  assert.equal(liveKey({ key: 'R', shiftKey: true, metaKey: false, ctrlKey: false, altKey: false }), 'record');
+  assert.equal(liveKey({ key: 'r', shiftKey: false, metaKey: true, ctrlKey: false, altKey: false }), null, '⌘R reloads the window');
   assert.equal(liveKey({ key: '}', shiftKey: true, metaKey: false, ctrlKey: false, altKey: false }), 'dock-next', '⇧] steps the dock');
   assert.equal(liveKey({ key: '{', shiftKey: true, metaKey: false, ctrlKey: false, altKey: false }), 'dock-previous');
   assert.equal(liveKey({ key: ']', shiftKey: false, metaKey: false, ctrlKey: false, altKey: false }), 'tab-next', '] alone still steps the side panel');
@@ -95,7 +112,7 @@ test('modifiers other than Shift are never a live view key, and Shift is part of
 });
 
 test('the page gives up only the keys that need no chosen part, and the window handles every key', () => {
-  assert.deepEqual(LIVE_PAGE_KEYS.map((k) => k.id), ['pick', 'lens', 'width-phone', 'width-tablet', 'width-full', 'tab-previous', 'tab-next', 'dock-previous', 'dock-next', 'compare', 'library', 'edits']);
+  assert.deepEqual(LIVE_PAGE_KEYS.map((k) => k.id), ['pick', 'lens', 'width-phone', 'width-tablet', 'width-full', 'tab-previous', 'tab-next', 'dock-previous', 'dock-next', 'compare', 'library', 'edits', 'snap', 'record']);
   assert.ok(isLiveKeyId('compare') && !isLiveKeyId('goto') && !isLiveKeyId(null));
   const live = readFileSync(resolve(import.meta.dirname, '../renderer/src/components/Live.tsx'), 'utf8');
   for (const k of LIVE_KEYS) assert.ok(live.includes(`case '${k.id}'`), `the live view does not handle ${k.id}`);

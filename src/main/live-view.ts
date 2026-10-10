@@ -13,7 +13,7 @@ import { readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { BrowserWindow, WebContentsView, ipcMain, session, shell, type IpcMainInvokeEvent, type NativeImage, type Session, type WebContents } from 'electron';
-import { liveUrl, sameSite, type LivePick, type LiveProblem, type LiveRegion } from '../shared/live.ts';
+import { liveUrl, movedTo, parseFieldMark, sameSite, sitePath, type LivePick, type LiveProblem, type LiveRegion } from '../shared/live.ts';
 import { cleanRegions, regionById, type LiveCapture, type LiveViewNow, type TimedProblem } from '../shared/live-agent.ts';
 import { certificateOf, failureKind, principal, type LiveFailure, type LivePresented } from '../shared/live-site.ts';
 import { loopbackAddress } from '../shared/live-envs.ts';
@@ -118,9 +118,16 @@ export interface HelperSaved {
   ok: boolean; error: string | null; label: string | null; failure?: LiveFailure | null; revision?: string | null;
   /**
    * A refusal that a save asked again with this token would not be (the Drupal helper's, for words in a default layout
-   * every entity of a bundle shares: its error says how far the change reaches).
+   * every entity of a bundle shares, or in a Paragraphs library item every page using it shows: its error says how far
+   * the change reaches).
    */
   confirm?: string | null;
+  /**
+   * The saved content's own address (a path on the site's origin) after the save, and before it: a save can move its
+   * page (Pathauto writes a new alias inside the save). Null where it has none, or the helper did not say.
+   */
+  url?: string | null;
+  was?: string | null;
   /**
    * What a save wants said beside it (the Drupal helper's: words saved to a field's own words where the site adds more
    * around them on the page, or a problem the content already had in a field the change does not touch).
@@ -141,6 +148,17 @@ export interface LiveViewHooks {
   session?(ses: Session, projectId: string): void;
   /** A view was made for a project, or went away (null). */
   view?(webContents: WebContents | null, projectId: string | null): void;
+  /**
+   * A request a project's session made began, finished or failed (a recording's step log keeps the failed and slow ones):
+   * its method, address and status, never its body, headers or cookies.
+   */
+  request?(seen: LiveRequestSeen): void;
+}
+
+/** One request as the view's session saw it; `at` is when, in milliseconds since 1970. */
+export interface LiveRequestSeen {
+  webContentsId: number | undefined; id: number; phase: 'start' | 'done' | 'failed';
+  method: string; url: string; status: number | null; error: string | null; at: number;
 }
 
 export interface LiveShotTaken { data: string; width: number; height: number }
@@ -309,9 +327,17 @@ export function wireLiveView(options: {
     ses.setPermissionRequestHandler((_wc, _permission, callback) => callback(false));
     ses.setPermissionCheckHandler(() => false);
     ses.on('will-download', (event) => event.preventDefault());
+    const seen = (phase: LiveRequestSeen['phase'], d: { webContentsId?: number; id: number; method: string; url: string; timestamp: number }, status: number | null = null, error: string | null = null): void => {
+      options.hooks?.request?.({ webContentsId: d.webContentsId, id: d.id, phase, method: d.method, url: d.url, status, error, at: d.timestamp });
+    };
     if (hosted) {
       // Read-only: a form cannot be sent and nothing can be saved from here; what a page loads by POST stays empty.
-      ses.webRequest.onBeforeRequest((details, callback) => callback({ cancel: !['GET', 'HEAD', 'OPTIONS'].includes(details.method) }));
+      ses.webRequest.onBeforeRequest((details, callback) => {
+        seen('start', details);
+        callback({ cancel: !['GET', 'HEAD', 'OPTIONS'].includes(details.method) });
+      });
+      ses.webRequest.onCompleted((details) => seen('done', details, details.statusCode));
+      ses.webRequest.onErrorOccurred((details) => seen('failed', details, null, details.error));
       // Chromium's certificate verdict stands, with one exception: a copy of the site on this Mac (Live's database
       // under another name) has a certificate from the owner's own mkcert authority, as the Local tab does. It is
       // trusted only where that authority issued it for this name and the name resolves to this Mac alone. A verdict
@@ -331,6 +357,7 @@ export function wireLiveView(options: {
     // The helper's token goes with the pages the view itself loads (and its frames), never with the page's own
     // fetches: a script on the page cannot borrow it to call the helper.
     ses.webRequest.onBeforeSendHeaders((details, callback) => {
+      seen('start', details);
       const token = tokens.get(id);
       const host = hosts.get(id);
       if (token && host && (details.resourceType === 'mainFrame' || details.resourceType === 'subFrame')) {
@@ -345,9 +372,11 @@ export function wireLiveView(options: {
     };
     const path = (url: string): string => { try { const u = new URL(url); return `${u.host === hosts.get(id) ? '' : u.host}${u.pathname}`; } catch { return url.slice(0, 200); } };
     ses.webRequest.onCompleted((details) => {
+      seen('done', details, details.statusCode);
       if (details.statusCode >= 400) failed(details.webContentsId, `${details.statusCode} ${details.method} ${path(details.url)}`);
     });
     ses.webRequest.onErrorOccurred((details) => {
+      seen('failed', details, null, details.error);
       if (details.error !== 'net::ERR_ABORTED') failed(details.webContentsId, `${details.error} ${details.method} ${path(details.url)}`);
     });
     ses.setCertificateVerifyProc((request, callback) => {
@@ -532,7 +561,7 @@ export function wireLiveView(options: {
     const url = view?.webContents.getURL();
     if (ok(event) && url && /^https?:\/\//i.test(url)) void shell.openExternal(url);
   });
-  ipcMain.handle('live:devtools', (event) => { if (ok(event) && view) view.webContents.openDevTools({ mode: 'detach' }); });
+  // The page's DevTools, in the dock or its own window, is live-devtools.ts's: it hears of each view through the hooks.
 
   ipcMain.handle('live:css', async (event) => {
     if (!ok(event)) return 0;
@@ -576,7 +605,9 @@ export function wireLiveView(options: {
   const helperSave = async (field: unknown, before: unknown, after: unknown, at?: SaveAt | null): Promise<HelperSaved | null> => {
     const site = local();
     if (!site) return null;
-    if (typeof field !== 'string' || !/^[a-z0-9_]+:[^:\s]{1,64}:[a-z0-9_]+/.test(field) || typeof before !== 'string' || typeof after !== 'string') return { ok: false, error: 'That is not a field Wanigan can save to.', label: null };
+    // The field's mark, read whole (shared/live.ts parseFieldMark()): every part, its hash among them, as the helper's
+    // save will check it.
+    if (!parseFieldMark(field) || typeof before !== 'string' || typeof after !== 'string') return { ok: false, error: 'That is not a field Wanigan can save to.', label: null };
     const name = /^[A-Za-z0-9_.:/@+-]{1,200}$/;
     if (at && (!name.test(at.uuid) || !/^[A-Za-z0-9_-]{1,32}$/.test(at.langcode) || (at.item !== null && !/^(?:ref:[A-Za-z0-9_.:/@+-]{1,200}|delta:\d{1,6})$/.test(at.item))
       || (at.confirm !== undefined && !/^[a-f0-9]{32}$/.test(at.confirm)))) {
@@ -590,12 +621,13 @@ export function wireLiveView(options: {
           ...(at ? { uuid: at.uuid, langcode: at.langcode, ...(at.item ? { item: at.item } : {}), ...(at.confirm ? { confirm: at.confirm } : {}) } : {}),
         }),
       });
-      const data = await res.json().catch(() => null) as { ok?: boolean; error?: string; label?: string; revision?: unknown; confirm?: unknown; note?: unknown } | null;
+      const data = await res.json().catch(() => null) as { ok?: boolean; error?: string; label?: string; revision?: unknown; confirm?: unknown; note?: unknown; url?: unknown; was?: unknown } | null;
       return data && typeof data === 'object' ? {
         ok: data.ok === true, error: typeof data.error === 'string' ? data.error : null, label: typeof data.label === 'string' ? data.label : null,
         revision: typeof data.revision === 'string' || typeof data.revision === 'number' ? String(data.revision).slice(0, 100) : null,
         ...(typeof data.confirm === 'string' && /^[a-f0-9]{32}$/.test(data.confirm) ? { confirm: data.confirm } : {}),
         ...(data.ok === true && typeof data.note === 'string' && data.note ? { note: data.note.slice(0, 1_000) } : {}),
+        url: sitePath(data.url), was: sitePath(data.was),
       } : { ok: false, error: `The site answered ${res.status}.`, label: null };
     } catch (error) {
       // Why the site did not answer is said in the view's own words (the window asks the core whether it runs);
@@ -624,7 +656,10 @@ export function wireLiveView(options: {
       const saved = await helperSave(field, before, after);
       // The window's answer is as it always was: the revision is the design layer's to keep.
       if (!saved) return null;
-      const { revision: _revision, confirm: _confirm, ...answer } = saved;
+      // A save that moved the page shown (a new alias): the view goes to its new address.
+      const next = movedTo(saved, site.wc.getURL());
+      if (next && sameSite(base ?? '', next)) void site.wc.loadURL(next).catch(() => {});
+      const { revision: _revision, confirm: _confirm, url: _url, was: _was, ...answer } = saved;
       return answer;
     }
     return null;

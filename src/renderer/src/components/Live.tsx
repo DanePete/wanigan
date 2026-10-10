@@ -16,12 +16,18 @@
 // (components/live/Tray.tsx): the page's edits, made real and verified there.
 //
 // The side panel's Layers tab keeps the tree beside a chosen part's details
-// (components/live/LayersPane.tsx). Notes, Problems and Request are tabs of
-// the dock beneath the page, beside the code editor (components/live/Dock.tsx).
-// Compare is drawn in the stage, where the page is (components/live/Compare.tsx).
+// (components/live/LayersPane.tsx). Notes, Problems, Request and the page's own
+// DevTools are tabs of the dock beneath the page, beside the code editor
+// (components/live/Dock.tsx, components/live/DevTools.tsx); the bar's DevTools
+// and Chrome's own chord (⌥⌘I on a Mac, Ctrl+Shift+I elsewhere) open and close
+// that tab, and Show in DevTools (⇧D) points it at a chosen part or a row.
+// Compare is drawn in the stage, where the page is (components/live/Compare.tsx),
+// and so are a snap being marked up (components/live/Snap.tsx) and a stopped
+// recording's review (components/live/Record.tsx); the bar's Snap (⇧S) and
+// Record (⇧R) start them.
 // Design: docs/design/2026-10-08-live-view.md.
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent, type ReactNode, type RefObject } from 'react';
-import type { LiveViewState } from '@shared/bridge';
+import type { LiveRecording, LiveViewState } from '@shared/bridge';
 import {
   inFolder, isStylesheet, regionMadeBy, sameRegion, sameSite,
   type LiveCandidate, type LiveEvent, type LivePlatform, type LiveProblem, type LiveRegion, type LiveSite,
@@ -37,6 +43,8 @@ import type { EditTarget } from '@shared/live-trace';
 import { layersOf } from '@shared/live-tree';
 import type { ProjectSummary } from '@shared/model';
 import { isSendKey, liveKey, type LiveGesture, type LiveKeyId } from '@shared/live-keys';
+import { length } from '@shared/live-record';
+import { keyLabel } from '@shared/shortcuts';
 import { attempt, bridge, call, forProject, useQuery } from '../lib/api';
 import { liveBridge, useLiveCovered } from '../lib/live';
 import { anchorGoTo, isTyping, showingOrigin, useGoToKeys } from '../lib/live-goto';
@@ -53,11 +61,14 @@ import { HelperOffer, HelperSettings } from './live/Helper';
 import { Layers } from './live/Layers';
 import { LayersPane, focusTree, useTreeBeside } from './live/LayersPane';
 import { LiveDock, type LiveDockTab } from './live/Dock';
+import { DevtoolsTab } from './live/DevTools';
 import { EditsList, NoteComposer, NotesTab, draftFor, useNotesSender } from './live/Notes';
 import { useNotes, type LiveNote } from './live/note-store';
 import { ProblemsTab } from './live/Problems';
 import { PaletteTab, useArrange } from './live/Arrange';
 import { LibraryPanel } from './live/Library';
+import { SnapPanel, type SnapShot } from './live/Snap';
+import { RecordAnnounce, RecordButton, RecordReview, useRecordEscape, useRecorder } from './live/Record';
 import { LayerTray } from './live/Tray';
 import { useLayer } from './live/use-layer';
 import { pagePath } from '../lib/live-layer';
@@ -69,7 +80,8 @@ import { SiteTrouble, useSiteStatus } from './live/SiteTrouble';
 import { useWriteChecks } from './live/write-checks';
 import { Button, Empty, IconButton, Segmented, useToast } from './ui';
 import { openInEditor, relativeTo } from '../editor/EditButton';
-import { stepDock } from '../editor/store';
+import { dockShows, stepDock, useEditor } from '../editor/store';
+import { DEVTOOLS_TAB, devtoolsChord, showInDevtools, toggleDevtoolsTab } from '../lib/live-devtools';
 import '../styles/live.css';
 
 const PLATFORMS: readonly { value: LivePlatform; label: string; hint: string }[] = [
@@ -302,6 +314,16 @@ function LiveShown({ site, url, project, follow, card, compact, following, shots
   /** The page the stage opens: the site's address, or the same page on the environment switched to. */
   const [stageUrl, setStageUrl] = useState(url);
   const [comparing, setComparing] = useState(false);
+  /** A snap being marked up (its first picture), and a stopped recording's review: each drawn in the stage. */
+  const [snap, setSnap] = useState<SnapShot | null>(null);
+  const [review, setReview] = useState<LiveRecording | null>(null);
+  const rec = useRecorder(project.id, setReview);
+  useRecordEscape(rec, compact || !!snap || !!review);
+  const recording = useRef(false);
+  recording.current = rec.on && !compact;
+  // Leaving the live view stops a recording of it: a recording is never on where it cannot be seen. (Only the project's
+  // own live view records; a session's split beside its terminal has no Record.)
+  useEffect(() => () => { if (recording.current) void liveBridge()?.recordStop(); }, []);
   /** The component library takes the side panel while it is open; so does the design layer's tray. */
   const [library, setLibrary] = useState(false);
   const [tray, setTray] = useState(false);
@@ -384,8 +406,8 @@ function LiveShown({ site, url, project, follow, card, compact, following, shots
 
   useEffect(() => { void live.hasScript().then(setHasScript); }, [live]);
   useEffect(() => { setOnly(null); }, [lens]);
-  // What needs the page itself (picking, placing, an edit sheet beside a part) brings it back from Compare.
-  useEffect(() => { if (picking || editing || arrange.placing) setComparing(false); }, [picking, editing, arrange.placing]);
+  // What needs the page itself (picking, placing, an edit sheet beside a part) brings it back from Compare, a snap and a review.
+  useEffect(() => { if (picking || editing || arrange.placing) { setComparing(false); setSnap(null); setReview(null); } }, [picking, editing, arrange.placing]);
 
   // Escape, in the window or in the page, takes a lens away (and stops placing a palette entry).
   useEffect(() => {
@@ -393,7 +415,7 @@ function LiveShown({ site, url, project, follow, card, compact, following, shots
     const back = (): void => { setLens('structure'); arrange.setPlacing(null); };
     const key = (e: KeyboardEvent): void => {
       // Compare's Escape is its own: it goes back to the page, the lens with it.
-      if (e.key !== 'Escape' || e.defaultPrevented || document.querySelector('.scrim, .live-sheet, .live-stage-compare')) return;
+      if (e.key !== 'Escape' || e.defaultPrevented || document.querySelector('.scrim, .live-sheet, .live-stage-compare, .live-stage-snap')) return;
       const t = e.target as Element | null;
       if (t?.closest?.('input, textarea, select, .sel-list') || (t && t !== document.body && !t.closest?.('.live, .live-docked'))) return;
       e.preventDefault();
@@ -678,6 +700,21 @@ function LiveShown({ site, url, project, follow, card, compact, following, shots
     return () => showingOrigin(project.id, null);
   }, [project.id, env]);
 
+  // The page's own DevTools: its tab in the dock, Chrome's chord for this platform, and pointing it at a part.
+  const editor = useEditor();
+  const devtoolsShown = editor.open && dockShows(editor) === DEVTOOLS_TAB;
+  const chord = devtoolsChord(bridge().platform === 'darwin');
+  /** Show in DevTools: a region from the last scan, or the picked element (null); DevTools' inspector at its centre. */
+  const inspectIn = async (target: number | null): Promise<void> => {
+    const why = await showInDevtools(live, target);
+    if (why) toast(why);
+  };
+  const inspectChosen = (): void => {
+    const s = selected.current;
+    if (!s) { toast('Choose a part first: P picks one on the page, or choose it in Layers.'); return; }
+    void inspectIn(s.pick ? null : s.region?.index ?? null);
+  };
+
   const errors = problems?.length ?? 0;
   /** The view shows one piece alone (the helper's page), and which kind. */
   const alone = (() => {
@@ -693,6 +730,7 @@ function LiveShown({ site, url, project, follow, card, compact, following, shots
     { id: 'notes', label: notes.length ? `Notes ${notes.length}` : 'Notes' },
     { id: 'problems', label: errors ? `Problems ${errors}` : 'Problems' },
     ...(helperSite ? [{ id: 'request' as const, label: 'Request', hint: 'The hooks, queries, assets and logs behind this page' }] : []),
+    { id: 'devtools', label: 'DevTools', hint: `The page’s own DevTools: elements, console, network, sources, application, performance (${chord.text})` },
   ];
   const cms = site.platform === 'wordpress' ? 'WordPress' : 'Drupal';
   const compare = envs.length
@@ -706,11 +744,35 @@ function LiveShown({ site, url, project, follow, card, compact, following, shots
     if (compare.can) setComparing(true); else toast(`${compare.why}.`);
   };
   const shot = useShotPage(card && shots && !env ? card : null, view?.url ?? null);
+  /** Snap: the view's picture is taken first (a covered view draws nothing), then the snap is drawn over it. Again closes it. */
+  const startSnap = async (): Promise<void> => {
+    if (snap) { setSnap(null); return; }
+    if (picking) await live.cancelPick();
+    setComparing(false);
+    setReview(null);
+    const got = await live.snap('view');
+    if (!got || 'error' in got) { toast(got ? got.error : 'The view shows nothing to picture yet.', 'error'); return; }
+    setSnap(got);
+  };
+  const toggleRecord = (): void => {
+    // A recording is of the page itself: what covers it steps aside first.
+    setSnap(null);
+    setReview(null);
+    setComparing(false);
+    void rec.toggle();
+  };
+  /** A Shift chord as this platform writes it: ⇧S on a Mac, Shift+S elsewhere. */
+  const shifted = (k: string): string => (bridge().platform === 'darwin' ? `${keyLabel('Shift', true)}${k}` : `${keyLabel('Shift', false)}+${k}`);
+  const consoleErrors = useMemo(() => (problems ?? []).filter((p) => p.source === 'console' && p.level === 'error').map((p) => p.text), [problems]);
 
   // The live view's own keys (shared/live-keys.ts), here and from the page: each does what its control does. While
   // Compare is drawn, 1 2 3 are its widths.
   runKey.current = (id: LiveKeyId | LiveGesture): void => {
+    // A snap or a recording's review has the stage: its own keys are its; Snap and Record still answer.
+    if ((snap || review) && id !== 'snap' && id !== 'record') return;
     switch (id) {
+      case 'snap': if (!compact && hasScript) void startSnap(); return;
+      case 'record': if (!compact) toggleRecord(); return;
       // A double-click on the chosen part's words in the page: typed on there, as E does.
       case 'retype':
         if (!compact && selected.current && shownTab === 'layers' && !library && !tray) verbs.current?.retype();
@@ -737,6 +799,8 @@ function LiveShown({ site, url, project, follow, card, compact, following, shots
       case 'compare': if (!compact) { if (comparing) setComparing(false); else openCompare(); } return;
       case 'library': if (!compact) { setTray(false); setLibrary(!library); } return;
       case 'edits': if (!compact) openTray(!tray); return;
+      // ⇧D: the chosen part in DevTools (a row of the tree with the keyboard takes it first: Layers.tsx).
+      case 'devtools-show': if (!compact) inspectChosen(); return;
       case 'edit':
       case 'move':
       case 'code':
@@ -771,6 +835,7 @@ function LiveShown({ site, url, project, follow, card, compact, following, shots
       if (!id) return;
       // In Compare its own keys work, and ⇧C goes back to the page; the page's keys wait for the page.
       if (t.closest('.live-stage-compare') && id !== 'compare') return;
+      if (t.closest('.live-stage-snap') && id !== 'snap' && id !== 'record') return;
       e.preventDefault();
       runKey.current(id);
     };
@@ -793,7 +858,15 @@ function LiveShown({ site, url, project, follow, card, compact, following, shots
   }, [layer.typing, endTyping]);
 
   /** The one line under the page that says what is going on: what was just done, or the state the view is in. */
-  const status: { text: ReactNode; className?: string; action?: ReactNode; warn?: boolean } | null = layer.typing ? {
+  const status: { text: ReactNode; className?: string; action?: ReactNode; warn?: boolean } | null = rec.on ? {
+    // Always said while it records, before anything else: a recording is never on unseen.
+    className: 'live-recording',
+    text: <>Recording the live view, and only it: <time className="live-record-time">{length(rec.elapsed)}</time> of {length(rec.state.limitMs)}. Escape or {shifted('R')} stops it.</>,
+    action: <Button size="s" tone="quiet" icon="stop" aria-keyshortcuts="Escape" onClick={() => void rec.stop()}>Stop</Button>,
+  } : rec.saving ? {
+    className: 'live-recording',
+    text: 'Saving the recording: its clip, key frames and step log.',
+  } : layer.typing ? {
     className: 'live-typing',
     text: 'Typing on the page: Enter keeps it in the layer, Esc puts it back.',
     action: (
@@ -829,16 +902,17 @@ function LiveShown({ site, url, project, follow, card, compact, following, shots
     text: 'Showing the page without the design layer: as the site renders it, without your edits.',
     action: <Button size="s" tone="quiet" icon="eye" onClick={() => layer.show(true)}>Show the layer</Button>,
   } : null;
-  const keysNow: [string[], string][] = layer.typing ? [[['Enter'], 'keep'], [['Esc'], 'put back']]
+  const keysNow: [string[], string][] = rec.on ? [[['Esc'], 'stop recording']]
+    : layer.typing ? [[['Enter'], 'keep'], [['Esc'], 'put back']]
     : picking ? []
     : comparing && envs.length && !compact ? [[['J', 'K'], 'changes'], [['S', 'O', 'D', 'T'], 'how'], [['1', '2', '3'], 'width'], [['Esc'], 'back to the page']]
     : library && !compact ? [[['P'], 'pick'], [['Esc'], 'back'], [['⇧', 'B'], 'close the library']]
     : tray && !compact ? [[['P'], 'pick'], [['Esc'], 'back'], [['⇧', 'E'], 'close the edits']]
-    : selection && shownTab === 'layers' && !compact ? [[['E'], 'edit'], [['M'], 'move'], [['.'], 'code'], [['⇧', 'A'], 'alone'], [['⇧', 'X'], 'take out'], [['P'], 'pick'], [['Esc'], 'back']]
+    : selection && shownTab === 'layers' && !compact ? [[['E'], 'edit'], [['M'], 'move'], [['.'], 'code'], [['⇧', 'A'], 'alone'], [['⇧', 'X'], 'take out'], [['⇧', 'D'], 'DevTools'], [['P'], 'pick'], [['Esc'], 'back']]
       : [[['P'], 'pick'], [['⇧', 'Space'], 'go to'], [['⇧', 'L'], 'lens'], [['1', '2', '3'], 'width'], [['[', ']'], 'tabs'], [['⇧', '[', ']'], 'dock'], [['?'], 'all keys']];
 
   return (
-    <div className={`live${compact ? ' live-compact' : ''}`}>
+    <div className={`live${compact ? ' live-compact' : ''}${rec.on ? ' recording' : ''}`}>
       <div className="live-bar" role="group" aria-label="Live view">
         <div className="live-bar-group live-bar-site" role="group" aria-label="The site">
           <SiteMenu envs={compact ? [] : envs} shown={env} onShow={switchTo} compare={compare} onCompare={openCompare} onSettings={onEdit} compact={compact} />
@@ -877,6 +951,20 @@ function LiveShown({ site, url, project, follow, card, compact, following, shots
               <span className="live-tool-name">Edits</span>{layer.drafts ? <span className="live-layer-count" aria-hidden="true">{layer.drafts}</span> : null}<kbd className="live-key" aria-hidden="true">⇧E</kbd>
             </Button>
           ) : null}
+          {/* Snap and Record are icons in the bar (their names are their accessible names and tooltips), so the bar keeps its one row. */}
+          {!compact ? (
+            <IconButton icon="camera" tone={snap ? 'primary' : 'quiet'} onClick={() => void startSnap()} disabled={!hasScript || !!view?.error} aria-keyshortcuts="Shift+S" aria-pressed={!!snap}
+              label={`Snap (${shifted('S')})`}
+              title={`Snap: take a picture of the page, mark it up, and send it to an agent with what is wrong (${shifted('S')})`} />
+          ) : null}
+          {!compact ? <RecordButton rec={rec} disabled={!!view?.error} /> : null}
+          {!compact ? (
+            // The page's own DevTools, in the dock beneath it: Chrome's chord on this platform opens and closes it too.
+            <Button size="s" tone={devtoolsShown ? 'primary' : 'quiet'} icon="devtools" onClick={toggleDevtoolsTab} aria-keyshortcuts={chord.aria} aria-pressed={devtoolsShown}
+              aria-label={`DevTools (${chord.text})`} title={`The page’s own DevTools in the dock beneath it: elements, console, network, sources (${chord.text})`}>
+              <span className="live-tool-name">DevTools</span><kbd className="live-key" aria-hidden="true">{chord.text}</kbd>
+            </Button>
+          ) : null}
           <MoreMenu compact={compact} arrangeOn={arrangeOn} canArrange={hasScript} onArrange={flipArrange} onBrowser={() => void live.open()} shot={shot} />
         </div>
       </div>
@@ -885,6 +973,7 @@ function LiveShown({ site, url, project, follow, card, compact, following, shots
           note={<TraceNote compact answer={trace} site={site} project={project} />} />
       ) : null}
       <div className="visually-hidden" role="status" aria-live="polite">{arrange.said}</div>
+      {!compact ? <RecordAnnounce rec={rec} /> : null}
       {arrange.asking}
       <div className="live-main">
         <LiveStage project={project} url={env || sameSite(stageUrl, url) ? stageUrl : url} token={env ? null : site.token} env={env?.id ?? null} view={view} width={WIDTHS[width].px}
@@ -897,6 +986,14 @@ function LiveShown({ site, url, project, follow, card, compact, following, shots
           {comparing && envs.length && !compact ? (
             <ComparePanel project={project} site={site} envs={envs} masks={envData?.masks ?? []} page={view?.url ?? stageUrl} shownEnv={env?.id ?? null}
               width={WIDTHS[width].compare} components={componentNames} onClose={() => setComparing(false)} />
+          ) : null}
+          {/* A snap being marked up, and a stopped recording's review: drawn where the page is, the page waiting under them. */}
+          {snap && !compact ? (
+            <SnapPanel first={snap} project={project} regions={regions} traceParts={parts.parts} traced={!!traceData} components={components}
+              componentName={(id) => components.get(id)?.name ?? null} errors={consoleErrors} prefer={follow} onClose={() => setSnap(null)} />
+          ) : null}
+          {review && !snap && !compact ? (
+            <RecordReview project={project} recording={review} partName={partName} components={components} prefer={follow} onClose={() => setReview(null)} />
           ) : null}
         </LiveStage>
         {compact ? (
@@ -933,13 +1030,13 @@ function LiveShown({ site, url, project, follow, card, compact, following, shots
                   <Inspector project={project} platform={site.platform} selection={selection} regions={regions} components={components} docroot={siteParts.data?.docroot ?? null}
                     theme={theme} page={view?.url ?? url} prefer={follow} helper={!!site.helper && !env} readOnly={!!env} onSelect={select} onClose={backToTree}
                     site={site} answer={env ? null : trace} trace={env ? null : traceData} parts={parts} arrange={arrange} onEdit={openEdit} verbs={verbs}
-                    siteAi={env ? null : siteAi} onSiteAiRefresh={readSiteAi} layer={layer} onTray={() => openTray(true)} />
+                    siteAi={env ? null : siteAi} onSiteAiRefresh={readSiteAi} layer={layer} onTray={() => openTray(true)} onDevtools={inspectChosen} />
                 ) : null}
                 // A helper another Wanigan set up ignores this one: said first, where the owner looks, with the way out.
                 before={!env && trace?.state === 'other' ? <TraceNote answer={trace} site={site} project={project} /> : null}
                 tree={regions.length ? (
                   <Layers regions={regions} components={components} selected={selection?.region?.index ?? null} fold={!!selection && !treeBeside}
-                    changed={changed} onHover={hover} onSelect={select} partName={partName} />
+                    changed={changed} onHover={hover} onSelect={select} partName={partName} onDevtools={(r) => void inspectIn(r.index)} />
                 ) : (
                   <NothingMarked platform={env ? null : site.platform} loading={!!view?.loading} hosted={!!env} />
                 )}
@@ -951,7 +1048,7 @@ function LiveShown({ site, url, project, follow, card, compact, following, shots
           </aside>
         )}
       </div>
-      {/* Notes, Problems and Request, in the dock beneath the page beside the code editor. */}
+      {/* Notes, Problems, Request and the page's DevTools, in the dock beneath the page beside the code editor. */}
       {!compact ? (
         <LiveDock tabs={docked}>
           {(t) => (t === 'notes' ? (
@@ -961,6 +1058,8 @@ function LiveShown({ site, url, project, follow, card, compact, following, shots
             </>
           ) : t === 'problems' ? (
             <ProblemsTab problems={problems} project={project} url={view?.url ?? url} onRefresh={() => void refreshProblems()} />
+          ) : t === 'devtools' ? (
+            <DevtoolsTab project={project} keyed={!env && !!site.token} />
           ) : (
             <RequestTab answer={trace} site={site} project={project} parts={parts} onPoint={point} />
           ))}
@@ -970,7 +1069,7 @@ function LiveShown({ site, url, project, follow, card, compact, following, shots
         <div className="live-status">
           {status ? (
             <span className={`live-status-said${status.className ? ` ${status.className}` : ''}${status.warn ? ' warn' : ''}`} role={status.warn ? 'alert' : 'status'}>
-              <Icon name={env && !alone && !picking && !arrange.placing ? 'open' : 'live'} size={14} />
+              <Icon name={rec.on || rec.saving ? 'record' : env && !alone && !picking && !arrange.placing ? 'open' : 'live'} size={14} />
               <span className="live-status-text">{status.text}</span>
               {status.action}
             </span>

@@ -25,8 +25,10 @@
 //   the helper splices and checks through the text's own format), through `POST /_wanigan/save`, the window's own
 //   helperSave path, to exactly the content, translation and item the edit's target names (saveTarget): never the
 //   default language, never the first item that holds the same words; a save the helper answers with a confirm token
-//   (words in a Drupal default layout every entity of a bundle shares, said with how far it reaches) is made when the
-//   edit is made real again, with that token. Otherwise through the one edit target of the page's trace that holds
+//   (words in a Drupal default layout every entity of a bundle shares, or in a Paragraphs library item every page using
+//   it shows, said with how far it reaches) is made when the edit is made real again, with that token. A save that
+//   moved the page shown (the helper answers the saved content's address after the save and before) goes to the new
+//   address instead of reloading the old one. Otherwise through the one edit target of the page's trace that holds
 //   exactly those words (wordsTarget(): a title, an excerpt, a string meta, a setting, a menu link's text, a
 //   WordPress block's rich text, a Drupal block's title or a run of a view's words), saved by the window's own schema
 //   save (`POST /_wanigan/edit/<id>`, live-edit-save.ts): how WordPress's helper saves a field, and both helpers save
@@ -35,9 +37,16 @@
 //   change falls in, every tag kept (src/shared/rich-text.ts). Words for something the helper says shows beyond this
 //   page (a target's `shows`: a template, a synced pattern, a menu, a widget, a setting) are said with where, and
 //   saved only when the edit is made real again. A change across formatting, a post's content and markup nothing says
-//   how to write go to an agent as a brief, as do styles and tokens; on Drupal, words nothing holds are said as what
-//   they are (writtenIn(): written in a template, which an agent changes, or printed through t()); anything else says
-//   why.
+//   how to write go to an agent as a brief, as do styles and tokens. Words nothing holds are said as what they are,
+//   from the template words both helpers list (writtenIn(), from the part the edit names outward, or writtenAround(),
+//   from the parts around an element no named part holds): on Drupal, written in a template, which an agent changes,
+//   or printed through t(), an interface translation; on WordPress, written in a theme's template file or printed
+//   through a gettext function, which go to an agent with the file, the line and, for a string, its text domain (a
+//   parent theme's file under an active child: change a copy in the child theme), while a plugin's or core's template
+//   is said to be whose it is. Words in no template are said by what made their part (madeBy(): a plugin, named; a
+//   theme template's PHP, never guessed at; a template the helper did not read), and "cannot tell" only when the
+//   trace names no part around the element at all. A theme's template file runs once for each place it is loaded,
+//   so an edit for one element in it reaches only the places that show the words it was made on.
 // - Last, words nothing the page offers holds (on WordPress also words somewhere in a post's content no target
 //   offers; on Drupal, words in no template, and words in a marked field of a type the word saves do not model) are
 //   looked for where the content keeps them: the helper's stored-words search (POST /_wanigan/words,
@@ -68,7 +77,10 @@
 //   may rightly change the layout there (the breadcrumb showing the same title wraps and moves the page down, seen on
 //   both demos): each element outside the touched ones matched by its path, its words and computed values compared
 //   wherever it sits, the edit's old words become its new ones elsewhere said as the save's reach (`reach`), anything
-//   else named by its element, and pixels only inside what kept its place. Where there is no page from before (made real elsewhere),
+//   else named by its element, and pixels only inside what kept its place. What the page decides for itself is set
+//   aside and named as masked: what a script added after it arrived (not in the HTML the server sent, read back
+//   through the protocol and lined up with the page by the page script's layerLate), and what its two result renders
+//   did not agree on (unstableOf). Where there is no page from before (made real elsewhere),
 //   or another edit was made real on the page since, the verdict says step 3 could not run against it, and why.
 //   Pictures are kept in the data folder under live-layer/<project>/<edit>/, and the core is told: verified, or still
 //   implemented with the failed verdict (its words are in the site; the verdict says what differs).
@@ -90,7 +102,8 @@ import {
 } from '../shared/design-layer.ts';
 import {
   MAX_DIFFERENCES, OUTSIDE_PROPERTIES, VERIFY_WIDTHS, against, applyMask, compareElements, compareOutside, comparePixels, compareTokens, diffBitmaps, diffPicture,
-  heldAlike, judge, maskedOf, masksAmong, noiseFloor, onlyWhere, reachOf, traceMasks, unionDiff, varyWhy, verdictNoise, verifyWidths, widestNoise, zonesOf,
+  heldAlike, judge, lateMasks, maskedOf, masksAmong, noiseFloor, onlyWhere, reachOf, traceMasks, unionDiff, unstableOf, varyWhy, verdictNoise, verifyWidths,
+  widestNoise, zonesOf,
   type Bitmap, type ElementSnap, type PageSnap, type PixelArea, type PixelDiff, type RenderMask, type Steady, type WidthFindings, type Zone,
 } from '../shared/layer-verify.ts';
 import type { LiveEditSaved, LiveTraceAnswer } from '../shared/live-lens.ts';
@@ -98,7 +111,7 @@ import { storedContentOf, type StoredContent, type StoredUndone, type StoredWord
 import { fragileWhy, kindWords } from '../shared/layer-words.ts';
 import { TRACE_ID, identityKey, kindKey, type EditTarget, type LiveTrace, type PartIdentity, type TracePart } from '../shared/live-trace.ts';
 import { MARKUP, asWords, decodeRefs, retypeRich } from '../shared/rich-text.ts';
-import { sameSite, type LiveSite } from '../shared/live.ts';
+import { movedTo, parseFieldMark, sameSite, type LiveSite } from '../shared/live.ts';
 import type { Method } from '../shared/protocol.ts';
 import { RENDER_MS, deadline, folderOf, inHiddenWindow, type HiddenPage } from './live-capture.ts';
 import type { HelperSaved, LiveCurrent, LiveViewHooks, SaveAt } from './live-view.ts';
@@ -210,13 +223,18 @@ export async function resolveLayer(run: Run, trace: LiveTrace | null, edits: rea
     const theirs = e.change.type === 'text' ? layerTextHash(e.change.value) : null;
     // The words check: one element showing the text the edit was made on (or, for a text edit, its new words) says
     // the identity still names that thing; every element of that identity is then the same stored thing.
-    const named = !guarded(e) || Array.from({ length: count }, (_, i) => {
+    const shows = Array.from({ length: count }, (_, i) => {
       const t = typeof texts[i] === 'string' ? texts[i] as string : null;
       const h = t === null ? null : layerTextHash(t);
       return h === e.target.textHash || h === theirs || (t !== null && saved.length > 0 && layerTextHash(asItWas(t)) === e.target.textHash);
-    }).some(Boolean);
+    });
+    const named = !guarded(e) || shows.some(Boolean);
+    // A theme's template file is code the page runs once for each place it is loaded (a card in a loop): what it
+    // prints from data differs between them, so an edit for one element reaches only the places showing its words.
+    const each = guarded(e) && e.target.part?.kind === 'template';
     if (count && !named) why = 'Its element shows other words now.';
     for (let i = 0; i < count && named; i++) {
+      if (each && !shows[i]) continue;
       if (e.change.type === 'text' && plain[i] !== true) { why ||= 'Its element holds more than words now.'; continue; }
       accept.push(i);
     }
@@ -242,15 +260,17 @@ export function effective(edits: readonly LayerEdit[], res: Pick<Resolution, 'or
 /**
  * Where a text edit's words are saved: the content, translation and item its target names (a Drupal field part's
  * identity: the content's UUID, its langcode, and the item when the part is one), once the field the helper marked
- * around its element (`type:id:field:fieldtype[:langcode:revision:changed:formatter]`) is checked to be that field. Anything else is why not:
- * the words are never saved to a field, a translation or an item the target does not name.
+ * around its element (`type:id:field[:fieldtype:langcode:revision:changed:formatter:page:vh]`, read by
+ * parseFieldMark()) is checked to be that field. Anything else is why not: the words are never saved to a field, a
+ * translation or an item the target does not name, nor from a mark that cannot be read.
  */
 export function saveTarget(part: PartIdentity | null, field: string): SaveAt | string {
-  const [type, , name] = field.split(':');
   if (!part || part.kind !== 'entity' || !part.field) {
     return 'Its target is not a field of content the helper names, so Wanigan cannot say which content, translation and item the words would be saved to. An agent can make the change from a brief.';
   }
-  if (part.type !== type || part.field !== name) return 'The field marked around its element is not the one its target names. Reload the page, then try again.';
+  const mark = parseFieldMark(field);
+  if (!mark) return 'The field marked around its element is not marked as Wanigan’s helper marks one. Reload the page, then try again.';
+  if (part.type !== mark.type || part.field !== mark.field) return 'The field marked around its element is not the one its target names. Reload the page, then try again.';
   if (!part.langcode) return 'Its target does not say which translation it was made on, so the words are saved to none. Reload the page, then try again.';
   return { uuid: part.id, langcode: part.langcode, item: part.item ?? null };
 }
@@ -423,23 +443,33 @@ export function wordsTarget(trace: LiveTrace, identity: PartIdentity, words: str
 const NOTHING_HOLDS = 'Nothing this page offers to edit holds exactly these words, so there is nothing here to save them to: they come from a template, from formatted text, or from something the site helper does not offer on this page.';
 
 /**
- * Drupal: the target that says a template around an element writes exactly its words (the helper's TemplateWords:
- * `words.tpl.<hash>` for words typed into it, `words.t.<hash>` for strings it prints through t()), looked for in the
- * parts the edit's identity names, then each one's parent; null when none does. Such a target is never saved: it says
+ * A template around an element that writes exactly its words: the target that says so (the helpers' template words:
+ * `words.tpl.<hash>` for words typed into a template, `words.t.<hash>` for strings it prints through a translation
+ * function, Drupal's t() or WordPress's gettext), the part that offers it, and where in the file the words are when
+ * the helper says (a WordPress property's description: "They are on line 12."). Such a target is never saved: it says
  * why not.
  */
-export function writtenIn(trace: LiveTrace, identity: PartIdentity, words: string): EditTarget | null {
+export interface Written { target: EditTarget; part: TracePart; at: string | null }
+
+/** writtenIn() and writtenAround(): looked for in `start`, then each part's parent, the nearest level first. */
+function writtenFrom(trace: LiveTrace, start: TracePart[], words: string): Written | null {
   const want = asWords(words);
+  if (!want) return null;
   const targets = new Map(trace.edits.map((e) => [e.id, e]));
   const byId = new Map(trace.parts.map((p) => [p.id, p]));
-  const key = identityKey(identity);
-  let level = trace.parts.filter((p) => p.identity && identityKey(p.identity) === key);
+  let level = start;
   const seen = new Set(level.map((p) => p.id));
   for (let depth = 0; level.length && depth < 64; depth++) {
     for (const p of level) {
       for (const id of p.edits ?? []) {
         const t = targets.get(id);
-        if (t && /^words\.(?:tpl|t)\./.test(t.id) && isObj(t.value) && Object.values(t.value).some((v) => typeof v === 'string' && asWords(v) === want)) return t;
+        if (!t || !/^words\.(?:tpl|t)\./.test(t.id) || !isObj(t.value)) continue;
+        const props = isObj(t.schema) && isObj(t.schema.properties) ? t.schema.properties : {};
+        for (const [k, v] of Object.entries(t.value).slice(0, 200)) {
+          if (typeof v !== 'string' || asWords(v) !== want) continue;
+          const d = isObj(props[k]) ? (props[k] as Record<string, unknown>).description : undefined;
+          return { target: t, part: p, at: typeof d === 'string' && d.trim() && d.length <= 300 ? d.trim() : null };
+        }
       }
     }
     level = level.flatMap((p) => {
@@ -451,6 +481,64 @@ export function writtenIn(trace: LiveTrace, identity: PartIdentity, words: strin
   }
   return null;
 }
+
+/** The template that writes an element's words, looked for in the parts the edit's identity names, then outward; null when none does. */
+export function writtenIn(trace: LiveTrace, identity: PartIdentity, words: string): Written | null {
+  const key = identityKey(identity);
+  return writtenFrom(trace, trace.parts.filter((p) => p.identity && identityKey(p.identity) === key), words);
+}
+
+/**
+ * The same for an element no part with an identity names: looked for from the innermost of the trace's parts around it
+ * (the page script's layerOf `parts`, innermost first), then outward.
+ */
+export function writtenAround(trace: LiveTrace, around: readonly string[], words: string): Written | null {
+  const first = innermost(trace, around);
+  return first ? writtenFrom(trace, [first], words) : null;
+}
+
+/** The innermost of the parts around an element (innermost first) that this trace has. */
+function innermost(trace: LiveTrace, around: readonly string[]): TracePart | null {
+  const byId = new Map(trace.parts.map((p) => [p.id, p]));
+  for (const id of around) { const p = byId.get(id); if (p) return p; }
+  return null;
+}
+
+/** A template's words, said: why they are not saved here, and where in the file they are. */
+const writtenWhy = (w: Written, fallback: string): string => [w.target.why ?? fallback, w.at].filter(Boolean).join(' ');
+
+/**
+ * WordPress: why words nothing the page offers holds, and no template around them writes, are not saved here, by what
+ * the trace knows of the part they sit in (the innermost): made by a plugin, or by the theme's own code, named by the
+ * file it is in; made by the PHP of a theme template the helper read, which is not guessed at; in a template the
+ * helper did not read, with why. Null when the trace knows none of these: the caller says nothing holds them.
+ */
+export function madeBy(p: TracePart | null): string | null {
+  if (!p) return null;
+  const file = p.source?.file ?? null;
+  const plugin = file ? /(?:^|\/)(?:mu-)?plugins\/([^/]+)/.exec(file) : null;
+  if (file && plugin) {
+    const name = (p.source?.package || plugin[1] || '').replace(/\.php$/, '');
+    return `These words come from the plugin “${name}”: its code (${file}) made this part of the page, and nothing here holds them, so Wanigan does not save them from here. They change where the plugin keeps them: in its settings if it has one for them, or in its code, which Wanigan does not change.`;
+  }
+  if (p.identity?.kind !== 'template') {
+    // A part the theme's own code made (a shortcode or widget it registers): code, which an agent can change.
+    const theme = file ? /(?:^|\/)themes\/([^/]+)\//.exec(file) : null;
+    return file && theme
+      ? `These words come from the theme “${p.source?.package || theme[1]}”: its code (${file}) made this part of the page, and nothing here holds them, so Wanigan does not save them from here. An agent can change that code from a brief.`
+      : null;
+  }
+  const shown = file ?? p.identity.path;
+  const read = p.variables?.find((v) => v.name === 'template.words')?.preview ?? '';
+  if (/^read\b/.test(read)) {
+    return `These words are not written as text in ${shown}: its PHP, or code it calls, makes them, and Wanigan does not guess at what PHP computes, so there is nothing here to save them to. An agent can find where they are made from a brief.`;
+  }
+  const notRead = /^not read: (.{1,200})$/.exec(read)?.[1];
+  return `These words are in what ${shown} prints, and the site helper did not read that template${notRead ? ` (${notRead})` : ''}, so whether they are written there or made by its code is not known.`;
+}
+
+/** Said when the trace names no part around an element at all: nothing the helper traced made it. */
+const UNNAMED = 'Its element is in markup no part of the page’s trace names, so Wanigan cannot tell what holds these words.';
 
 /** On Drupal, words no target holds and no template around them writes: made by code from what Wanigan does not save yet. */
 const DRUPAL_NOTHING_HOLDS = 'Nothing this page offers to edit holds exactly these words, and Wanigan finds them written in no template around them: code makes them (a formatter, a module or the theme) from something Wanigan does not save from here yet.';
@@ -539,7 +627,20 @@ const PAGE_MAX = 8_000;
 const pageRaw = (p: PageSnap): unknown => ({
   keys: p.keys, table: p.table, cut: p.cut,
   elements: p.elements.map((e) => ({ p: e.path, n: e.name, b: [e.box.x, e.box.y, e.box.width, e.box.height], t: e.text, v: e.values, e: e.touched })),
+  ...(p.late ? { late: p.late.map((l) => ({ n: l.name, b: [l.box.x, l.box.y, l.box.width, l.box.height] })) } : {}),
 });
+
+/** What a script added after the page arrived, as the page script answered (layerLate, or layerPage's `late`), checked: each element's name and box. Null when it could not tell. */
+export function lateOf(raw: unknown): { name: string; box: LayerRect }[] | null {
+  if (!Array.isArray(raw)) return null;
+  const num = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) && Math.abs(v) <= 1_000_000 ? v : 0);
+  return raw.slice(0, 500).flatMap((x) => {
+    const l = x && typeof x === 'object' ? x as Record<string, unknown> : null;
+    if (!l || !Array.isArray(l.b)) return [];
+    const [bx, by, bw, bh] = (l.b as unknown[]).map(num);
+    return [{ name: typeof l.n === 'string' && l.n ? l.n.slice(0, 200) : 'element', box: { x: bx ?? 0, y: by ?? 0, width: bw ?? 0, height: bh ?? 0 } }];
+  });
+}
 
 /** What the page script's layerPage answered, checked; null when it is not one. */
 export function pageOf(raw: unknown): PageSnap | null {
@@ -559,7 +660,8 @@ export function pageOf(raw: unknown): PageSnap | null {
       text: typeof e.t === 'string' ? e.t.slice(0, 2_000) : null, values: (e.v as unknown[]).slice(0, keys.length).map((i) => (Number.isInteger(i) ? i as number : -1)), touched: e.e === true,
     });
   }
-  return { keys, table, elements, cut: r.cut === true };
+  const late = lateOf(r.late);
+  return { keys, table, elements, cut: r.cut === true, ...(late ? { late } : {}) };
 }
 
 export type LayerRender = (r: LayerRenderRequest) => Promise<LayerRendered | { error: string }>;
@@ -705,6 +807,10 @@ function onPage<T>(deps: RenderDeps, r: LayerRenderRequest, take: (page: HiddenP
       const res = await resolveLayer(run, trace, r.edits, r.path);
       const picture = async (whole: boolean): Promise<LayerRendered | { error: string }> => {
         const { height, cut, full } = await page.grow(VERIFY_MAX_HEIGHT);
+        // What a script added after the page arrived: not in the HTML the server sent, so the page decides it, not the
+        // save. Left out of the pixel steps and, read whole, of the page's elements.
+        const html = await page.html();
+        const added = lateOf(html ? await run<unknown>(call('layerLate', html), null) : null);
         // The whole page element by element, for step 3: read before the picture, on the same layout.
         const snapshot = whole ? pageOf(await run<unknown>(call('layerPage', OUTSIDE_PROPERTIES, PAGE_MAX), null)) : undefined;
         const elements = snapsOf(await run<unknown>(call('layerSnap', r.edits.map((e) => e.id), LAYER_PROPERTIES), []));
@@ -715,7 +821,7 @@ function onPage<T>(deps: RenderDeps, r: LayerRenderRequest, take: (page: HiddenP
           : {};
         // What the site says changes between renders, where it is in this render: left out of the pixel steps.
         const ids = trace ? traceMasks(trace, steady).map((m) => m.part) : [];
-        const masks = masksOf(trace, steady, areasOf(await run<unknown>(call('layerAreas', ids), null)));
+        const masks = [...masksOf(trace, steady, areasOf(await run<unknown>(call('layerAreas', ids), null))), ...lateMasks(added ? { late: added } : null)];
         const png = await page.shoot(height, true);
         if (!png) return { error: 'The page could not be pictured.' };
         return { png, bitmap: await deps.decode(png), elements, found: res.resolved, tokens, cut: cut ? { full } : null, masks, steady, ...(whole ? { page: snapshot ?? null } : {}) };
@@ -1308,7 +1414,7 @@ export function wireLiveLayer(options: LiveLayerOptions): { hooks: LiveViewHooks
     const value = edit.change.value;
     const here = shown();
     if (!here || here.cur.projectId !== cur.projectId || !madeOn(edit, here.path)) return none(`Open ${edit.page} in the live view first: words are saved from the page they are on.`);
-    const at = await options.run<{ count?: unknown; field?: unknown; words?: unknown; plain?: unknown; same?: unknown } | null>(call('layerOf', id), null);
+    const at = await options.run<{ count?: unknown; field?: unknown; words?: unknown; plain?: unknown; same?: unknown; parts?: unknown } | null>(call('layerOf', id), null);
     if (!at || at.count === 0) return none('Its element is not tagged on this page. Reload the page, then try again.');
     // One stored thing shown more than once (one identity, every element the same plain words in the same field mark) is
     // saved once; elements a document path matched, or that differ, are refused.
@@ -1354,7 +1460,7 @@ export function wireLiveLayer(options: LiveLayerOptions): { hooks: LiveViewHooks
       if (typeof where === 'string') return none(where);
       // A field of a type the helper's word saves do not model (a contributed module's): its stored values are
       // searched first; found nowhere there, the helper's own save answers (a field's label, or why not).
-      if (options.storedWords && !WORD_FIELDS.has(at.field.split(':')[3] ?? '')) {
+      if (options.storedWords && !WORD_FIELDS.has(parseFieldMark(at.field)?.fieldType ?? '')) {
         const traced = await options.trace();
         const c = traced.state === 'ok' && edit.target.part ? storedContentOf(traced.trace, edit.target.part) : null;
         if (traced.state === 'ok' && c) {
@@ -1376,22 +1482,51 @@ export function wireLiveLayer(options: LiveLayerOptions): { hooks: LiveViewHooks
       if (!saved.ok) return none(saved.error ?? 'The site did not save it.');
       const refused = await mark(cur.projectId, id, 'implemented');
       // The site now has the words, whatever the layer recorded: the page shows them as it renders them, and the layer
-      // applies again after the load.
-      if (!here.cur.webContents.isDestroyed()) here.cur.webContents.reloadIgnoringCache();
+      // applies again after the load. A save that moved the page shown (a new alias, written inside the save) goes to
+      // its new address, rather than reloading one that now answers 404 or a redirect.
+      if (!here.cur.webContents.isDestroyed()) {
+        const next = movedTo(saved, here.url);
+        if (next && sameSite(here.cur.base, next)) void here.cur.webContents.loadURL(next).catch(() => {});
+        else here.cur.webContents.reloadIgnoringCache();
+      }
       if (refused) return none(inSiteUnmarked(saved.revision ?? null, refused));
       return { ok: true, id, state: 'implemented', revision: saved.revision ?? null, ...(saved.note ? { note: saved.note } : {}) };
     }
     // No field marked around them (WordPress's helper marks none): the edit target in the page's trace that holds
     // exactly these words, saved as the window saves one.
-    if (!edit.target.part) return none('Its element is in markup no part of the page’s trace names, so Wanigan cannot tell what holds these words.');
     const answer = await options.trace();
+    /**
+     * Words a template writes, said as the platform has them. Drupal: typed into a template, code an agent changes;
+     * printed through t(), an interface translation Wanigan does not change yet. WordPress: a theme's template file
+     * (a part with a `template` identity), typed in or printed through a gettext function, goes to an agent with the
+     * file, its line and, for a string, its text domain (a translation file is the way without code); a plugin's or
+     * core's template is not Wanigan's to change, and says whose it is.
+     */
+    const sayWritten = (w: Written, platform: LiveTrace['platform']): Promise<LayerImplemented> | LayerImplemented => {
+      if (platform === 'drupal') return w.target.id.startsWith('words.tpl.') ? toAgent(writtenWhy(w, DRUPAL_NOTHING_HOLDS)) : none(writtenWhy(w, DRUPAL_NOTHING_HOLDS));
+      const why = writtenWhy(w, 'These words are written in a template, which is code.');
+      return w.part.identity?.kind === 'template' ? toAgent(why) : none(why);
+    };
+    if (!edit.target.part) {
+      // No part with an identity names its element, but the trace may still know what is around it: a template region
+      // whose path inside could not be written, a plugin's template, a Drupal template's region. Its words are looked
+      // for in the templates around it, and the refusal names the template or plugin that made it.
+      if (answer.state !== 'ok') return none(untraced(answer));
+      const around = Array.isArray(at.parts) ? at.parts.filter((x): x is string => typeof x === 'string' && x.length > 0 && x.length <= 100).slice(0, 64) : [];
+      const inner = innermost(answer.trace, around);
+      if (!inner) return none(UNNAMED);
+      const written = writtenAround(answer.trace, around, at.words);
+      if (written) return sayWritten(written, answer.trace.platform);
+      if (answer.trace.platform === 'drupal') return none(DRUPAL_NOTHING_HOLDS);
+      return none(madeBy(inner) ?? NOTHING_HOLDS);
+    }
     if (answer.state !== 'ok') return none(untraced(answer));
     const found = wordsTarget(answer.trace, edit.target.part, at.words, value);
     if (!found.ok && found.why === NOTHING_HOLDS && answer.trace.platform === 'drupal') {
       // Drupal: say which it is. Words a template writes are code (an agent changes the template), or an interface
       // translation Wanigan does not change yet; anything else is made by code from what is not saved here yet.
       const written = writtenIn(answer.trace, edit.target.part, at.words);
-      if (written?.id.startsWith('words.tpl.')) return toAgent(written.why ?? DRUPAL_NOTHING_HOLDS);
+      if (written?.target.id.startsWith('words.tpl.')) return sayWritten(written, 'drupal');
       // Written in no template: looked for in the stored values of the content the page showed.
       const c = !written && options.storedWords ? storedContentOf(answer.trace, edit.target.part) : null;
       if (c) {
@@ -1399,7 +1534,13 @@ export function wireLiveLayer(options: LiveLayerOptions): { hooks: LiveViewHooks
         if ('done' in r) return r.done;
         if (r.nowhere) return none(r.nowhere);
       }
-      return { ok: false, id, route: 'none', why: written?.why ?? DRUPAL_NOTHING_HOLDS };
+      return written ? sayWritten(written, 'drupal') : none(DRUPAL_NOTHING_HOLDS);
+    }
+    if (!found.ok && found.why === NOTHING_HOLDS && answer.trace.platform === 'wordpress') {
+      // WordPress: words a theme's template file writes, or prints through a gettext function (the helper's template
+      // words), before anything is searched.
+      const written = writtenIn(answer.trace, edit.target.part, at.words);
+      if (written) return sayWritten(written, 'wordpress');
     }
     // WordPress: nothing the page offers holds them, or they are somewhere in a post's content that no target offers
     // (classic content, a builder's, a shortcode's, a block's settings): looked for where the post keeps them. Words a
@@ -1409,6 +1550,12 @@ export function wireLiveLayer(options: LiveLayerOptions): { hooks: LiveViewHooks
       const r = await fromStore(answer.trace.id, stored, 'wordpress');
       if ('done' in r) return r.done;
       if (r.nowhere) return found.route === 'agent' ? toAgent(`${r.nowhere} An agent can make the change from a brief.`) : none(r.nowhere);
+    }
+    if (!found.ok && found.why === NOTHING_HOLDS && answer.trace.platform === 'wordpress') {
+      // Held by nothing and written in no template: said by what made the part it sits in (a plugin, a template's
+      // PHP, a template not read), or that nothing the helper offers holds them.
+      const key = identityKey(edit.target.part);
+      return none(madeBy(answer.trace.parts.find((p) => p.identity && identityKey(p.identity) === key) ?? null) ?? NOTHING_HOLDS);
     }
     // Formatted words handed to an agent keep the page from before, as a style does.
     if (!found.ok) return found.route === 'agent' ? toAgent(found.why) : { ok: false, id, route: found.route, why: found.why };
@@ -1483,10 +1630,12 @@ export function wireLiveLayer(options: LiveLayerOptions): { hooks: LiveViewHooks
     /** Whether every render compared was held as asked. */
     let allHeld = true;
     for (const width of widths) {
-      // The first result is read whole too where step 3 compares it with a page from before.
-      const first = await ask(width, false, edits.some((e) => { const c = checks.get(e.id); return !!c?.ran && c.widths.includes(width); }));
+      // Both results are read whole too where step 3 compares them with a page from before: what the page does not
+      // agree on with itself between the two is set aside there.
+      const whole = edits.some((e) => { const c = checks.get(e.id); return !!c?.ran && c.widths.includes(width); });
+      const first = await ask(width, false, whole);
       if ('error' in first) throw new Error(first.error);
-      const second = await ask(width, false);
+      const second = await ask(width, false, whole);
       if ('error' in second) throw new Error(second.error);
       const design = await ask(width, true);
       if ('error' in design) throw new Error(design.error);
@@ -1518,7 +1667,10 @@ export function wireLiveLayer(options: LiveLayerOptions): { hooks: LiveViewHooks
       const keep = zones.map((z) => z.rect);
       // What the site says changes between renders is left out of every pixel comparison, never a touched element; the
       // noise floor is measured over what is left. A change the helper held still is compared: all four were held alike.
-      const masks = masksAmong([first, second, design, again]);
+      // So is what a script added after the page loaded, and what the page did not agree on with itself in its two
+      // results: neither is the save's doing.
+      const unstable = first.page && second.page ? unstableOf(first.page, second.page) : { paths: [], masks: [] };
+      const masks = [...masksAmong([first, second, design, again]), ...lateMasks(first.page), ...lateMasks(second.page), ...unstable.masks];
       const out = masks.flatMap((m) => m.rects);
       const noise = widestNoise([noiseFloor(first.bitmap, second.bitmap, out, keep), noiseFloor(design.bitmap, again.bitmap, out, keep)]);
       const d = applyMask(diffBitmaps(design.bitmap, first.bitmap), out, keep);
@@ -1548,16 +1700,24 @@ export function wireLiveLayer(options: LiveLayerOptions): { hooks: LiveViewHooks
           checks.set(e.id, { ran: false, why: `${!thenPage ? 'Its page from before' : 'Today’s page'} could not be read element by element at ${width} px, so step 3 compared the design only.` });
           continue;
         }
+        // What a script added is left out of a page's elements and of its paths only where the HTML the server sent
+        // was read: one page told apart that way and the other not cannot be lined up, so it is said, not guessed.
+        if ((thenPage.late === undefined) !== (first.page.late === undefined)) {
+          checks.set(e.id, { ran: false, why: thenPage.late === undefined
+            ? 'Its page from before was kept by an earlier Wanigan, which could not tell what a script added to the page after it arrived, so step 3 compared the design only.'
+            : `The HTML the site sent today could not be read back at ${width} px, so what a script added after it arrived could not be told apart; step 3 compared the design only.` });
+          continue;
+        }
         const was = { masks: at.masks, steady: at.steady };
         const alike = [second, design, again, was].every((x) => heldAlike(first.steady, x.steady));
         const left = (masks: readonly RenderMask[] | undefined): LayerRect[] => (masks ?? []).filter((m) => !(alike && m.held)).flatMap((m) => m.rects);
         const zonesThen = zonesOf([...design.elements, ...at.elements], first.elements);
         const keepThen = zonesThen.map((z) => z.rect);
-        const masksThen = masksAmong([first, second, design, again, was]);
+        const masksThen = [...masksAmong([first, second, design, again, was]), ...lateMasks(thenPage), ...lateMasks(first.page), ...lateMasks(second.page), ...unstable.masks];
         const words = e.change.type === 'text' && typeof e.before.text === 'string' ? { was: e.before.text, now: e.change.value } : null;
         const found3 = compareOutside({
-          before: thenPage, result: first.page, width, against: { edit: e.id, at: k.at }, words,
-          masked: { before: left(was.masks), result: [first, second, design, again].flatMap((x) => left(x.masks)) },
+          before: thenPage, result: first.page, width, against: { edit: e.id, at: k.at }, words, unstable: unstable.paths,
+          masked: { before: [...left(was.masks), ...lateMasks(thenPage).flatMap((m) => m.rects)], result: [first, second, design, again].flatMap((x) => left(x.masks)) },
         });
         outside.push(...found3.differences);
         reached.push({ edit: e.id, reach: found3.reach });

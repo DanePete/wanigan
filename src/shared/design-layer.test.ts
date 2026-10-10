@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {
   LAYER_PROPERTIES, compileLayer, layerBreakpoints, layerEdit, layerSelector, layerTextHash, layerValue, trySheet, tryValues, tryVar, type LayerEdit, type LayerTarget,
 } from './design-layer.ts';
-import { identityKey, kindKey, parseIdentity } from './live-trace.ts';
+import { identityKey, kindKey, parseIdentity, type PartIdentity } from './live-trace.ts';
 
 const hero: LayerTarget = { part: { kind: 'component', name: 'acme:hero', within: null, nth: 0 }, inner: null, selector: null, textHash: null };
 const edit = (over: Partial<LayerEdit> & { id: string }): LayerEdit => ({
@@ -147,6 +147,17 @@ test('a part’s identity is checked, keyed the same on every load, and says wha
   assert.equal(identityKey(inLayout), 'config|layout_builder_component|node:0a1b-14/7e57-01');
   assert.equal(kindKey(inLayout), 'plugin|layout_builder_component|system_branding_block', 'the same plugin placed by a layout is a kind of its own');
   assert.equal(kindKey(parseIdentity({ kind: 'config', type: 'menu', id: 'main' })!), null, 'a menu has no kind beyond itself');
+  // A WordPress theme's template file: the theme, the file's path in it, and which theme it is.
+  const file = parseIdentity({ kind: 'template', theme: 'acme', path: 'template-parts/header/site-branding.php', role: 'parent' });
+  assert.deepEqual(file, { kind: 'template', theme: 'acme', path: 'template-parts/header/site-branding.php', role: 'parent' });
+  assert.equal(identityKey(file!), 'template|acme|template-parts/header/site-branding.php');
+  assert.equal(identityKey({ ...file!, role: 'theme' } as PartIdentity), identityKey(file!), 'which theme is active does not make it another file');
+  assert.equal(kindKey(file!), null, 'a template file has no kind beyond itself');
+  for (const bad of [
+    { kind: 'template', theme: 'acme', path: '../../wp-config.php', role: 'theme' }, { kind: 'template', theme: 'acme', path: '/etc/hosts', role: 'theme' },
+    { kind: 'template', theme: 'acme', path: 'parts//header.php', role: 'theme' }, { kind: 'template', theme: 'acme/child', path: 'header.php', role: 'child' },
+    { kind: 'template', theme: 'acme', path: 'header.php', role: 'plugin' }, { kind: 'template', theme: 'acme', path: 'header.php' },
+  ]) assert.equal(parseIdentity(bad), null, `never out of the theme, nor a role it does not name: ${JSON.stringify(bad)}`);
   for (const bad of [
     { kind: 'entity', type: 'node' }, { kind: 'entity', type: 'node', id: 'has space' }, { kind: 'entity', type: 'node', id: 'x', item: 'delta:-1' },
     { kind: 'component', name: 'acme:card', within: null, nth: -1 }, { kind: 'block', store: 'post:1', path: [], name: 'core/p' },
@@ -155,6 +166,17 @@ test('a part’s identity is checked, keyed the same on every load, and says wha
   assert.equal(parseIdentity({ kind: 'entity', type: 'node', id: 'x', field: 'a b' }), null, 'a malformed field would widen the target to all of the content');
   assert.equal(parseIdentity({ kind: 'config', type: 'block', id: 'b', plugin: 7 }), null);
   assert.deepEqual(parseIdentity({ kind: 'entity', type: 'post', id: '12', bundle: 'page', field: null }), { kind: 'entity', type: 'post', id: '12', bundle: 'page' }, 'null is absent');
+});
+
+test('a paragraph’s identity carries the revision the page showed, which neither its key nor its kind counts', () => {
+  const raw = { kind: 'entity', type: 'paragraph', id: '0a1b-f6', bundle: 'text', langcode: 'en', field: 'field_text', item: 'delta:0' };
+  const shown = parseIdentity({ ...raw, revision: '50' });
+  assert.deepEqual(shown, { ...raw, revision: '50' });
+  const saved = parseIdentity({ ...raw, revision: '1000' })!;
+  assert.equal(identityKey(saved), identityKey(shown!), 'a save makes a new revision of the same paragraph: still the same part');
+  assert.equal(identityKey(parseIdentity(raw)!), identityKey(shown!), 'an identity from before the revision was named is the same part too');
+  assert.equal(kindKey(shown!), 'field|paragraph|text|field_text');
+  for (const revision of ['latest', '-1', '', 12]) assert.equal(parseIdentity({ ...raw, revision }), null, `revision ${JSON.stringify(revision)}: refused whole`);
 });
 
 test('words are hashed the same however their whitespace falls', () => {

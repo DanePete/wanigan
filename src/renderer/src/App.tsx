@@ -30,6 +30,7 @@ import { ViewBoundary } from './components/ViewBoundary';
 import { CoreProblemPanel } from './components/CoreProblem';
 import { GoToHost } from './components/live/GoTo';
 import { openGoTo } from './lib/live-goto';
+import { toggleDevtoolsTab, wantDevtoolsTab } from './lib/live-devtools';
 import { ShortcutSheet } from './dialogs/ShortcutSheet';
 import { EditorDrawer } from './editor/EditorDrawer';
 import { openQuickOpen, setEditorOpen, toggleEditor } from './editor/store';
@@ -258,6 +259,18 @@ function useCommands({ dialog, setDialog, projectId, projects }: {
         if (!currentProject()) return false;
         openGoTo({ projectId: null, fromPage: false });
         return true;
+      case 'live-devtools': {
+        // Chrome's DevTools chord (⌥⌘I on a Mac, Ctrl+Shift+I elsewhere): the live view's DevTools tab, opened or
+        // closed; from elsewhere in a project, the project's live view with the tab open.
+        const current = currentProject();
+        if (!current) return false;
+        const shown = parse(location.hash).route;
+        if (shown.name === 'project' && shown.view === LIVE_VIEW.view) { toggleDevtoolsTab(); return true; }
+        setDialog(null);
+        wantDevtoolsTab();
+        navigate({ name: 'project', projectKey: current, view: LIVE_VIEW.view });
+        return true;
+      }
       case 'settings': case 'go-settings': navigate({ name: 'settings' }); return true;
       case 'go-needs': navigate({ name: 'needs' }); return true;
       case 'go-running': navigate({ name: 'running' }); return true;

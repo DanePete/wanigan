@@ -10,13 +10,17 @@
 // archives on the board, so taking a part out is ⇧X). ⇧E opens the design
 // layer's edits: E alone edits the chosen part. [ and ] step through the side
 // panel's tabs; ⇧[ and ⇧] (a key event names them { and }) step through the
-// tabs of the dock beneath the page: the code editor, the notes, the problems
-// and the request.
+// tabs of the dock beneath the page: the code editor, the notes, the problems,
+// the request and the page's DevTools. ⇧D shows the chosen part (or, in the
+// tree, the row with the keyboard) in DevTools; DevTools itself opens and
+// closes with Chrome's own chord, which is an app chord (shared/shortcuts.ts).
+// ⇧S snaps a picture of the page to mark up and send, and ⇧R starts or stops
+// recording it (S alone is Compare's slider, R alone follows G to Running).
 
 export type LiveKeyId =
   | 'pick' | 'lens' | 'width-phone' | 'width-tablet' | 'width-full' | 'tab-previous' | 'tab-next' | 'dock-previous' | 'dock-next'
-  | 'compare' | 'library' | 'edits'
-  | 'edit' | 'move' | 'code' | 'alone' | 'take-out';
+  | 'compare' | 'library' | 'edits' | 'snap' | 'record'
+  | 'edit' | 'move' | 'code' | 'alone' | 'take-out' | 'devtools-show';
 
 export interface LiveKeySpec {
   id: LiveKeyId;
@@ -42,11 +46,15 @@ export const LIVE_KEYS: readonly LiveKeySpec[] = [
   { id: 'compare', key: 'c', shift: true, page: true, focusWindow: true },
   { id: 'library', key: 'b', shift: true, page: true, focusWindow: true },
   { id: 'edits', key: 'e', shift: true, page: true, focusWindow: true },
+  { id: 'snap', key: 's', shift: true, page: true, focusWindow: true },
+  // Recording goes on with the keyboard where it was: the owner goes on using the page.
+  { id: 'record', key: 'r', shift: true, page: true, focusWindow: false },
   { id: 'edit', key: 'e', shift: false, page: false, focusWindow: false },
   { id: 'move', key: 'm', shift: false, page: false, focusWindow: false },
   { id: 'code', key: '.', shift: false, page: false, focusWindow: false },
   { id: 'alone', key: 'a', shift: true, page: false, focusWindow: false },
   { id: 'take-out', key: 'x', shift: true, page: false, focusWindow: false },
+  { id: 'devtools-show', key: 'd', shift: true, page: false, focusWindow: false },
 ];
 
 /**

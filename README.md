@@ -120,8 +120,9 @@ WordPress and other sites can each be on or off.
 
 - **One bar, three groups.** The site (one menu: Local and the hosted
   environments to show the page on, Compare, Site settings), the page (back,
-  forward, reload, the address, the width, the lens) and the tools (Pick, and a
-  menu for drag handles, the default browser and a card's before and after). One
+  forward, reload, the address, the width, the lens) and the tools (Pick,
+  Library, Edits, Snap, Record, DevTools, and a menu for drag handles, the
+  default browser and a card's before and after). One
   status line under the page says what just happened (what an edit outlined,
   a hosted environment shown read-only, a piece shown alone, a palette entry
   being placed), what the view follows, and the keys that work now. In a
@@ -132,17 +133,36 @@ WordPress and other sites can each be on or off.
   part's details under it, the tree folded to that part's branch, or beside it
   in a window 1680 px wide or more), Add, the component library and the
   design layer's edits. Beneath the page, a dock shared with the code editor:
-  Code, Notes, Problems and Request, opened from its tabs (they wait in a strip
-  when it is closed) or ⇧[ and ⇧]. What it shows, its height, its side and
+  Code, Notes, Problems, Request and DevTools, opened from its tabs (they wait
+  in a strip when it is closed) or ⇧[ and ⇧]. What it shows, its height, its side and
   whether it is open are kept on this Mac. Compare is drawn where the page is,
   and leaving it puts the page back as it was.
 - **Keys for everything**, in the view and in its page while nothing is typed
   into: P picks (and stops picking), ⇧L chooses a lens, 1 2 3 the widths,
   [ and ] the side panel's tabs, ⇧[ and ⇧] the dock's, ⇧C Compare, ⇧B the
-  component library; on a chosen part E types on its words on the page (or,
+  component library, ⇧S a snap, ⇧R starts or stops a recording; on a chosen
+  part E types on its words on the page (or,
   for a part that is more than words, opens Edit ▾), M moves, . opens its
-  code, ⇧A shows it alone, ⇧X takes it out; ⌘↩ adds a note, ⇧⌘↩ sends it (or
-  the notes waiting). All are on the shortcut sheet (?).
+  code, ⇧A shows it alone, ⇧X takes it out, ⇧D shows it in DevTools; ⌘↩ adds
+  a note, ⇧⌘↩ sends it (or the notes waiting). All are on the shortcut sheet (?).
+- **The page's own DevTools**, in the dock: Chromium's DevTools for the page
+  (Elements with its own picker, Console, Network, Sources, Application,
+  Performance) in a DevTools tab beneath or beside the page, following the dock
+  as you resize or move it. **DevTools** in the bar, or Chrome's own key (⌥⌘I
+  on macOS, Ctrl+Shift+I on Windows and Linux, also from the page and from
+  DevTools itself), opens or closes it. **Show in DevTools** on a chosen part,
+  on a row of the Layers tree, or ⇧D, scrolls the page to the element when it
+  is off screen and selects it in Elements. **Open in its own window** puts it
+  on a second screen. Hiding the tab keeps DevTools as it was; leaving the
+  project closes it. It is the page's own DevTools, with none of Wanigan's
+  privileges. The tab says what of the page is Wanigan's: its page script and
+  outlines, and the helper's `wl:` comments and `data-wl-*` attributes, are in
+  the page's HTML while the live view is on, and the Network panel shows the
+  helper's `X-Wanigan-Live` key on the page's own loads. Wanigan's own
+  window's DevTools moved to ⌥⇧⌘I (Ctrl+Alt+Shift+I). Checked in the window
+  against a stand-in, and Electron's hosting (DevTools in a view, a point
+  selected in Elements, its own window and back) in a throwaway window on
+  made-up pages; not yet seen in the app on a site.
 - **Finds the site** from the project's own files (`.ddev`, `wp-config.php`,
   a dev script, `.lando.yml`) and opens the site you already run. It starts
   nothing on its own. A ddev site's certificate is trusted when this Mac's own
@@ -179,6 +199,35 @@ WordPress and other sites can each be on or off.
 - **Notes for an agent.** Point at parts across pages, say what should change,
   and send them to a session as one message with a picture of each part. They
   wait in the dock's Notes tab.
+- **Snap** (the camera in the bar, or ⇧S). A picture of the page as the view
+  shows it, drawn where the page is: drag over the part that is wrong, or take
+  the whole view (W) or the whole page (F, loaded again at the same width in
+  a hidden window). Mark it up with a box, an arrow, a highlight, a short
+  label and a blur for anything private (B A H T U, each undone with ⌘Z or
+  Ctrl+Z); the blur replaces the pixels before the picture is kept or sent.
+  **Ask an agent** opens the note composer with the marked-up picture
+  attached and the context written out for you to read and change: the
+  page's address and the view's width, the parts the area covers and what
+  made them (template and file, block or component, module or plugin, from
+  the site's trace), and the console's errors. Choose the session and send
+  it, or **Save to Notes** to send later. Nothing leaves Wanigan until you do.
+- **Record** (in the bar, or ⇧R). A recording of the live view and nothing
+  else, from the view's own frames (no screen recording, so no permission is
+  asked, on macOS or Windows), at most two minutes. While it runs the bar
+  says **Stop** with the time and the status line says it is recording;
+  Escape or ⇧R stops it, and so does leaving the live view. Meanwhile a step
+  log is kept: each click with the element and the part under it, keys and
+  what was typed (never in a password field: only that keys were pressed
+  there), scrolls, pages, console errors, and requests that failed or were
+  slow (status, path and time; never a body, a header, a cookie or a query).
+  Stopped, you see the clip (a WebM video, which Wanigan, Chrome, Edge,
+  Firefox and Safari play; QuickTime Player does not), up to eight key frames
+  (each click, page and error) and the log. **Ask an agent** sends the key
+  frames as pictures and the log as words with your explanation; agents never
+  get the video, and the composer says so. Recordings are kept in Wanigan's
+  own data, under `live-recordings/` (never in the site), with the same
+  limits as attachments; a project keeps its last five, and the review has
+  Show in Finder (File Explorer on Windows) and Delete.
 - **The design layer** (Edit ▾ › On the page, and Edits, ⇧E). You edit on
   the page itself, as in a site builder. Retype the words (E, or a
   double-click on the chosen part's words) makes those words editable where
@@ -202,17 +251,25 @@ WordPress and other sites can each be on or off.
   view's header, footer or empty text, a menu link's text, or the words of a
   Layout Builder inline block, through its layout (a default layout that every
   page of a kind shares is saved only when you make it real again, after it
-  says how many pages that reaches); and, where Webform is installed, a form's
-  own words through Webform's own API: an element's title, description, help,
-  placeholder, prefix, suffix or option labels, its buttons and its
+  says how many pages that reaches), or the words of a paragraph, through the
+  page that holds it (Paragraphs keeps each page's paragraphs as versions of
+  that page, so the page is saved as a new version with its workflow, log and
+  checks; a newer draft, an open Layout Paragraphs builder or a paragraph not
+  translated into the page's language is refused, and a Paragraphs Library
+  item says how many pages use it first); and, where Webform is installed, a
+  form's own words through Webform's own API: an element's title, description,
+  help, placeholder, prefix, suffix or option labels, its buttons and its
   confirmation message, in the form's language or its translation. A button
   showing the site's default gets words of its own on that form only; the
   default for every form, and options several forms share, say how many forms
   they reach and save only when you confirm. Configuration says the next config
-  import puts back what is exported. On WordPress a title, an excerpt, a string meta,
-  the site's title or tagline, a menu link's text, or a block's words (a
-  paragraph, a heading, a navigation label), each through core's REST API with
-  a revision where WordPress keeps one. A block's words are sent as the HTML
+  import puts back what is exported. A save that gives a page a new address (a
+  new title, with Pathauto) takes the view there. On WordPress a title, an
+  excerpt, a string meta, the site's title or tagline, a menu link's text, or a
+  block's words (a paragraph, a heading, a navigation label), each through
+  core's REST API with a revision where WordPress keeps one, and a category's or
+  tag's name where a menu or an archive heading shows it, through core's own
+  term save (it says first that the name changes everywhere the term shows). A block's words are sent as the HTML
   they are kept as: typed words escaped, so a typed `<` stays a character, and
   words between a link's or bold's tags changed only where the change falls
   inside one run of them, every tag kept. Words kept in something shown beyond
@@ -242,15 +299,25 @@ WordPress and other sites can each be on or off.
   copy, and Undo puts the old value back (custom fields keep no revision, so
   this is their only way back, for ten minutes). Words a plugin computes and
   never stores, and a builder's own cache, are beyond it.
-  What it cannot save says why, and which kind of why: Drupal keeps no such
-  thing (words written in a Twig template, a menu link written in code, a base
+  What it cannot save says why, and which kind of why: the site keeps no such
+  thing (words written in a template, a menu link written in code, a base
   field's label, words a Webform token or computed element makes), or Wanigan
-  does not do it yet (an interface translation, a caption, words across
-  formatting). A WordPress change across formatting,
-  words in a classic post's content, and words a Drupal template writes go to
-  an agent, as does a style: never written into the stylesheets by hand.
-  Where the site cannot say what writes words nothing stores (a WordPress
-  classic theme's template files), you can look in the template that rendered
+  does not do it yet (a Drupal interface
+  translation, a caption, words across formatting). Both helpers read each
+  template the page loaded (Drupal's Twig, a WordPress theme's PHP files,
+  never run) and list the words typed into it and the strings it prints
+  through a translation function, with their file and line: words a template
+  writes go to an agent, saying the file and line; on WordPress a translated
+  string goes too, with its text domain (a translation file changes it without
+  code), and a parent theme's template, when a child theme is active, is to be
+  copied into the child theme and changed there, since a theme update would
+  overwrite it. What a template's PHP works out is never guessed at: words in
+  no template are said to be made by its code, by a plugin or the theme's own
+  code (named), or in a template the helper did not read. Only an element outside everything the
+  page's trace knows is called unknown. A WordPress change across formatting
+  and words in a classic post's content go to an agent too, as does a style:
+  never written into the stylesheets by hand. Where neither helper can say
+  what writes words nothing stores, you can look in the template that rendered
   the element itself, picked on the page: Wanigan says first that every page
   using that template changes, and writes it only when the words are there
   exactly once (Put back waits while the layer holds the edit as in the site).
@@ -262,11 +329,11 @@ WordPress and other sites can each be on or off.
   real and verified them. Typing on the page and a style shown as it changes
   have been checked in headless Chromium on made-up pages and in the window
   against the stand-in, not yet in the app on a site. Drupal's formatted text,
-  configuration and Layout Builder saves, and WordPress, have been tested with
-  stand-ins only, as have the stored-words search and save (Elementor and ACF
-  with stand-ins made in the shape of their public code; ACF PRO's repeaters,
-  blocks and options follow ACF's documented storage and are not yet checked
-  against ACF PRO itself).
+  configuration, Layout Builder and paragraph saves, and WordPress, have been
+  tested with stand-ins only, as have the stored-words search and save
+  (Elementor and ACF with stand-ins made in the shape of their public code;
+  ACF PRO's repeaters, blocks and options follow ACF's documented storage and
+  are not yet checked against ACF PRO itself).
 - **Go to**, in the address field (click it, or Shift+Space in the live view,
   ⌘⇧Space anywhere in a project): an address, or any page of the site by
   typing a few letters of its title, an admin or structure page, a path or an id, ranked as you type and by what you choose
@@ -441,7 +508,7 @@ view, beside the project's files.
   opens its template where it writes the words you picked. ⌘J shows or hides
   the drawer, which stays as you left it (open or closed, beneath or beside,
   its height), kept on this Mac. In the live view it is the dock, with Notes,
-  Problems and Request beside Code.
+  Problems, Request and the page's DevTools beside Code.
 - **The Code tab.** The project's folders as a tree beside the editor, read a
   folder at a time, with the open file marked; arrows walk it, Enter opens a
   file, Space opens it and keeps your place in the tree, typing a name jumps to
@@ -783,16 +850,18 @@ verification results and the behavior that remains unverified.
   helper answers), and Canvas pieces by their own ids. The WordPress helper's
   newer edits (formatted and nested words, one block written alone, bound
   words, synced patterns and their overrides, template words, navigation
-  labels, widgets without REST instances, media alt) are tested under a
-  stand-in WordPress only: none has been saved on a real site yet, nor an
+  labels, widgets without REST instances, media alt, a term's name) and the
+  words a classic theme's template files write are tested under a stand-in
+  WordPress only: none has been saved on a real site yet, nor an
   edited block opened in the block editor to see it called valid. The Drupal helper's Layout Builder moves, and
   reordering a field with several items, have not been run against a real
   site. Retyped words saved on WordPress (a title, a menu link's text) are
   tested with stand-in pages, traces and a stand-in site, not yet seen against
   a running WordPress. On Drupal, words saved inside formatted text, to
   configuration (block titles, the site's name and slogan, a view's words, a
-  field's label), to a menu link and through a Layout Builder layout are
-  tested with a stand-in Drupal, not yet seen against a running one (nor what
+  field's label), to a menu link, through a Layout Builder layout and through
+  the page holding a paragraph are tested with a stand-in Drupal, not yet seen
+  against a running one (nor what
   CKEditor 5 does to a stored text the next time it opens it). Agents' looks at it
   (`wanigan mcp`): tested with a real core and a stand-in app; each CLI seen
   connecting and listing the tools, as above, not yet seen calling one in a

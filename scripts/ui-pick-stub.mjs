@@ -17,7 +17,9 @@ export const PICK_STUB = `(() => {
     bounds: () => {}, hide: async () => {}, cover: async () => null, go: async () => true,
     // What the page was asked to do after an edit: the sweep reads these.
     reload: async (hard) => { window.__liveCalls.push(hard ? 'reload-hard' : 'reload'); }, css: async () => { window.__liveCalls.push('css'); return 1; },
-    back: async () => {}, forward: async () => {}, open: async () => {}, devtools: async () => {},
+    back: async () => {}, forward: async () => {}, open: async () => {},
+    // The page's DevTools, quiet: this stand-in draws no page to inspect.
+    devtoolsShow: async () => 'closed', devtoolsBounds: () => {}, devtoolsHide: async () => null, devtoolsClose: async () => {}, devtoolsDetach: async () => false, devtoolsInspect: async () => false, onDevtools: () => () => {}, reveal: async () => null,
     scan: async () => [region], outline: async () => 1, clear: async () => {}, cancelPick: async () => {},
     choose: async () => ({ url: state.url, selector: 'button.pay-button', tag: 'button', text: 'Pay', own: 'Pay', classes: ['pay-button'], rect: region.rect, style: {}, regions: [region] }),
     pick: async () => ({ url: state.url, selector: 'button.pay-button', tag: 'button', text: 'Pay', own: null, classes: ['pay-button'], rect: region.rect, style: {}, regions: [region] }),
