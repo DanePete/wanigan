@@ -1,0 +1,275 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Wanigan, Studio direction</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Serif:wght@500;600&display=swap" rel="stylesheet">
+<style>
+body{margin:0}
+a{color:#1E6FD9}a:hover{color:#1557AE}
+button{font:inherit;color:inherit;cursor:pointer}
+input{font:inherit;color:inherit}
+</style>
+</helmet>
+<div style="height: 100vh; min-height: 720px; display: flex; font-family: 'IBM Plex Sans', system-ui, sans-serif; font-size: 13px; line-height: 1.4; background: {{t.app}}; color: {{t.text}}; overflow: hidden">
+
+  <!-- Rail: the whole app's navigation, icons with names on hover -->
+  <nav aria-label="Wanigan" style="width: 60px; flex: none; display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 14px 0; background: {{t.rail}}; border-right: 1px solid {{t.line}}">
+    <svg width="34" height="34" viewBox="0 0 34 34" role="img" aria-label="Wanigan" style="margin-bottom: 10px">
+      <circle cx="17" cy="17" r="15" fill="{{t.glass}}" stroke="{{t.glassEdge}}" stroke-width="1.2"></circle>
+      <path d="M3.4 19.5c4.2-2.6 8.6 2.4 13.6 0s9.4-2.6 13.6 0c-0.9 6.6-6.6 11.5-13.6 11.5S4.3 26.1 3.4 19.5z" fill="{{t.water}}"></path>
+      <circle cx="12.5" cy="14" r="1.6" fill="{{t.text}}"></circle><circle cx="21.5" cy="14" r="1.6" fill="{{t.text}}"></circle>
+      <path d="M9 8.5c2-2 5-3 7.5-3" stroke="#FFFFFF" stroke-opacity=".7" stroke-width="1.4" fill="none" stroke-linecap="round"></path>
+    </svg>
+    <button aria-label="Needs you, 9" style="position: relative; width: 40px; height: 40px; border: 0; border-radius: 10px; background: transparent; color: {{t.text2}}; display: grid; place-items: center">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 8 3 8H3s3-1 3-8"></path><path d="M10 20a2 2 0 0 0 4 0"></path></svg>
+      <span style="position: absolute; top: 5px; right: 4px; min-width: 16px; height: 16px; border-radius: 8px; background: {{t.amber}}; color: #1B1206; font-size: 10px; font-weight: 600; display: grid; place-items: center; padding: 0 3px">9</span>
+    </button>
+    <button aria-label="Sessions, 8 running" style="width: 40px; height: 40px; border: 0; border-radius: 10px; background: transparent; color: {{t.text2}}; display: grid; place-items: center">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2.5"></rect><path d="M7 9l3 3-3 3M12 15h5"></path></svg>
+    </button>
+    <div style="width: 28px; height: 1px; background: {{t.line}}; margin: 6px 0"></div>
+    <button aria-label="Northstar Storefront, open" style="width: 40px; height: 40px; border-radius: 10px; border: 1.5px solid {{t.accent}}; background: {{t.accentSoft}}; color: {{t.accent}}; font-family: 'IBM Plex Mono', monospace; font-size: 11px; font-weight: 600">NS</button>
+    <button aria-label="Fieldnotes" style="width: 40px; height: 40px; border-radius: 10px; border: 1px solid {{t.line}}; background: transparent; color: {{t.text2}}; font-family: 'IBM Plex Mono', monospace; font-size: 11px">FN</button>
+    <button aria-label="Orbit API, 4 need you" style="position: relative; width: 40px; height: 40px; border-radius: 10px; border: 1px solid {{t.line}}; background: transparent; color: {{t.text2}}; font-family: 'IBM Plex Mono', monospace; font-size: 11px">OA<span style="position: absolute; top: 4px; right: 4px; width: 7px; height: 7px; border-radius: 4px; background: {{t.amber}}"></span></button>
+    <div style="flex: 1"></div>
+    <button aria-label="Search and commands, Command K" style="width: 40px; height: 40px; border: 0; border-radius: 10px; background: transparent; color: {{t.text2}}; display: grid; place-items: center">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="6.5"></circle><path d="M16 16l4.5 4.5"></path></svg>
+    </button>
+    <button aria-label="Settings" style="width: 40px; height: 40px; border: 0; border-radius: 10px; background: transparent; color: {{t.text2}}; display: grid; place-items: center">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" aria-hidden="true"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"></path><circle cx="16" cy="7" r="2"></circle><circle cx="10" cy="17" r="2"></circle></svg>
+    </button>
+  </nav>
+
+  <div style="flex: 1; min-width: 0; display: flex; flex-direction: column">
+
+    <!-- Project bar: one line, the views as a compact switcher -->
+    <header style="height: 48px; flex: none; display: flex; align-items: center; gap: 14px; padding: 0 16px; border-bottom: 1px solid {{t.line}}; background: {{t.panel}}">
+      <button style="display: flex; align-items: center; gap: 8px; border: 0; background: transparent; padding: 6px 8px; border-radius: 8px; font-weight: 600; font-size: 14px">Northstar Storefront
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="{{t.text3}}" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 9l6 6 6-6"></path></svg>
+      </button>
+      <div role="tablist" aria-label="Project views" style="display: flex; gap: 2px; padding: 3px; border-radius: 9px; background: {{t.sunk}}">
+        <button role="tab" aria-selected="false" style="border: 0; background: transparent; padding: 5px 11px; border-radius: 7px; color: {{t.text2}}">Board</button>
+        <button role="tab" aria-selected="false" style="border: 0; background: transparent; padding: 5px 11px; border-radius: 7px; color: {{t.text2}}">Sessions <span style="color: {{t.text3}}">3</span></button>
+        <button role="tab" aria-selected="false" style="border: 0; background: transparent; padding: 5px 11px; border-radius: 7px; color: {{t.text2}}">Changes</button>
+        <button role="tab" aria-selected="false" style="border: 0; background: transparent; padding: 5px 11px; border-radius: 7px; color: {{t.text2}}">Code</button>
+        <button role="tab" aria-selected="true" style="border: 0; background: {{t.panel}}; box-shadow: {{t.raise}}; padding: 5px 11px; border-radius: 7px; color: {{t.text}}; font-weight: 500">Live</button>
+        <button aria-label="More views: History, Decisions, Activity" style="border: 0; background: transparent; padding: 5px 9px; border-radius: 7px; color: {{t.text3}}">···</button>
+      </div>
+      <div style="flex: 1"></div>
+      <div style="display: flex; align-items: center; gap: 8px; padding: 5px 10px 5px 6px; border-radius: 16px; background: {{t.sunk}}; color: {{t.text2}}">
+        <span style="width: 18px; height: 18px; border-radius: 9px; background: {{t.water}}; box-shadow: inset 0 0 0 1.5px {{t.glassEdge}}"></span>2 agents working
+      </div>
+      <button style="display: flex; align-items: center; gap: 6px; border: 1px solid {{t.line}}; background: transparent; padding: 5px 10px; border-radius: 8px; color: {{t.text2}}">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="6" y="5" width="4" height="14" rx="1"></rect><rect x="14" y="5" width="4" height="14" rx="1"></rect></svg>Pause</button>
+    </header>
+
+    <!-- Tool bar: the page on the left, the tools in the middle, the layer on the right -->
+    <div style="height: 50px; flex: none; display: flex; align-items: center; gap: 10px; padding: 0 12px; border-bottom: 1px solid {{t.line}}; background: {{t.panel}}; flex-wrap: wrap">
+      <button style="display: flex; align-items: center; gap: 6px; border: 1px solid {{t.line}}; background: transparent; padding: 6px 10px; border-radius: 8px">
+        <span style="width: 7px; height: 7px; border-radius: 4px; background: {{t.green}}"></span>Local
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="{{t.text3}}" stroke-width="2" aria-hidden="true"><path d="M6 9l6 6 6-6"></path></svg></button>
+      <div style="display: flex; gap: 2px">
+        <button aria-label="Back" style="width: 30px; height: 30px; border: 0; border-radius: 7px; background: transparent; color: {{t.text2}}; display: grid; place-items: center"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M15 18l-6-6 6-6"></path></svg></button>
+        <button aria-label="Forward" style="width: 30px; height: 30px; border: 0; border-radius: 7px; background: transparent; color: {{t.text3}}; display: grid; place-items: center"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M9 18l6-6-6-6"></path></svg></button>
+        <button aria-label="Reload" style="width: 30px; height: 30px; border: 0; border-radius: 7px; background: transparent; color: {{t.text2}}; display: grid; place-items: center"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2.3 5.7"></path><path d="M20 4v7h-7"></path></svg></button>
+      </div>
+      <button aria-label="Go to a page: acme.example.test/" style="flex: 0 1 300px; min-width: 160px; display: flex; align-items: center; gap: 8px; height: 32px; padding: 0 12px; border: 0; border-radius: 9px; background: {{t.sunk}}; color: {{t.text2}}; font-family: 'IBM Plex Mono', monospace; font-size: 12px; text-align: left">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="{{t.text3}}" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="6.5"></circle><path d="M16 16l4.5 4.5"></path></svg>acme.example.test/</button>
+
+      <div style="flex: 1"></div>
+      <div role="toolbar" aria-label="Tools" style="display: flex; align-items: center; gap: 2px; padding: 3px; border-radius: 11px; background: {{t.sunk}}">
+        <button aria-label="Select, V" aria-pressed="false" title="Select · V" style="width: 34px; height: 30px; border: 0; border-radius: 8px; background: transparent; color: {{t.text2}}; display: grid; place-items: center"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><path d="M5 3l14 7.5-6.2 1.6L11 18.5z"></path></svg></button>
+        <button aria-label="Type on the page, T" aria-pressed="true" title="Type · T" style="width: 34px; height: 30px; border: 0; border-radius: 8px; background: {{t.accent}}; color: #FFFFFF; display: grid; place-items: center"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" aria-hidden="true"><path d="M5 6.5V4.5h14v2M12 4.5v15M9 19.5h6"></path></svg></button>
+        <button aria-label="Style, S" aria-pressed="false" title="Style · S" style="width: 34px; height: 30px; border: 0; border-radius: 8px; background: transparent; color: {{t.text2}}; display: grid; place-items: center"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><path d="M12 3.5c3.2 4 6 7 6 10.2a6 6 0 0 1-12 0c0-3.2 2.8-6.2 6-10.2z"></path></svg></button>
+        <button aria-label="Move, M" aria-pressed="false" title="Move · M" style="width: 34px; height: 30px; border: 0; border-radius: 8px; background: transparent; color: {{t.text2}}; display: grid; place-items: center"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v18M3 12h18M8.5 6.5L12 3l3.5 3.5M8.5 17.5L12 21l3.5-3.5M6.5 8.5L3 12l3.5 3.5M17.5 8.5L21 12l-3.5 3.5"></path></svg></button>
+        <span style="width: 1px; height: 18px; background: {{t.line}}; margin: 0 4px"></span>
+        <button aria-label="Snap a screenshot" title="Snap" style="width: 34px; height: 30px; border: 0; border-radius: 8px; background: transparent; color: {{t.text2}}; display: grid; place-items: center"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><path d="M4 8h3l1.6-2.5h6.8L17 8h3v11H4z"></path><circle cx="12" cy="13.2" r="3.3"></circle></svg></button>
+        <button aria-label="Record the page" title="Record" style="width: 34px; height: 30px; border: 0; border-radius: 8px; background: transparent; color: {{t.text2}}; display: grid; place-items: center"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="12" cy="12" r="7.5" stroke="currentColor" stroke-width="1.8"></circle><circle cx="12" cy="12" r="3.4" fill="{{t.red}}"></circle></svg></button>
+        <button aria-label="Speak instead of typing" title="Voice" style="width: 34px; height: 30px; border: 0; border-radius: 8px; background: transparent; color: {{t.text2}}; display: grid; place-items: center"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><rect x="9" y="3.5" width="6" height="11" rx="3"></rect><path d="M5.5 11.5a6.5 6.5 0 0 0 13 0M12 18v2.5"></path></svg></button>
+      </div>
+      <div style="flex: 1"></div>
+
+      <div role="radiogroup" aria-label="Width" style="display: flex; gap: 2px">
+        <button role="radio" aria-checked="false" aria-label="Phone, 390" style="width: 30px; height: 30px; border: 0; border-radius: 7px; background: transparent; color: {{t.text3}}; display: grid; place-items: center"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="7" y="3" width="10" height="18" rx="2"></rect></svg></button>
+        <button role="radio" aria-checked="false" aria-label="Tablet, 820" style="width: 30px; height: 30px; border: 0; border-radius: 7px; background: transparent; color: {{t.text3}}; display: grid; place-items: center"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="5" y="3" width="14" height="18" rx="2"></rect></svg></button>
+        <button role="radio" aria-checked="true" aria-label="Desktop, 1440" style="width: 30px; height: 30px; border: 0; border-radius: 7px; background: {{t.sunk}}; color: {{t.text}}; display: grid; place-items: center"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="3" y="5" width="18" height="12" rx="1.5"></rect><path d="M9 20h6"></path></svg></button>
+      </div>
+      <button aria-label="Show the page without the layer" style="width: 30px; height: 30px; border: 0; border-radius: 7px; background: transparent; color: {{t.text2}}; display: grid; place-items: center"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M2 12s3.6-6.5 10-6.5S22 12 22 12s-3.6 6.5-10 6.5S2 12 2 12z"></path><circle cx="12" cy="12" r="2.8"></circle></svg></button>
+      <button style="display: flex; align-items: center; gap: 7px; border: 1px solid {{t.line}}; background: transparent; padding: 6px 10px; border-radius: 8px">Edits <span style="min-width: 18px; height: 18px; border-radius: 9px; background: {{t.accentSoft}}; color: {{t.accent}}; font-size: 11px; font-weight: 600; display: grid; place-items: center; padding: 0 5px">3</span></button>
+      <button style="display: flex; align-items: center; gap: 6px; border: 0; background: {{t.accent}}; color: #FFFFFF; padding: 7px 12px; border-radius: 8px; font-weight: 500">Make real
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true"><path d="M6 9l6 6 6-6"></path></svg></button>
+    </div>
+
+    <!-- Work area -->
+    <div style="flex: 1; min-height: 0; display: flex; flex-wrap: wrap">
+
+      <!-- Left: the site's structure -->
+      <aside aria-label="Structure" style="width: 248px; flex: 1 1 248px; max-width: 248px; display: flex; flex-direction: column; background: {{t.panel}}; border-right: 1px solid {{t.line}}">
+        <div role="tablist" aria-label="Structure" style="display: flex; gap: 16px; padding: 12px 14px 0; border-bottom: 1px solid {{t.line}}">
+          <button role="tab" aria-selected="true" style="border: 0; background: transparent; padding: 0 0 9px; font-weight: 600; box-shadow: inset 0 -2px 0 {{t.accent}}">Layers</button>
+          <button role="tab" aria-selected="false" style="border: 0; background: transparent; padding: 0 0 9px; color: {{t.text3}}">Add</button>
+          <button role="tab" aria-selected="false" style="border: 0; background: transparent; padding: 0 0 9px; color: {{t.text3}}">Pages</button>
+        </div>
+        <div style="padding: 8px 6px; display: flex; flex-direction: column; gap: 1px">
+          <sc-for list="{{layers}}" as="row" hint-placeholder-count="10">
+            <div style="{{row.style}}">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true" style="opacity: .75"><path d="{{row.icon}}"></path></svg>
+              <span style="flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap">{{row.name}}</span>
+              <span style="color: {{t.text3}}; font-size: 11px">{{row.meta}}</span>
+            </div>
+          </sc-for>
+        </div>
+      </aside>
+
+      <!-- Middle: the page, on a quiet canvas -->
+      <main aria-label="The page" style="flex: 999 1 560px; min-width: 0; position: relative; background: {{t.canvas}}; overflow: hidden; padding: 22px 28px 0">
+        <div style="position: relative; height: 100%; border-radius: 10px 10px 0 0; background: #FFFFFF; box-shadow: {{t.sheet}}; overflow: hidden; color: #1A1A1A; font-family: 'IBM Plex Sans', sans-serif">
+          <div style="display: flex; align-items: center; gap: 28px; padding: 18px 36px; border-bottom: 1px solid #EEEAE3">
+            <span style="font-family: 'IBM Plex Serif', serif; font-weight: 600; font-size: 20px; letter-spacing: .02em">Northstar</span>
+            <span style="color: #555">Shop</span><span style="color: #555">Journal</span><span style="color: #555">Stores</span>
+            <span style="flex: 1"></span><span style="color: #555">Cart (2)</span>
+          </div>
+          <div style="padding: 56px 36px 40px; background: #F4EFE6; position: relative">
+            <div style="font-size: 12px; letter-spacing: .14em; text-transform: uppercase; color: #8A5A2B; margin-bottom: 12px">Spring sale</div>
+            <div style="position: relative; display: inline-block">
+              <h1 style="margin: 0; font-family: 'IBM Plex Serif', serif; font-weight: 600; font-size: 44px; line-height: 1.1; color: #1F2A1E; outline: 2px solid {{t.accent}}; outline-offset: 6px; border-radius: 2px">Gear for the long weekend<span style="display: inline-block; width: 2px; height: 40px; background: {{t.accent}}; vertical-align: -6px; margin-left: 2px"></span></h1>
+              <div style="position: absolute; left: -8px; top: -44px; display: flex; gap: 6px; align-items: center">
+                <span style="background: {{t.accent}}; color: #FFFFFF; font-size: 11px; padding: 3px 8px; border-radius: 6px; font-family: 'IBM Plex Sans', sans-serif; white-space: nowrap">Title · typing · Enter keeps · Esc puts back</span>
+              </div>
+              <div role="toolbar" aria-label="For this title" style="position: absolute; right: -8px; top: -50px; display: flex; gap: 2px; padding: 3px; border-radius: 10px; background: {{t.panel}}; color: {{t.text}}; box-shadow: {{t.float}}; font-family: 'IBM Plex Sans', sans-serif; font-size: 12px">
+                <button style="border: 0; background: transparent; padding: 5px 9px; border-radius: 7px">Style</button>
+                <button style="border: 0; background: transparent; padding: 5px 9px; border-radius: 7px">Move</button>
+                <button style="border: 0; background: transparent; padding: 5px 9px; border-radius: 7px">Take out</button>
+                <button style="display: flex; gap: 5px; align-items: center; border: 0; background: {{t.accentSoft}}; color: {{t.accent}}; padding: 5px 9px; border-radius: 7px; font-weight: 500"><svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z"></path></svg>Ask an agent</button>
+              </div>
+            </div>
+            <p style="max-width: 460px; color: #4A4A42; font-size: 16px; line-height: 1.55; margin: 22px 0 22px">Tents, blankets and enamelware for three days somewhere quiet. Twenty percent off until Sunday.</p>
+            <span style="display: inline-block; background: #1F2A1E; color: #F4EFE6; padding: 11px 20px; border-radius: 4px">Shop the sale</span>
+          </div>
+          <div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 20px; padding: 28px 36px">
+            <sc-for list="{{products}}" as="p" hint-placeholder-count="3">
+              <div>
+                <div style="height: 120px; border-radius: 4px; background: {{p.tone}}; display: grid; place-items: center">
+                  <svg width="48" height="48" viewBox="0 0 48 48" fill="none" stroke="#3A3A32" stroke-width="1.6" aria-hidden="true" style="opacity: .55"><path d="{{p.icon}}"></path></svg>
+                </div>
+                <div style="display: flex; justify-content: space-between; margin-top: 10px; font-size: 14px"><span>{{p.name}}</span><span style="color: #6B6B60">{{p.price}}</span></div>
+              </div>
+            </sc-for>
+          </div>
+        </div>
+      </main>
+
+      <!-- Right: the chosen element -->
+      <aside aria-label="Title" style="width: 292px; flex: 1 1 292px; max-width: 292px; display: flex; flex-direction: column; background: {{t.panel}}; border-left: 1px solid {{t.line}}">
+        <div style="padding: 14px 16px 10px">
+          <div style="color: {{t.text3}}; font-size: 11px">Hero  ›  Title</div>
+          <div style="display: flex; align-items: baseline; gap: 8px; margin-top: 3px"><span style="font-size: 15px; font-weight: 600">Title</span><span style="font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: {{t.text3}}">node · article · field</span></div>
+        </div>
+        <div role="tablist" aria-label="About the title" style="display: flex; gap: 16px; padding: 0 16px; border-bottom: 1px solid {{t.line}}">
+          <button role="tab" aria-selected="true" style="border: 0; background: transparent; padding: 0 0 9px; font-weight: 600; box-shadow: inset 0 -2px 0 {{t.accent}}">Design</button>
+          <button role="tab" aria-selected="false" style="border: 0; background: transparent; padding: 0 0 9px; color: {{t.text3}}">Made by</button>
+          <button role="tab" aria-selected="false" style="border: 0; background: transparent; padding: 0 0 9px; color: {{t.text3}}">Data</button>
+        </div>
+        <div style="padding: 14px 16px; display: flex; flex-direction: column; gap: 18px; overflow: auto">
+          <section style="display: flex; flex-direction: column; gap: 8px">
+            <div style="font-size: 11px; font-weight: 600; color: {{t.text2}}">Words</div>
+            <label for="w" style="position: absolute; left: -9999px">Words of the title</label>
+            <input id="w" value="Gear for the long weekend" style="height: 32px; padding: 0 10px; border: 1px solid {{t.accent}}; border-radius: 8px; background: {{t.field}}; outline: 3px solid {{t.accentSoft}}">
+            <div style="color: {{t.text3}}; font-size: 11px">Was “Gear for every season”. Saves to this article’s title.</div>
+          </section>
+          <section style="display: flex; flex-direction: column; gap: 10px">
+            <div style="font-size: 11px; font-weight: 600; color: {{t.text2}}">Style</div>
+            <div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px">
+              <sc-for list="{{styles}}" as="s" hint-placeholder-count="4">
+                <div style="display: flex; align-items: center; gap: 8px; height: 32px; padding: 0 10px; border-radius: 8px; background: {{t.field}}; border: 1px solid {{t.line}}">
+                  <span style="color: {{t.text3}}; font-size: 11px; width: 38px">{{s.k}}</span><span style="{{s.swatch}}"></span><span>{{s.v}}</span>
+                </div>
+              </sc-for>
+            </div>
+            <div role="radiogroup" aria-label="Applies to" style="display: flex; gap: 2px; padding: 3px; border-radius: 9px; background: {{t.sunk}}">
+              <button role="radio" aria-checked="true" style="flex: 1; border: 0; background: {{t.panel}}; box-shadow: {{t.raise}}; padding: 5px; border-radius: 7px; font-weight: 500">This element</button>
+              <button role="radio" aria-checked="false" style="flex: 1; border: 0; background: transparent; padding: 5px; border-radius: 7px; color: {{t.text2}}">Every hero title · 4</button>
+            </div>
+          </section>
+          <section style="display: flex; flex-direction: column; gap: 10px; padding: 12px; border-radius: 10px; background: {{t.sunk}}">
+            <div style="display: flex; align-items: center; gap: 8px"><span style="width: 8px; height: 8px; border-radius: 4px; background: {{t.accent}}"></span><span style="font-weight: 500">In the layer, a draft</span></div>
+            <div style="color: {{t.text2}}; font-size: 12px">Shown on the page only. Make it real to save it in Drupal, with a revision; Verify then checks the page at phone and desktop width.</div>
+            <div style="display: flex; gap: 8px">
+              <button style="flex: 1; border: 0; background: {{t.accent}}; color: #FFFFFF; padding: 7px; border-radius: 8px; font-weight: 500">Make it real</button>
+              <button style="flex: 1; border: 1px solid {{t.line}}; background: {{t.panel}}; padding: 7px; border-radius: 8px">Verify</button>
+            </div>
+          </section>
+        </div>
+      </aside>
+    </div>
+
+    <!-- Status: one message, and the dock's tabs waiting -->
+    <footer style="height: 34px; flex: none; display: flex; align-items: center; gap: 14px; padding: 0 14px; border-top: 1px solid {{t.line}}; background: {{t.panel}}; color: {{t.text2}}; font-size: 12px">
+      <span style="display: flex; align-items: center; gap: 7px"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="{{t.green}}" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"></path></svg>Saved “Spring open house” in Drupal, revision 108. Verified at 390 and 1440.</span>
+      <span style="flex: 1"></span>
+      <div role="tablist" aria-label="Dock" style="display: flex; gap: 2px">
+        <sc-for list="{{dock}}" as="d" hint-placeholder-count="5">
+          <button role="tab" aria-selected="false" style="border: 0; background: transparent; padding: 4px 9px; border-radius: 6px; color: {{t.text2}}; font-size: 12px">{{d.name}}<span style="margin-left: 5px; color: {{d.countColor}}">{{d.count}}</span></button>
+        </sc-for>
+      </div>
+      <button aria-label="Keys" style="width: 22px; height: 22px; border: 1px solid {{t.line}}; background: transparent; border-radius: 6px; font-size: 11px; color: {{t.text3}}">?</button>
+    </footer>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"dark":{"editor":"boolean","default":false},"$preview":{"width":1440,"height":900}}'>
+class Component extends DCLogic {
+  renderVals() {
+    const dark = this.props.dark ?? false;
+    const t = dark ? {
+      app: '#0D1216', rail: '#0A0E12', panel: '#131A20', sunk: '#1B232B', field: '#0F151A', canvas: '#070A0D', line: 'rgba(255,255,255,0.07)',
+      text: '#E8EDF2', text2: '#A9B5C1', text3: '#7C8995', accent: '#4D9BFF', accentSoft: 'rgba(77,155,255,0.16)', green: '#3FBF86', red: '#FF6B5E', amber: '#F2A93B',
+      water: '#3E8EE8', glass: 'rgba(160,200,240,0.10)', glassEdge: 'rgba(170,210,255,0.55)',
+      raise: '0 1px 2px rgba(0,0,0,0.5)', float: '0 10px 30px rgba(0,0,0,0.55), 0 0 0 1px rgba(255,255,255,0.08)', sheet: '0 0 0 1px rgba(255,255,255,0.06), 0 20px 50px rgba(0,0,0,0.6)'
+    } : {
+      app: '#F5F7F9', rail: '#EEF1F4', panel: '#FFFFFF', sunk: '#EEF1F4', field: '#FFFFFF', canvas: '#E6EAEE', line: 'rgba(16,26,36,0.09)',
+      text: '#111A22', text2: '#4C5967', text3: '#6B7784', accent: '#1E6FD9', accentSoft: 'rgba(30,111,217,0.10)', green: '#1A7F55', red: '#D23A2C', amber: '#E09A26',
+      water: '#3B86E0', glass: 'rgba(225,238,250,0.9)', glassEdge: 'rgba(70,120,180,0.45)',
+      raise: '0 1px 2px rgba(16,26,36,0.12)', float: '0 10px 28px rgba(16,26,36,0.16), 0 0 0 1px rgba(16,26,36,0.06)', sheet: '0 0 0 1px rgba(16,26,36,0.06), 0 18px 40px rgba(16,26,36,0.12)'
+    };
+    const icons = {
+      region: 'M4 5h16v14H4zM4 10h16', block: 'M5 5h14v14H5z', text: 'M6 7h12M6 12h12M6 17h8', list: 'M8 7h11M8 12h11M8 17h11M4.5 7h.01M4.5 12h.01M4.5 17h.01', grid: 'M4 4h7v7H4zM13 4h7v7h-7zM4 13h7v7H4zM13 13h7v7h-7z'
+    };
+    const rows = [
+      ['Header', 'region', 0, ''], ['Branding', 'block', 1, ''], ['Main menu', 'list', 1, '4'], ['Hero', 'grid', 0, 'component'],
+      ['Eyebrow', 'text', 1, ''], ['Title', 'text', 1, 'field'], ['Summary', 'text', 1, ''], ['Button', 'block', 1, ''],
+      ['Products', 'grid', 0, 'view'], ['Product card', 'block', 1, '×3'], ['Footer', 'region', 0, '']
+    ];
+    const layers = rows.map(([name, kind, depth, meta]) => ({
+      name, meta, icon: icons[kind],
+      style: 'display: flex; align-items: center; gap: 8px; height: 28px; padding: 0 8px 0 ' + (10 + depth * 18) + 'px; border-radius: 7px; cursor: default; ' +
+        (name === 'Title' ? 'background: ' + t.accentSoft + '; color: ' + t.accent + '; font-weight: 500;' : 'color: ' + t.text2 + ';')
+    }));
+    const products = [
+      { name: 'Lakeside enamel mug', price: '$18', tone: '#E4E8E1', icon: 'M12 16h20v16a6 6 0 0 1-6 6h-8a6 6 0 0 1-6-6zM32 20h4a4 4 0 0 1 0 8h-4' },
+      { name: 'Trail blanket', price: '$64', tone: '#EADCCB', icon: 'M8 14h32v20H8zM8 22h32M8 28h32M16 14v20M32 14v20' },
+      { name: 'Camp lantern', price: '$42', tone: '#DCE3E8', icon: 'M18 12h12M20 12v-4h8v4M16 16h16l-2 20H18zM24 22v8' }
+    ];
+    const styles = [
+      { k: 'Color', v: '#1F2A1E', swatch: 'width: 14px; height: 14px; border-radius: 4px; background: #1F2A1E; box-shadow: inset 0 0 0 1px ' + t.line },
+      { k: 'Size', v: '44 px', swatch: 'display: none' },
+      { k: 'Weight', v: 'Semibold', swatch: 'display: none' },
+      { k: 'Line', v: '1.1', swatch: 'display: none' }
+    ];
+    const dock = [
+      { name: 'Notes', count: '2', countColor: t.accent }, { name: 'Problems', count: '', countColor: t.text3 },
+      { name: 'Request', count: '', countColor: t.text3 }, { name: 'DevTools', count: '', countColor: t.text3 }, { name: 'Code', count: '', countColor: t.text3 }
+    ];
+    return { t, layers, products, styles, dock };
+  }
+}
+</script>
+</body>
+</html>
