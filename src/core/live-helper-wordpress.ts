@@ -124,6 +124,19 @@ final class Wanigan_Live {
 	const SECRET = '/pass|pwd|secret|token|nonce|auth|cookie|salt|session|api[_-]?key|private[_-]?key|credential|signature|hash/i';
 	/** A name, id or store a part's identity may carry: what parseIdentity() in src/shared/live-trace.ts accepts. */
 	const IDENT = '#^[A-Za-z0-9_.:/@+-]{1,200}$#';
+	/**
+	 * How every refusal that is not a permission, a lock or a change since the trace begins: with its cause. Either
+	 * WordPress core stores nothing that could be changed (the thing is code, or core keeps no such value), or core could
+	 * and Wanigan does not yet.
+	 */
+	const NO_SUCH = 'WordPress keeps no such thing: ';
+	const NOT_YET = 'Wanigan does not do this yet: ';
+	/**
+	 * The inline tags the block editor's own formats write (wp-includes/js/dist/format-library.js: bold, italic, link,
+	 * code, strikethrough, underline, inline colour, subscript, superscript, keyboard, language, inline image) and a
+	 * line break: what new rich text may hold, besides tags its element already had.
+	 */
+	const INLINE = array('STRONG', 'EM', 'A', 'CODE', 'S', 'SPAN', 'MARK', 'SUB', 'SUP', 'KBD', 'BDO', 'IMG', 'BR');
 
 	/**
 	 * Filters whose callbacks shape a part's output or data. While one of these runs for a traced part, each of its
@@ -1970,9 +1983,11 @@ final class Wanigan_Live {
 	 * $attributes, block.json plus the attributes block supports add). WordPress builds a static block's markup in
 	 * the editor (its JavaScript save function), so a change made here may only be one the markup itself holds:
 	 * - a dynamic block that saved no markup: any attribute in its comment delimiter;
-	 * - a sourced attribute ("source": "rich-text", "html", "text" or "attribute" with a selector) whose element
-	 *   holds plain text, or whose attribute it is: the markup changes, and the editor reads it back the same.
-	 * Everything else is listed read-only, saying why.
+	 * - a sourced attribute ("source": "rich-text", "html", "text" or "attribute" with a selector): the HTML its
+	 *   element holds, formatting and all, up to its first inner block (as class-wp-block.php replace_html() splices
+	 *   bound rich text since 7.1), or the attribute it is. The markup changes, and the editor reads it back.
+	 * Everything else is listed read-only, saying why: what only the block's editor script writes is not something
+	 * WordPress keeps anywhere PHP can write it.
 	 */
 	private static function block_edit(string $name, $type, array $map): ?string {
 		$store = $map['store'];
@@ -2002,15 +2017,19 @@ final class Wanigan_Live {
 			}
 			if ($source === null) {
 				$current = array_key_exists($attr, $node['attrs']) ? $node['attrs'][$attr] : (isset($def['default']) ? $def['default'] : null);
-				if (!$why && in_array($attr, array('metadata', 'lock'), true)) $why = 'The editor’s own bookkeeping.';
-				if (!$why && !$dynamic) $why = 'WordPress writes this block’s markup from this setting in the editor, so it can change only there.';
-				if (!$why && !$empty) $why = 'This block saved markup the editor checks against its settings, so it can change only in the editor.';
+				if (!$why && in_array($attr, array('metadata', 'lock'), true)) $why = 'Wanigan does not change this: it is the editor’s own bookkeeping (the block’s name, bindings and lock).';
+				if (!$why && !$dynamic) $why = self::NO_SUCH . 'this block’s markup is written from this setting by the block’s editor script, and WordPress has no PHP version of that script. Change it in the editor.';
+				if (!$why && !$empty) $why = self::NO_SUCH . 'this block saved markup its editor script wrote from its settings, and WordPress has no PHP version of that script to write it again. Change it in the editor.';
 			} elseif (in_array($source, array('rich-text', 'html', 'text'), true) || $source === 'attribute') {
-				$found = self::sourced($node, $def);
+				$found = self::sourced($node, $def, $name, $attr);
 				$current = $found['value'];
 				if (!$why && $found['why']) $why = $found['why'];
+				if (!$why && $source !== 'attribute') {
+					$schema['contentMediaType'] = $source === 'text' ? 'text/plain' : 'text/html';
+					if ($source !== 'text') $schema['description'] = 'Its words as HTML, with inline formatting (bold, italic, links and the editor’s other formats). Saved as WordPress saves bound rich text: cleaned by wp_kses_post(), spliced into the block’s own element.';
+				}
 			} else {
-				$why = 'Read from the block’s markup (' . $source . '), which Wanigan does not rewrite.';
+				$why = self::NOT_YET . 'it is read from the block’s markup as “' . $source . '”, which Wanigan does not write. Change it in the editor.';
 			}
 			if ($why) {
 				$schema['readOnly'] = true;
@@ -2045,54 +2064,96 @@ final class Wanigan_Live {
 	}
 
 	/**
-	 * A sourced attribute's value in a block's own markup, found the way the editor's parser does (the first element
-	 * its selector matches), and whether it can be written back: plain text only for rich text, and a selector with
-	 * no combinators unless it matches exactly one element.
+	 * A sourced attribute's value in a block's own markup, found as the editor's parser finds it (the first element its
+	 * selector matches), and whether it can be written back. Rich text is the HTML its element holds, up to the block's
+	 * first inner block, which is where class-wp-block.php replace_html() stops a bound attribute's splice since 7.1.
 	 */
-	private static function sourced(array $node, array $def): array {
-		if (!empty($node['innerBlocks'])) return array('value' => null, 'why' => 'This block has inner blocks around its own markup; change it in the editor.');
+	private static function sourced(array $node, array $def, string $name = '', string $attr = ''): array {
 		$selector = isset($def['selector']) ? (string) $def['selector'] : '';
-		if ($selector === '') return array('value' => null, 'why' => 'It is read from the whole block’s markup; change it in the editor.');
-		$p = self::find_element((string) $node['innerHTML'], $selector);
-		if (!$p) return array('value' => null, 'why' => 'Its element (' . $selector . ') is not in the saved markup.');
+		if ($selector === '') return array('value' => null, 'why' => self::NOT_YET . 'it is read from the whole block’s markup. Change it in the editor.');
+		$html = (string) $node['innerHTML'];
+		$reader = self::select($html, $selector);
+		if (is_string($reader)) return array('value' => null, 'why' => $reader);
+		if (!$reader) return array('value' => null, 'why' => self::NO_SUCH . 'its element (' . $selector . ') is not in the saved markup. The block’s editor script writes it only when it has a value, and WordPress has no PHP version of that script. Add it in the editor.');
 		if ($def['source'] === 'attribute') {
-			$v = $p->get_attribute((string) $def['attribute']);
+			$v = $reader->get_attribute((string) $def['attribute']);
 			return array('value' => is_string($v) ? $v : null, 'why' => null);
 		}
-		$tag = $p->get_tag();
-		if (!$p->next_token()) return array('value' => null, 'why' => 'Its element could not be read.');
-		if ($p->get_token_name() === $tag && $p->is_tag_closer()) return array('value' => '', 'why' => 'It is empty; add words in the editor first.');
-		if ($p->get_token_name() !== '#text') return array('value' => null, 'why' => 'It has formatting (links, bold, other tags); change it in the editor.');
-		$text = $p->get_modifiable_text();
-		if ($p->next_token() && $p->get_token_name() === $tag && $p->is_tag_closer()) return array('value' => $text, 'why' => null);
-		// Formatted: its words, for showing, read up to the element's own closer.
-		$depth = 1;
-		do {
-			$name = $p->get_token_name();
-			if ($name === '#text') $text .= $p->get_modifiable_text();
-			elseif ($name === $tag) $depth += $p->is_tag_closer() ? -1 : 1;
-		} while ($depth > 0 && $p->next_token());
-		return array('value' => $text, 'why' => 'It has formatting (links, bold, other tags); change it in the editor.');
+		$span = self::content_span($reader, $node);
+		if (!$span) return array('value' => null, 'why' => self::NOT_YET . 'its element’s end tag is not in the saved markup, so where its words stop is not known.');
+		$inner = substr($html, $span[0], $span[1] - $span[0]);
+		// An element that holds the block's inner blocks and no words of its own: only an attribute WordPress itself
+		// splices there (bindings' supported attributes) is known to be written there by the block.
+		if ($span[2] && trim($inner) === '' && !in_array($attr, self::spliced_attributes($name), true)) {
+			return array('value' => null, 'why' => self::NOT_YET . 'its element holds the block’s inner blocks and no words of its own, and WordPress does not say the block writes words there. Change it in the editor.');
+		}
+		return array('value' => $def['source'] === 'text' ? self::text_of($inner) : $inner, 'why' => null);
 	}
 
-	/** html-api WP_HTML_Tag_Processor at the first element a simple selector matches, or null. */
-	private static function find_element(string $html, string $selector) {
-		$alternatives = array_map('trim', explode(',', $selector));
+	/** The attributes core splices into a block's markup itself (block-bindings.php, 6.9+), or core 7.1's list. */
+	private static function spliced_attributes(string $name): array {
+		if (function_exists('get_block_bindings_supported_attributes')) return (array) get_block_bindings_supported_attributes($name);
+		$list = array('core/paragraph' => array('content'), 'core/heading' => array('content'), 'core/list-item' => array('content'), 'core/image' => array('id', 'url', 'title', 'alt', 'caption'), 'core/button' => array('url', 'text', 'linkTarget', 'rel'));
+		return isset($list[$name]) ? $list[$name] : array();
+	}
+
+	/**
+	 * html-api WP_HTML_Processor over a fragment, able to say where an element's content begins and ends: the class
+	 * class-wp-block.php get_block_bindings_processor() builds for the same splice, a subclass because the bookmarks
+	 * that hold byte offsets are protected. Null when this WordPress has no such processor (before 6.6).
+	 */
+	private static function html_reader(string $html) {
+		if (!class_exists('WP_HTML_Processor') || !defined('WP_HTML_Processor::CONSTRUCTOR_UNLOCK_CODE') || !method_exists('WP_HTML_Processor', 'get_current_depth') || !method_exists('WP_HTML_Processor', 'expects_closer')) return null;
+		$reader = new class('', WP_HTML_Processor::CONSTRUCTOR_UNLOCK_CODE) extends WP_HTML_Processor {
+			/**
+			 * At an element's opener: the byte offsets of what it holds, from the end of its opener to the start of its
+			 * matching closer, found by depth as replace_rich_text() finds them. Null for a void element, or for a closer
+			 * the markup does not have (one the parser implied, which cannot be bookmarked).
+			 */
+			public function wanigan_inner(): ?array {
+				if ($this->is_tag_closer() || !$this->expects_closer()) return null;
+				$depth = $this->get_current_depth();
+				$tag = $this->get_tag();
+				if (!$this->set_bookmark('wanigan')) return null;
+				$opener = $this->bookmarks['_wanigan'];
+				$start = $opener->start + $opener->length;
+				while ($this->next_token() && $this->get_current_depth() >= $depth) {
+					// Inside the element.
+				}
+				if (!$this->is_tag_closer() || $this->get_tag() !== $tag || !$this->set_bookmark('wanigan')) return null;
+				$end = $this->bookmarks['_wanigan']->start;
+				return $end >= $start ? array($start, $end) : null;
+			}
+		};
+		return $reader::create_fragment($html);
+	}
+
+	/**
+	 * The element a sourced attribute's selector names in a block's own markup: the first, in document order, that any
+	 * of the selector's comma-separated parts matches, as the editor's parser takes it. A part with combinators is
+	 * matched by its last compound, so it is used only when exactly one element could match. A reader stopped at the
+	 * element's opener; null when no element matches; a string saying why the markup could not be read.
+	 */
+	private static function select(string $html, string $selector) {
+		$wanted = array();
+		foreach (array_map('trim', explode(',', $selector)) as $alt) {
+			$parts = preg_split('/[\s>+~]+/', $alt);
+			if (!preg_match('/^([a-zA-Z][a-zA-Z0-9-]*)?((?:\.[a-zA-Z0-9_-]+)*)$/', (string) end($parts), $mm) || ($mm[1] === '' && $mm[2] === '')) return self::NOT_YET . 'its selector (' . $selector . ') is more than Wanigan reads.';
+			$wanted[] = array(strtoupper($mm[1]), array_values(array_filter(explode('.', $mm[2]))));
+		}
 		$combined = (bool) preg_match('/[\s>+~]/', $selector);
-		$p = new WP_HTML_Tag_Processor($html);
+		$reader = self::html_reader($html);
+		if (!$reader) return self::NOT_YET . 'this WordPress has no HTML processor (6.6 or later) to read the block’s markup with.';
 		$found = null;
 		$count = 0;
 		$i = 0;
-		while ($p->next_tag()) {
+		while ($reader->next_tag()) {
 			$i++;
-			foreach ($alternatives as $alt) {
-				$parts = preg_split('/[\s>+~]+/', $alt);
-				$last = end($parts);
-				if (!preg_match('/^([a-zA-Z][a-zA-Z0-9-]*)?((?:\.[a-zA-Z0-9_-]+)*)$/', $last, $mm)) return null;
-				if ($mm[1] !== '' && strtoupper($mm[1]) !== $p->get_tag()) continue;
+			foreach ($wanted as $w) {
+				if ($w[0] !== '' && $w[0] !== $reader->get_tag()) continue;
 				$ok = true;
-				foreach (array_filter(explode('.', $mm[2])) as $class) {
-					if (!$p->has_class($class)) $ok = false;
+				foreach ($w[1] as $class) {
+					if (!$reader->has_class($class)) $ok = false;
 				}
 				if (!$ok) continue;
 				$count++;
@@ -2101,10 +2162,129 @@ final class Wanigan_Live {
 			}
 			if ($found !== null && !$combined) break;
 		}
-		if ($found === null || ($combined && $count !== 1)) return null;
-		$p = new WP_HTML_Tag_Processor($html);
-		for ($j = 0; $j < $found; $j++) $p->next_tag();
-		return $p;
+		if ($found === null && $reader->get_last_error()) return self::NOT_YET . 'WordPress’s HTML processor stopped reading this block’s markup (' . $reader->get_last_error() . ').';
+		if ($found === null) return null;
+		if ($combined && $count !== 1) return self::NOT_YET . 'its selector (' . $selector . ') could name more than one element here.';
+		$reader = self::html_reader($html);
+		for ($j = 0; $j < $found; $j++) $reader->next_tag();
+		return $reader;
+	}
+
+	/**
+	 * What an element holds in a block's own markup (innerHTML), as byte offsets there: from the end of its opener to
+	 * its closer, or to the block's first inner block inside it (class-wp-block.php, 7.1), and whether an inner block
+	 * cut it short. Null when its end is not in the markup.
+	 */
+	private static function content_span($reader, array $node): ?array {
+		$span = $reader->wanigan_inner();
+		if (!$span) return null;
+		$at = 0;
+		foreach ($node['innerContent'] as $chunk) {
+			if (is_string($chunk)) {
+				$at += strlen($chunk);
+				continue;
+			}
+			if ($at >= $span[0] && $at < $span[1]) return array($span[0], $at, true);
+		}
+		return array($span[0], $span[1], false);
+	}
+
+	/** A fragment's text, as the editor's "text" source reads it. */
+	private static function text_of(string $html): string {
+		$reader = self::html_reader($html);
+		$text = '';
+		while ($reader && $reader->next_token()) {
+			if ($reader->get_token_name() === '#text') $text .= $reader->get_modifiable_text();
+		}
+		return $text;
+	}
+
+	/** The tag names a fragment holds. */
+	private static function tags_in(string $html): array {
+		$out = array();
+		$reader = self::html_reader($html);
+		while ($reader && $reader->next_tag()) $out[$reader->get_tag()] = true;
+		return $out;
+	}
+
+	/**
+	 * New rich text for an element, made safe as core's own splice makes bound rich text safe: wp_kses_post() whatever
+	 * the user may post (class-wp-block.php replace_html(); a user with unfiltered_html skips kses on save), then
+	 * normalized by WP_HTML_Processor so every tag it opens it closes inside the element. It may hold words and inline
+	 * formatting: the editor's own formats, and tags the element already held. A comment never: one could close the
+	 * block's delimiter. A WP_Error says why not.
+	 */
+	private static function rich_text(string $value, string $current) {
+		if (!class_exists('WP_HTML_Processor') || !method_exists('WP_HTML_Processor', 'serialize')) return new WP_Error('wanigan', self::NOT_YET . 'this WordPress has no HTML processor that writes markup (6.7 or later).');
+		$fragment = WP_HTML_Processor::create_fragment(wp_kses_post($value));
+		$html = $fragment ? $fragment->serialize() : null;
+		if (!is_string($html)) return new WP_Error('wanigan', self::NOT_YET . 'WordPress’s HTML processor cannot read that markup, so Wanigan does not write it.');
+		$allowed = array_flip(self::INLINE) + self::tags_in($current);
+		$check = WP_HTML_Processor::create_fragment($html);
+		while ($check && $check->next_token()) {
+			$type = $check->get_token_type();
+			if ($type === '#text') continue;
+			if ($type !== '#tag') return new WP_Error('wanigan', 'Words go here, with inline formatting; a comment or other markup cannot (it could end the block early).');
+			if (!isset($allowed[$check->get_tag()])) return new WP_Error('wanigan', 'Words go here, with inline formatting (bold, italic, links and the editor’s other formats); a <' . strtolower($check->get_tag()) . '> cannot.');
+		}
+		if (!$check || $check->get_last_error()) return new WP_Error('wanigan', self::NOT_YET . 'WordPress’s HTML processor cannot read that markup, so Wanigan does not write it.');
+		if (strpos($html, '<!--') !== false || strpos($html, '-->') !== false) return new WP_Error('wanigan', 'Words go here, with inline formatting; a comment cannot (it could end the block early).');
+		return $html;
+	}
+
+	/**
+	 * A block with the bytes [start, end) of its own markup (innerHTML) replaced, kept in step in innerContent, where
+	 * each run of its own markup sits between its inner blocks. Null when the bytes cross an inner block.
+	 */
+	private static function splice_node(array $node, int $start, int $end, string $text): ?array {
+		$at = 0;
+		foreach ($node['innerContent'] as $i => $chunk) {
+			if (!is_string($chunk)) continue;
+			$len = strlen($chunk);
+			if ($start >= $at && $end <= $at + $len) {
+				$node['innerContent'][$i] = substr($chunk, 0, $start - $at) . $text . substr($chunk, $end - $at);
+				$node['innerHTML'] = substr((string) $node['innerHTML'], 0, $start) . $text . substr((string) $node['innerHTML'], $end);
+				return $node;
+			}
+			$at += $len;
+		}
+		return null;
+	}
+
+	/**
+	 * A sourced attribute written into a block's own markup, or why not: rich text spliced into its element up to its
+	 * first inner block, text escaped there, an attribute set on its element. A copy of the attribute some tool left
+	 * in the comment delimiter is kept in step, so the two never disagree.
+	 */
+	private static function write_sourced(array $node, string $attr, array $def, $v) {
+		$source = $def['source'];
+		$html = (string) $node['innerHTML'];
+		$reader = self::select($html, isset($def['selector']) ? (string) $def['selector'] : '');
+		if (is_string($reader)) return new WP_Error('wanigan', $reader);
+		if (!$reader) return new WP_Error('wanigan', 'The element for ' . $attr . ' is not in the block any more: reload the page and try again.');
+		if ($source === 'attribute') {
+			$reader->set_attribute((string) $def['attribute'], (string) $v);
+			$updated = $reader->get_updated_html();
+			// Where the markup changed: the bytes between what stayed the same at each end.
+			$a = 0;
+			$max = min(strlen($html), strlen($updated));
+			while ($a < $max && $html[$a] === $updated[$a]) $a++;
+			$b = 0;
+			while ($b < $max - $a && $html[strlen($html) - 1 - $b] === $updated[strlen($updated) - 1 - $b]) $b++;
+			$node = self::splice_node($node, $a, strlen($html) - $b, substr($updated, $a, strlen($updated) - $b - $a));
+			$written = (string) $v;
+		} else {
+			$span = self::content_span($reader, $node);
+			if (!$span) return new WP_Error('wanigan', self::NOT_YET . 'the end of ' . $attr . '’s element is not in the saved markup.');
+			$current = substr($html, $span[0], $span[1] - $span[0]);
+			$written = $source === 'text' ? htmlspecialchars((string) $v, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') : self::rich_text((string) $v, $current);
+			if (is_wp_error($written)) return $written;
+			$node = self::splice_node($node, $span[0], $span[1], $written);
+			if ($source === 'text') $written = (string) $v;
+		}
+		if (!$node) return new WP_Error('wanigan', self::NOT_YET . 'the words of ' . $attr . ' run across one of the block’s inner blocks.');
+		if (array_key_exists($attr, $node['attrs'])) $node['attrs'][$attr] = $written;
+		return $node;
 	}
 
 	/* templates */
@@ -4096,6 +4276,16 @@ final class Wanigan_Live {
 		$valid = rest_validate_value_from_schema($value, $public['schema'], 'value');
 		if (is_wp_error($valid)) self::answer(array('ok' => false, 'error' => $valid->get_error_message()), 400);
 		$value = rest_sanitize_value_from_schema($value, $public['schema'], 'value');
+		// rest_validate_value_from_schema() does not enforce readOnly: a property the target says cannot change here may
+		// come back only as it was.
+		if (is_array($value) && isset($public['schema']['properties']) && is_array($public['schema']['properties'])) {
+			$was = isset($public['value']) ? (array) $public['value'] : array();
+			foreach ($value as $k => $v) {
+				$s = isset($public['schema']['properties'][$k]) ? $public['schema']['properties'][$k] : null;
+				if (!is_array($s) || empty($s['readOnly'])) continue;
+				if (!array_key_exists($k, $was) || wp_json_encode($was[$k]) !== wp_json_encode($v)) self::answer(array('ok' => false, 'error' => $k . ' cannot change here. ' . (isset($s['description']) ? $s['description'] : '')), 400);
+			}
+		}
 		switch ($p['type']) {
 			case 'post':
 				$result = self::save_post_field($p, $value);
@@ -4176,29 +4366,28 @@ final class Wanigan_Live {
 		if (!$node || md5(serialize_block($node)) !== $p['fp']) return new WP_Error('wanigan', 'That block is not where it was: reload the page and try again.');
 		$type = WP_Block_Type_Registry::get_instance()->get_registered($p['name']);
 		if (!$type) return new WP_Error('wanigan', 'That block type is no longer registered.');
+		$changed = false;
 		foreach ($value as $attr => $v) {
 			$def = isset($type->attributes[$attr]) ? $type->attributes[$attr] : null;
 			if (!is_array($def)) return new WP_Error('wanigan', 'The block has no setting called ' . $attr . '.');
 			$source = isset($def['source']) ? $def['source'] : null;
 			if ($source === null) {
+				$current = array_key_exists($attr, $node['attrs']) ? $node['attrs'][$attr] : (array_key_exists('default', $def) ? $def['default'] : null);
+				if ($current === $v) continue;
 				if (array_key_exists('default', $def) && $def['default'] === $v) unset($node['attrs'][$attr]);
 				else $node['attrs'][$attr] = $v;
+				$changed = true;
 				continue;
 			}
-			$html = (string) $node['innerHTML'];
-			$el = self::find_element($html, (string) $def['selector']);
-			if (!$el) return new WP_Error('wanigan', 'The element for ' . $attr . ' is not in the block any more.');
-			if ($source === 'attribute') {
-				$el->set_attribute((string) $def['attribute'], (string) $v);
-			} else {
-				$tag = $el->get_tag();
-				if (!$el->next_token() || $el->get_token_name() !== '#text') return new WP_Error('wanigan', 'The text of ' . $attr . ' has formatting now; change it in the editor.');
-				$el->set_modifiable_text((string) $v);
-			}
-			$html = $el->get_updated_html();
-			$node['innerHTML'] = $html;
-			$node['innerContent'] = array($html);
+			// A value sent back as it was stays as it is: cleaning it again could rewrite markup nobody changed.
+			$now = self::sourced($node, $def, $p['name'], (string) $attr);
+			if ($now['value'] === $v) continue;
+			if ($now['why']) return new WP_Error('wanigan', $now['why']);
+			$node = self::write_sourced($node, (string) $attr, $def, $v);
+			if (is_wp_error($node)) return $node;
+			$changed = true;
 		}
+		if (!$changed) return array();
 		$blocks = self::replace_node($blocks, $p['path'], $node);
 		return self::save_store($p['store'], $info, serialize_blocks($blocks));
 	}
