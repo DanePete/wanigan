@@ -1596,8 +1596,7 @@ try {
       if ((await stateOf('color')) !== 'draft') fail(t('layer: verifying a style draft not in the site yet changed its state'));
       await set({ verdict: 'pass' });
       await rowOf('color').getByRole('button', { name: /^Verify/ }).click();
-      await page.waitForSelector('.live-tray-edit[data-state="verified"] .live-tray-verdict.ok', { timeout: 4000 }).catch(() => {});
-      if ((await stateOf('color')) !== 'verified') fail(t('layer: a style draft put in the theme was not verified'));
+      await stateIs('color', 'verified', 'a style draft put in the theme was not verified');
       if (await rowOf('color').getByRole('button', { name: /^Make it real/ }).count()) fail(t('layer: a verified style can still be made real'));
 
       // An orphaned edit says why, and can only be discarded; it is never shown on what is there now.
