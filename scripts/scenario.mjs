@@ -628,6 +628,7 @@ try {
     const activity = await page.locator('.activity').innerText();
     await shot('activity');
     await go('#/p/CS/decisions');
+    await page.getByRole('button', { name: 'New decision' }).first().click();
     await page.getByLabel('Decision', { exact: true }).fill('Prices are whole dollars: never introduce cents in cart math');
     await page.getByRole('button', { name: 'Record decision' }).click();
     await sleep(800);

@@ -995,7 +995,11 @@ function checks(w) {
     await page.waitForSelector('.dialog input');
     await page.keyboard.type('Twice');
   }, ['Enter', 'Enter'], 'accounts.add');
-  once('A double Enter records one decision', `#/p/${ns}/decisions`, '.decision', typeInto('#decision-title', 'Only once'), ['Enter', 'Enter'], 'decisions.add');
+  once('A double Enter records one decision', `#/p/${ns}/decisions`, '.decision', async (page) => {
+    await page.click('.records-toolbar button:has-text("New decision")');
+    await page.waitForSelector('#decision-title');
+    await page.keyboard.type('Only once');
+  }, ['Enter', 'Enter'], 'decisions.add');
   once('A double Enter adds one criterion', `${board}?card=${ns}-1`, '.drawer .stages', typeInto('#criterion-new', 'Only once'), ['Enter', 'Enter'], 'criteria.add');
   once('A double ⌘Enter comments once', `${board}?card=${ns}-1`, '.drawer .stages', typeInto('#comment-new', 'Only once'), ['Meta+Enter', 'Meta+Enter'], 'cards.comment');
   once('A double Enter saves one board view', board, '.card', async (page) => {
