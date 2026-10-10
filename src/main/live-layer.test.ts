@@ -7,7 +7,9 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
-import { compileLayer, layerTextHash, type LayerApplied, type LayerEdit, type LayerImplemented, type LayerPickTarget, type LayerVerdict } from '../shared/design-layer.ts';
+import {
+  compileLayer, layerTextHash, trySheet, type LayerApplied, type LayerEdit, type LayerImplemented, type LayerPickTarget, type LayerTyped, type LayerVerdict,
+} from '../shared/design-layer.ts';
 import { parseVerdict, type Bitmap, type ElementSnap, type PageSnap } from '../shared/layer-verify.ts';
 import type { LiveEditSaved } from '../shared/live-lens.ts';
 import type { EditTarget, LiveTrace, PartIdentity, TracePart } from '../shared/live-trace.ts';
@@ -65,6 +67,9 @@ function modelPage() {
     calls: [] as { name: string; args: unknown[] }[],
     found: new Map<string, El[]>(),
     set: null as { tags: Record<string, number[]>; texts: { id: string; value: string }[]; on: boolean } | null,
+    /** Typing on the page: what the page script answers when it ends (the test settles it), and what was tried on it. */
+    typed: null as null | ((answer: unknown) => void),
+    tried: null as { spec: unknown; values: unknown } | null,
   };
   const run = async <T>(code: string, fallback: T): Promise<T> => {
     const m = /^window\.__wl && window\.__wl\.(\w+) \? window\.__wl\.\1\((.*)\) : null$/s.exec(code);
@@ -86,6 +91,9 @@ function modelPage() {
     }
     if (name === 'layerSet') { page.set = args[0] as typeof page.set; return Object.values(page.set!.tags).flat().length as T; }
     if (name === 'layerPick') return page.pick as T;
+    if (name === 'layerType') return new Promise((resolve) => { page.typed = (answer) => { page.typed = null; resolve(answer as T); }; });
+    if (name === 'layerTypeEnd') { page.typed?.(args[0] === true ? { kept: true, words: 'typed so far' } : { kept: false, why: null }); return null as T; }
+    if (name === 'layerTry') { page.tried = args[0] === null ? null : { spec: args[0], values: args[1] }; return (args[0] === null ? 0 : 2) as T; }
     if (name === 'layerOf') {
       const id = args[0] as string;
       const els = (page.set?.tags[id] ?? []).map((i) => page.found.get(id)?.[i]).filter((e): e is El => !!e);
@@ -119,12 +127,16 @@ function wire(over: {
   const posts: { path: string; body: unknown }[] = [];
   const sheets: { inserted: string[]; origins: unknown[]; removed: string[]; reloads: number } = { inserted: [], origins: [], removed: [], reloads: 0 };
   let url = over.url ?? `${BASE}paddling`;
+  /** What the view's page is listened for, and focused: a navigation ends typing on it. */
+  const listeners = new Map<string, Set<(...a: unknown[]) => void>>();
+  let focused = 0;
   const webContents = {
-    id: 7, getURL: () => url, isDestroyed: () => false,
+    id: 7, getURL: () => url, isDestroyed: () => false, focus: () => { focused++; },
     insertCSS: async (css: string, options?: { cssOrigin?: string }) => { sheets.inserted.push(css); sheets.origins.push(options?.cssOrigin); return `key-${sheets.inserted.length}`; },
     removeInsertedCSS: async (key: string) => { sheets.removed.push(key); },
     reloadIgnoringCache: () => { sheets.reloads++; },
-    on: () => webContents,
+    on: (name: string, fn: (...a: unknown[]) => void) => { const l = listeners.get(name) ?? new Set(); l.add(fn); listeners.set(name, l); return webContents; },
+    off: (name: string, fn: (...a: unknown[]) => void) => { listeners.get(name)?.delete(fn); return webContents; },
   };
   const client = {
     callRaw: async (method: string, params: Record<string, unknown>) => {
@@ -190,6 +202,11 @@ function wire(over: {
   const invoke = <T>(channel: string, ...args: unknown[]): Promise<T> => (handlers.get(channel) as (...a: unknown[]) => Promise<T>)({}, ...args);
   return {
     page, marks, saves, posts, sheets, renders, befores, order, dataDir, wired,
+    /** The view's page tells its listeners (a navigation, say), and how often it was given the keyboard. */
+    emit: (name: string, ...a: unknown[]) => { for (const fn of listeners.get(name) ?? []) fn(...a); },
+    listening: (name: string) => listeners.get(name)?.size ?? 0,
+    focused: () => focused,
+    webContents,
     /** What was kept of the page as it was for an edit, as verifyNow reads it. */
     kept: (id: string): BeforeKept | null => { try { return beforeKept(JSON.parse(readFileSync(join(dataDir, 'live-layer', folderOf('p1'), id, 'before', 'meta.json'), 'utf8'))); } catch { return null; } },
     setEdits: (next: LayerEdit[]) => { edits = next; },
@@ -198,6 +215,9 @@ function wire(over: {
     apply: () => invoke<LayerApplied>('live:layerApply'),
     show: (on: boolean) => invoke<LayerApplied>('live:layerShow', on),
     target: () => invoke<LayerPickTarget | null>('live:layerTarget'),
+    type: () => invoke<LayerTyped>('live:layerType'),
+    typeEnd: (keep: unknown) => invoke<void>('live:layerTypeEnd', keep),
+    tryStyle: (values: unknown, scope?: unknown) => invoke<number>('live:layerTry', values, scope),
     implement: (id: string) => invoke<LayerImplemented>('live:layerImplement', id),
     verify: (id: string | null, options?: unknown) => invoke<LayerVerdict>('live:layerVerify', id, options ?? null),
     picture: (path: unknown) => invoke<string | null>('live:layerPicture', path),
@@ -423,6 +443,113 @@ test('the picked element is keyed to the innermost part with an identity, with w
     assert.deepEqual([loose?.fragile, loose?.target.selector, loose?.target.part, loose?.kindLabel], [true, 'html > body:nth-of-type(1) > p:nth-of-type(2)', null, null]);
     w.page.pick = null;
     assert.equal(await w.target(), null, 'nothing picked');
+  } finally { w.done(); }
+});
+
+test('typing on the page keys the element first, by the words the site rendered, and kept words come back with that target', async () => {
+  const w = wire();
+  try {
+    w.page.pick = { parts: [{ part: 'p6', inner: null }], selector: 'html > body:nth-of-type(1) > h1:nth-of-type(1)', text: 'Paddling 101', tag: 'h1', values: { color: 'rgb(0, 0, 0)' } };
+    const typing = w.type();
+    await new Promise((done) => setTimeout(done, 0));
+    const names = w.page.calls.map((c) => c.name);
+    assert.ok(names.includes('layerPick') && names.indexOf('layerPick') < names.indexOf('layerType') && names.at(-1) === 'layerType', `keyed before the page is made editable, so its hash is of the site’s words (${names.join(', ')})`);
+    assert.equal(w.focused(), 1, 'the keyboard goes to the page, where the caret is');
+    assert.equal(w.listening('did-start-navigation'), 1);
+    w.page.typed?.({ kept: true, words: '  Paddling   102 ', key: true });
+    const kept = await typing;
+    assert.equal(kept.ended, 'kept');
+    if (kept.ended !== 'kept') return;
+    assert.equal(kept.words, 'Paddling 102', 'whitespace folded, as the layer keeps words');
+    assert.equal(kept.key, true, 'Enter in the page: the window takes the keyboard back');
+    assert.deepEqual(kept.target.target, { part: title(), inner: null, selector: null, textHash: layerTextHash('Paddling 101') });
+    assert.equal(kept.target.before.text, 'Paddling 101');
+    assert.equal(w.listening('did-start-navigation'), 0, 'nothing is left listening once it ends');
+    // Escape, or the window's Put back: cancelled with the page as it was, and no reason, for it was the owner's own.
+    const again = w.type();
+    await new Promise((done) => setTimeout(done, 0));
+    await w.typeEnd(false);
+    assert.deepEqual(await again, { ended: 'cancelled', why: null, key: false });
+    assert.deepEqual(w.page.calls.filter((c) => c.name === 'layerTypeEnd').map((c) => c.args), [[false]]);
+    // Nothing left typed is put back, and said.
+    const emptied = w.type();
+    await new Promise((done) => setTimeout(done, 0));
+    w.page.typed?.({ kept: false, why: 'empty' });
+    assert.deepEqual(await emptied, { ended: 'cancelled', why: 'Nothing was left typed, so the words were put back.', key: false });
+    // What the page script refuses is said as it said it.
+    const refused = w.type();
+    await new Promise((done) => setTimeout(done, 0));
+    w.page.typed?.({ refused: 'Only words can be typed on the page.' });
+    assert.deepEqual(await refused, { ended: 'refused', why: 'Only words can be typed on the page.' });
+  } finally { w.done(); }
+});
+
+test('typing ends as cancelled when the page goes to another address first, and is never started on nothing or without trust', async () => {
+  const w = wire();
+  try {
+    w.page.pick = { parts: [{ part: 'p6', inner: null }], selector: 'h1', text: 'Paddling 101', tag: 'h1', values: {} };
+    const typing = w.type();
+    await new Promise((done) => setTimeout(done, 0));
+    w.emit('did-start-navigation', { isMainFrame: false, isSameDocument: false });
+    w.emit('did-start-navigation', { isMainFrame: true, isSameDocument: true });
+    let settled = false;
+    void typing.then(() => { settled = true; });
+    await new Promise((done) => setTimeout(done, 0));
+    assert.equal(settled, false, 'a frame’s load, or a link to a place on the same page, does not end it');
+    w.emit('did-start-navigation', { isMainFrame: true, isSameDocument: false });
+    assert.deepEqual(await typing, { ended: 'cancelled', why: 'The page went to another address while you typed, so nothing was kept.', key: false });
+    assert.equal(w.listening('did-start-navigation'), 0);
+    w.page.pick = null;
+    const none = await w.type();
+    assert.equal(none.ended, 'refused');
+    assert.ok(!w.page.calls.slice(-1).some((c) => c.name === 'layerType'), 'nothing picked: the page is not made editable');
+  } finally { w.done(); }
+  const off = wire({ trusted: false });
+  try {
+    off.page.pick = { parts: [{ part: 'p6', inner: null }], selector: 'h1', text: 'Paddling 101', tag: 'h1', values: {} };
+    assert.deepEqual(await off.type(), { ended: 'refused', why: 'The live view is off.' });
+    await off.typeEnd(true);
+    assert.deepEqual(off.page.calls, [], 'an untrusted sender reaches nothing in the page');
+  } finally { off.done(); }
+});
+
+test('a style being tried shows on what an edit for it would reach, through one sheet put in once per document, and goes again', async () => {
+  const w = wire();
+  try {
+    w.page.pick = { parts: [{ part: 'p1', inner: 'h2:nth-of-type(1)' }], selector: 'html > body:nth-of-type(1) > h2:nth-of-type(1)', text: 'Paddling 101', tag: 'h2', values: {} };
+    assert.equal(await w.tryStyle({ color: '#c0392b', position: 'fixed', 'font-size': 'url(x)' }), 2);
+    assert.deepEqual(w.page.tried, { spec: { parts: ['p1'], inner: 'h2:nth-of-type(1)', selector: null }, values: { color: '#c0392b' } }, 'this card’s heading, with the values the layer would set');
+    assert.deepEqual([w.sheets.inserted, w.sheets.origins], [[trySheet()], ['user']], 'the try sheet, at the user origin with the layer’s own');
+    assert.deepEqual(w.page.calls.find((c) => c.name === 'layerPick')?.args, [[]], 'the pick is read for where it is, not for its styles');
+    await w.tryStyle({ color: '#1e8449' }, 'kind');
+    assert.deepEqual(w.page.tried, { spec: { parts: ['p1', 'p2'], inner: 'h2:nth-of-type(1)', selector: null }, values: { color: '#1e8449' } }, 'every card’s heading');
+    assert.equal(w.sheets.inserted.length, 1, 'the sheet holds no value: once per document is enough');
+    w.wired.hooks.view?.(w.webContents as never, 'p1');
+    w.emit('did-start-navigation', { isMainFrame: true, isSameDocument: false });
+    await w.tryStyle({ color: '#1e8449' });
+    assert.equal(w.sheets.inserted.length, 2, 'a new document has none: put in again');
+    await w.tryStyle(null);
+    assert.equal(w.page.tried, null, 'taken away');
+    await w.tryStyle({ position: 'fixed' });
+    assert.equal(w.page.tried, null, 'nothing the layer would set: taken away, not tried');
+    // Markup no part names is tried by its document path, for this element alone; it has no kind.
+    w.page.pick = { parts: [], selector: 'html > body:nth-of-type(1) > p:nth-of-type(2)', text: 'Hello', tag: 'p', values: {} };
+    await w.tryStyle({ color: '#c0392b' });
+    assert.deepEqual(w.page.tried, { spec: { parts: null, inner: null, selector: 'html > body:nth-of-type(1) > p:nth-of-type(2)' }, values: { color: '#c0392b' } });
+    assert.equal(await w.tryStyle({ color: '#c0392b' }, 'kind'), 0);
+    assert.equal(w.page.tried, null);
+  } finally { w.done(); }
+});
+
+test('tries are taken in the order asked: one taken away is never shown again by a try asked before it', async () => {
+  const w = wire();
+  try {
+    w.page.pick = { parts: [{ part: 'p1', inner: 'h2:nth-of-type(1)' }], selector: 'h2', text: 'Paddling 101', tag: 'h2', values: {} };
+    const first = w.tryStyle({ color: '#c0392b' });
+    const away = w.tryStyle(null);
+    await Promise.all([first, away]);
+    assert.equal(w.page.tried, null);
+    assert.deepEqual(w.page.calls.filter((c) => c.name === 'layerTry').map((c) => c.args[0] === null ? 'away' : 'shown'), ['shown', 'away']);
   } finally { w.done(); }
 });
 

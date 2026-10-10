@@ -15,7 +15,9 @@
 // script tagged with the edit's id (`data-wl-edit`), and it always wins
 // (`!important`, a doubled attribute selector), so the page shows the design
 // whatever the theme's own rules say. Whether the native implementation wins
-// the cascade is what the verify step proves.
+// the cascade is what the verify step proves. A style being tried, before it
+// is an edit, shows through a second sheet of the same kind that outranks it
+// (trySheet): one preview the page script owns, put on and taken off by marks.
 import { kindKey, parseIdentity, type PartIdentity } from './live-trace.ts';
 
 /** Style properties an edit may set. Each is something the owner can see and a theme can implement natively. */
@@ -278,6 +280,41 @@ export function compileLayer(edits: readonly LayerEdit[], breakpoints: readonly 
   return out.join('\n');
 }
 
+/* ── trying a style: one preview, before it is an edit ── */
+
+/**
+ * How many times the try sheet repeats its attribute: (0,6,0) outranks the layer's own gated selector
+ * (`:root[data-wl-layer] [data-wl-edit~][data-wl-edit~]`, (0,4,0)). Both sheets are injected at the user origin, so
+ * a value being tried shows over the same property an edit of the layer already sets on that element, and over every
+ * declaration of the page's own, `!important` or not.
+ */
+const TRY_WEIGHT = 6;
+
+/** The custom property a value being tried travels in, set on the element itself by the page script. */
+export const tryVar = (prop: LayerProperty): string => `--wl-try-${prop}`;
+
+/**
+ * The sheet a style being tried shows through (LiveBridge.layerTry): for each of the layer's properties, the value in
+ * that property's custom property, on elements the page script marked with `data-wl-try` naming it. It holds no value
+ * of its own, so it is the same sheet for every page and every try: injected once per document, it shows nothing
+ * until the page script marks an element, and nothing again once the mark is taken off.
+ */
+export function trySheet(): string {
+  return LAYER_PROPERTIES.map((p) => `${`[data-wl-try~="${p}"]`.repeat(TRY_WEIGHT)} { ${p}: var(${tryVar(p)}) !important; }`).join('\n');
+}
+
+/** Style values to try, as the layer would set them: its own properties only, each a value layerValue prints. Null for none. */
+export function tryValues(raw: unknown): Partial<Record<LayerProperty, string>> | null {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const out: Partial<Record<LayerProperty, string>> = {};
+  for (const [k, v] of Object.entries(raw as Record<string, unknown>).slice(0, LAYER_PROPERTIES.length * 2)) {
+    if (!(LAYER_PROPERTIES as readonly string[]).includes(k)) continue;
+    const value = layerValue(v);
+    if (value !== null) out[k as LayerProperty] = value;
+  }
+  return Object.keys(out).length ? out : null;
+}
+
 /** An element's own words as the layer keys them: whitespace folded, then FNV-1a (64-bit) as 16 hex digits. The page script computes the same. */
 export function layerTextHash(text: string): string {
   const folded = text.replace(/\s+/g, ' ').trim();
@@ -321,6 +358,26 @@ export interface LayerPickTarget {
   /** The helper names no part for it: an edit is fragile. */
   fragile: boolean;
 }
+
+/**
+ * How typing on the page ended (LiveBridge.layerType). The element is keyed before the first keystroke, so its target
+ * is checked against the words the site rendered, never the words being typed.
+ */
+export type LayerTyped =
+  /**
+   * Enter, clicking away, or the window's Keep: the words now shown (whitespace folded), and the element as
+   * layerTarget keys it. The page goes on showing them, in the element's own text nodes, until the window adds the
+   * edit and the layer shows it there. `key`: it ended by Enter in the page, so the window takes the keyboard back,
+   * as it does after a pick.
+   */
+  | { ended: 'kept'; words: string; target: LayerPickTarget; key: boolean }
+  /**
+   * Escape, the window's Put back, the same words or none, or the page going to another address: the page shows
+   * what it showed before. `why` when it was not the owner's own choice; `key` when it was Escape in the page.
+   */
+  | { ended: 'cancelled'; why: string | null; key: boolean }
+  /** Nothing was typed: no element chosen, one that is not only words, or a page that is not the local site's. */
+  | { ended: 'refused'; why: string };
 
 /** The layer applied to the page shown (LiveBridge.layerApply): what each edit of this page reached. */
 export interface LayerApplied {

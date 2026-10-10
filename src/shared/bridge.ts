@@ -5,11 +5,11 @@ import type { CompareWidth } from './live-compare.ts';
 import type { LiveEditSaved, LiveEdited, LivePaint, LiveTraceAnswer } from './live-lens.ts';
 import type { ArrangeDrop, ArrangeSpec, LiveInsert, LiveMove, LiveMoveSaved, LiveRemove, LiveWriteOptions } from './live-arrange.ts';
 import type { LibraryPicturesAnswer, LiveLibraryAnswer, LiveUsageAnswer } from './live-library.ts';
-import type { LayerApplied, LayerImplemented, LayerPickTarget, LayerVerdict } from './design-layer.ts';
+import type { LayerApplied, LayerImplemented, LayerPickTarget, LayerProperty, LayerTyped, LayerVerdict } from './design-layer.ts';
 import type { LiveSiteAiAnswer } from './live-ai.ts';
 import type { LiveFailure } from './live-site.ts';
 import type { LiveFindAnswer, LiveHere } from './live-goto.ts';
-import type { LiveKeyId } from './live-keys.ts';
+import type { LiveGesture, LiveKeyId } from './live-keys.ts';
 import type { Need } from './model.ts';
 import type { EventName, Events, Method, Params, Result } from './protocol.ts';
 import type { AppSettings, AppState } from './settings.ts';
@@ -226,6 +226,25 @@ export interface LiveBridge {
   layerVerify(id: string | null, options?: { widths?: number[] }): Promise<LayerVerdict>;
   /** A verification picture (a path a verdict named) as base64 PNG, for a window that cannot read the data folder. */
   layerPicture(path: string): Promise<string | null>;
+  /**
+   * Type on the picked element's own words in the page itself: it becomes editable in place (plain text only, the
+   * caret at its end, the keyboard given to the view), and every keystroke shows on the page as it is typed. The
+   * element is keyed first, as layerTarget keys it, so its target names the words the site rendered. Answers when
+   * typing ends: `kept` with the words (Enter, clicking away in the page, or layerTypeEnd(true)), which the page goes on
+   * showing until the window adds them as a text edit and applies the layer; `cancelled` (Escape, layerTypeEnd(false),
+   * the same words or none, or the page going to another address, which says why) with the page as it was; `refused`,
+   * with why, for an element that is not only words, nothing picked, or a page that is not the local site's.
+   */
+  layerType(): Promise<LayerTyped>;
+  /** End typing on the page from the window: keep the words typed so far (true), or put back what the page showed (false). */
+  layerTypeEnd(keep: boolean): Promise<void>;
+  /**
+   * Show style values at once on the picked element, before they are an edit: one preview the page script owns,
+   * outranking the layer's own rules for those properties, never written anywhere. For `this` (the default) on the
+   * elements an edit for it would reach, for `kind` on every element of its kind on the page. Each call replaces the
+   * last; null, or no value the layer would set, takes it away. Answers how many elements show it.
+   */
+  layerTry(values: Partial<Record<LayerProperty, string>> | null, scope?: 'this' | 'kind'): Promise<number>;
   /* The Go to launcher (src/main/live-find.ts; the helpers' contract is src/shared/live-find.ts). */
 
   /** A project's site's destinations: the helper's index, or its search for `query`, or why there are none (with the pages the view knows). */
@@ -234,9 +253,10 @@ export interface LiveBridge {
   findHere(projectId: string): Promise<LiveHere | null>;
   /**
    * Wait for Shift+Space on the page, or one of the live view's own keys (shared/live-keys.ts), while nothing there is
-   * typed into: 'goto' or the key's id, or null when a newer wait or a new page replaced it.
+   * typed into: 'goto' or the key's id; 'retype' for a double-click on the picked element's own words; or null when a
+   * newer wait or a new page replaced it.
    */
-  awaitGoto(): Promise<'goto' | LiveKeyId | null>;
+  awaitGoto(): Promise<'goto' | LiveKeyId | LiveGesture | null>;
   /** The launcher takes the keyboard; true when the view's page had it. */
   gotoFocus(): Promise<boolean>;
   /** Give the keyboard back to the view's page. */

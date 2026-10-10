@@ -352,6 +352,9 @@ export function liveStub(f) {
     // How long making words real and verifying take (to catch what happens meanwhile), a refusal the site answers the
     // next field save with, and a refusal the core answers the next mark with.
     implementMs: 0, verifyMs: 80, saveRefusal: null, refuseMark: null,
+    // Typing on the page (layerType): the words shown so far (null when nothing is typed), how the sweep ends it
+    // (typed(words) keeps them, typed(null) puts them back), and the style being tried (layerTry).
+    typing: null, typed: null, tried: null, scrollY: 0,
     // The owner's templates, by the path the site names them with, and the words saved to them by hand.
     templates: {
       'themes/custom/acme/templates/block--copyright.html.twig': '<p class="copyright">\n  Copyright\n</p>\n',
@@ -585,16 +588,20 @@ export function liveStub(f) {
   const draw = () => {
     if (!host) return;
     host.replaceChildren();
+    // The page scrolled, for a picture of a part further down (__wgLive.scrollY): everything drawn moves with it.
+    const sheet = document.createElement('div');
+    sheet.style.cssText = `position:absolute;left:0;top:0;right:0;transform:translateY(${-(window.__wgLive.scrollY ?? 0)}px);`;
+    host.appendChild(sheet);
     const page = document.createElement('img');
     page.src = wireAt(bounds.width, Math.max(bounds.height, 1240));
     page.alt = '';
     page.style.cssText = 'position:absolute;left:0;top:0;display:block;';
-    host.appendChild(page);
+    sheet.appendChild(page);
     const box = (r, css, label) => {
       const b = document.createElement('div');
       b.style.cssText = `position:absolute;left:${r.x}px;top:${r.y}px;width:${r.width}px;height:${r.height}px;box-sizing:border-box;${css}`;
       if (label) { const t = document.createElement('span'); t.textContent = label; t.style.cssText = 'position:absolute;left:2px;top:2px;font:500 11px/17px -apple-system,system-ui,sans-serif;padding:0 5px;border-radius:3px;color:#fff;background:#2f86c9;white-space:nowrap;'; b.appendChild(t); }
-      host.appendChild(b);
+      sheet.appendChild(b);
     };
     for (const p of shown.paint) { const r = regions[p.index]; if (r) box(r.rect, `outline:1.5px ${p.dashed ? 'dashed' : 'solid'} ${p.color};outline-offset:-1px;background:${rgba(p.color, p.fill)};box-shadow:inset 0 0 0 2px rgba(0,0,0,0.18);`, p.label); }
     for (const o of shown.outline) { const r = regions[o.index]; if (r) box(r.rect, `outline:2px ${o.tone === 'hover' ? 'dashed' : 'solid'} #63b3e4;outline-offset:-1px;`, o.label); }
@@ -613,10 +620,29 @@ export function liveStub(f) {
         const t = document.createElement('span');
         t.textContent = e.change.value;
         t.style.cssText = `position:absolute;left:${r.rect.x + 6}px;top:${r.rect.y + 8}px;padding:2px 6px;font:600 13px/18px -apple-system,system-ui,sans-serif;color:#162029;background:#ffffff;`;
-        host.appendChild(t);
+        sheet.appendChild(t);
       }
     }
+    // A style being tried, as the page would show it (a preview the page script owns): its colour around each part it reaches.
+    const tried = window.__wgLive.tried;
+    if (tried) {
+      const picked = regions[window.__wgLive.picked];
+      const reach = tried.scope === 'kind' ? regions.filter((x) => picked && /^p-teaser-/.test(x.part ?? '') === /^p-teaser-/.test(picked.part ?? '')) : picked ? [picked] : [];
+      const v = tried.values;
+      for (const r of reach) box(r.rect, `outline:3px solid ${v.color ?? v['background-color'] ?? '#7a5cc4'};outline-offset:-3px;${v['background-color'] ? `background:${v['background-color']};opacity:0.5;` : ''}`, null);
+    }
+    // Words typed on the page, where they are: the element outlined as the page script outlines it, the words so far, a caret at their end.
+    const typing = window.__wgLive.typing;
+    const at = typing !== null ? regions[window.__wgLive.picked] : null;
+    if (at) {
+      box(at.rect, 'outline:2px solid #2f86c9;outline-offset:3px;', 'Typing · Enter keeps · Esc puts back');
+      const t = document.createElement('span');
+      t.textContent = typing;
+      t.style.cssText = `position:absolute;left:${at.rect.x + 6}px;top:${at.rect.y + 8}px;padding:2px 6px;font:600 13px/18px -apple-system,system-ui,sans-serif;color:#162029;background:#ffffff;border-right:2px solid #162029;`;
+      sheet.appendChild(t);
+    }
   };
+  window.__wgLive.scrollTo = (y) => { window.__wgLive.scrollY = y; draw(); };
   /** A library entry rendered alone, as a wireframe drawn on a canvas at the width asked for: base64 PNG. */
   const pieceHeight = (entry, width) => {
     const phone = width < 600;
@@ -730,8 +756,17 @@ export function liveStub(f) {
     },
     onEdited(l) { listeners.edited.add(l); return () => listeners.edited.delete(l); },
     onKey(l) { listeners.key.add(l); return () => listeners.key.delete(l); },
-    arrange(spec) { arranging?.(null); window.__wgLive.spec = spec; return new Promise((resolve) => { arranging = resolve; window.__wgLive.drop = (d) => { arranging = null; resolve(d); }; }); },
-    async disarm() { const a = arranging; arranging = null; a?.(null); },
+    // `armed`: the page waits for a drop now (a reload disarms it, and the window arms it again once the page is back).
+    arrange(spec) {
+      arranging?.(null);
+      window.__wgLive.spec = spec;
+      window.__wgLive.armed = true;
+      return new Promise((resolve) => {
+        arranging = resolve;
+        window.__wgLive.drop = (d) => { arranging = null; window.__wgLive.armed = false; resolve(d); };
+      });
+    },
+    async disarm() { const a = arranging; arranging = null; window.__wgLive.armed = false; a?.(null); },
     async preview(item, ref, place) { window.__wgLive.calls.push(`preview ${item} ${place} ${ref}`); return true; },
     async unpreview() { window.__wgLive.calls.push('unpreview'); },
     async move(m) { window.__wgLive.calls.push(`move ${JSON.stringify(m)}`); const a = window.__wgLive.moveAnswer ?? { ok: true, undo: 'u-1', revision: null }; if (a.ok) written(); return a; },
@@ -915,6 +950,39 @@ export function liveStub(f) {
       g.fillStyle = kind === 'design' ? '#c0392b' : kind === 'diff' ? '#ff00ff' : '#5b6770';
       g.fillRect(24, 220, Math.min(160, width - 48), 18);
       return c.toDataURL('image/png').split(',')[1];
+    },
+    // Typing on the page, played: keyed first as main keys it (layerTarget), then the words shown as the sweep types them
+    // (__wgLive.type(words)), until it ends them (__wgLive.typed(words) keeps them; typed(null) puts them back). A part
+    // that is not only words is refused, as the page script refuses it.
+    async layerType() {
+      window.__wgLive.calls.push('layerType');
+      const target = await window.wanigan.live.layerTarget();
+      const pick = await window.wanigan.live.picked();
+      if (!target || !pick?.own) return { ended: 'refused', why: 'Only words can be typed on the page, and this element holds more than words: pick the words themselves.' };
+      const w = window.__wgLive;
+      w.typing = pick.own;
+      w.type = (words) => { w.typing = words; draw(); };
+      draw();
+      return new Promise((resolve) => {
+        w.typed = (words) => {
+          w.typed = null;
+          w.typing = null;
+          draw();
+          // The same words as before are nothing to keep, as the page script says.
+          resolve(words === null || words === pick.own ? { ended: 'cancelled', why: null, key: false } : { ended: 'kept', words, target, key: false });
+        };
+      });
+    },
+    async layerTypeEnd(keep) {
+      window.__wgLive.calls.push(`layerTypeEnd ${keep}`);
+      const w = window.__wgLive;
+      w.typed?.(keep ? w.typing : null);
+    },
+    async layerTry(values, scope) {
+      window.__wgLive.calls.push(values ? `layerTry ${scope ?? 'this'} ${JSON.stringify(values)}` : 'layerTry off');
+      window.__wgLive.tried = values ? { values, scope: scope ?? 'this' } : null;
+      draw();
+      return values ? (scope === 'kind' ? 3 : 1) : 0;
     },
   };
 }

@@ -139,9 +139,10 @@ WordPress and other sites can each be on or off.
 - **Keys for everything**, in the view and in its page while nothing is typed
   into: P picks (and stops picking), ⇧L chooses a lens, 1 2 3 the widths,
   [ and ] the side panel's tabs, ⇧[ and ⇧] the dock's, ⇧C Compare, ⇧B the
-  component library; on a chosen part E edits, M moves, . opens its code, ⇧A
-  shows it alone, ⇧X takes it out; ⌘↩ adds a note, ⇧⌘↩ sends it (or the notes
-  waiting). All are on the shortcut sheet (?).
+  component library; on a chosen part E types on its words on the page (or,
+  for a part that is more than words, opens Edit ▾), M moves, . opens its
+  code, ⇧A shows it alone, ⇧X takes it out; ⌘↩ adds a note, ⇧⌘↩ sends it (or
+  the notes waiting). All are on the shortcut sheet (?).
 - **Finds the site** from the project's own files (`.ddev`, `wp-config.php`,
   a dev script, `.lando.yml`) and opens the site you already run. It starts
   nothing on its own. A ddev site's certificate is trusted when this Mac's own
@@ -178,10 +179,18 @@ WordPress and other sites can each be on or off.
 - **Notes for an agent.** Point at parts across pages, say what should change,
   and send them to a session as one message with a picture of each part. They
   wait in the dock's Notes tab.
-- **The design layer** (Edit ▾ › On the page, and Edits, ⇧E). Retyped words
-  and tried styles are kept by Wanigan, not written into the site: the page
-  shows them at once, through the layer. A style is for one element or every
-  instance of its kind (how many, said before you choose it); a custom
+- **The design layer** (Edit ▾ › On the page, and Edits, ⇧E). You edit on
+  the page itself, as in a site builder. Retype the words (E, or a
+  double-click on the chosen part's words) makes those words editable where
+  they are: each key shows on the page as you type it, Enter or clicking away
+  keeps them, Esc puts back exactly what was there, and the status line says
+  you are typing, with Keep and Put back. Retype in a box does the same from
+  the side panel, for the keyboard and screen readers. Try a style shows each
+  value on the page as you move its control (over an edit the layer already
+  shows there too), and Show it on the page keeps it. What you keep is kept by
+  Wanigan, not written into the site: the page goes on showing it through the
+  layer. A style is for one element or every instance of its kind (how many,
+  said before you choose it, and shown on every one as you try it); a custom
   property can change for the whole site. Edits lists every edit by page, with
   before → after, what it reaches (including "this item, shown twice on this
   page"), its state and what that means, and why when it no longer finds its
@@ -219,8 +228,11 @@ WordPress and other sites can each be on or off.
   layer to compare; nothing runs twice, and undo waits while words are being
   saved. The window has been checked against the UI sweep's stand-in; on the
   Northstar demo, a script driving the real app made words in a plain field
-  real and verified them. Drupal's formatted text, configuration and Layout
-  Builder saves, and WordPress, have been tested with stand-ins only.
+  real and verified them. Typing on the page and a style shown as it changes
+  have been checked in headless Chromium on made-up pages and in the window
+  against the stand-in, not yet in the app on a site. Drupal's formatted text,
+  configuration and Layout Builder saves, and WordPress, have been tested with
+  stand-ins only.
 - **Go to**, in the address field (click it, or Shift+Space in the live view,
   ⌘⇧Space anywhere in a project): an address, or any page of the site by
   typing a few letters of its title, an admin or structure page, a path or an id, ranked as you type and by what you choose
