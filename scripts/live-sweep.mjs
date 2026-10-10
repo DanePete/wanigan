@@ -25,10 +25,12 @@
 // three groups and its site menu, the five verbs on a chosen part with the
 // note under them, a part chosen in the tree offering what a pick offers, the
 // tree kept beside the chosen part (above it and folded, or beside it when the
-// window is wide) and following the choice from the page, Notes, Problems and
-// Request in the dock beneath the page with the code editor (its keys, and
-// what it shows kept on this Mac), the status line, and every key the live
-// view lists on the shortcut sheet; the bar and the project's tab bar fitting,
+// window is wide) and following the choice from the page, Notes, Problems,
+// Request and the page's DevTools in the dock beneath the page with the code
+// editor (its keys, and what it shows kept on this Mac; DevTools laid over its
+// tab and following it, its control and Chrome's chord on a Mac and on
+// Windows, Show in DevTools at a part's centre, its own window, leaving), the
+// status line, and every key the live view lists on the shortcut sheet; the bar and the project's tab bar fitting,
 // nothing drawn over anything or cut off, at 1280, 1440 and 1920 px with the
 // dock beside and beneath. Then the page script itself, in a
 // real Chromium page of made-up markup: the trace's part marks read and paired,
@@ -311,7 +313,7 @@ try {
         if (!pageGroup?.controls.some((c) => want.test(c))) fail(t(`layout: the page group has nothing like ${want} (${pageGroup?.controls.join(' | ')})`));
       }
       if (!/^Pick/.test(toolGroup?.controls[0] ?? '') || !/^Library/.test(toolGroup?.controls[1] ?? '') || !/^Edits: the design layer \(⇧E\)$/.test(toolGroup?.controls[2] ?? '')
-        || !/^More/.test(toolGroup?.controls[3] ?? '') || toolGroup?.controls.length !== 4) fail(t(`layout: the tools are ${JSON.stringify(toolGroup?.controls)}`));
+        || toolGroup?.controls[3] !== 'DevTools (⌥⌘I)' || !/^More/.test(toolGroup?.controls[4] ?? '') || toolGroup?.controls.length !== 5) fail(t(`layout: the tools are ${JSON.stringify(toolGroup?.controls)}`));
       for (const gone of ['Site settings', 'Open in the default browser', 'Go to a page of the site (Shift+Space)']) {
         if (await page.$(`.live-bar button[aria-label="${gone}"]`)) fail(t(`layout: "${gone}" is still a button of its own in the bar`));
       }
@@ -490,12 +492,12 @@ try {
       if (await tabIs() !== 'Add') fail(t(`layout: [ from the first tab went to ${await tabIs()}, not the last`));
       await page.keyboard.press(']');
 
-      // The dock beneath the page: Code, Notes, Problems, Request. Closed, its tabs wait in a strip, each opening it;
+      // The dock beneath the page: Code, Notes, Problems, Request, DevTools. Closed, its tabs wait in a strip, each opening it;
       // ⇧] and ⇧[ open it on the tab it showed, then step through them; ⌘J is the code editor's (from Notes it
       // shows Code, then hides the dock).
       if (await page.$('.editor-drawer:not([hidden])')) await page.click('.editor-actions button[aria-label^="Hide the"]');
       const strip = await page.$$eval('.dock-collapsed button', (els) => els.map((e) => e.textContent.trim()));
-      if (strip.join() !== 'Code,Notes,Problems,Request') fail(t(`layout: the closed dock offers ${strip.join(', ')}`));
+      if (strip.join() !== 'Code,Notes,Problems,Request,DevTools') fail(t(`layout: the closed dock offers ${strip.join(', ')}`));
       await page.locator('.dock-collapsed button', { hasText: /^Notes/ }).click();
       await page.waitForSelector('.editor-drawer:not([hidden]) .live-docked[data-tab="notes"]', { timeout: 3000 }).catch(() => fail(t('layout: Notes in the closed dock’s strip did not open it there')));
       await page.click('.editor-actions button[aria-label="Hide the dock"]');
@@ -566,6 +568,233 @@ try {
       if (await page.$('.live-side-foot, .live-side > .live-note')) fail(t('layout: the side panel still says the state itself'));
       await page.getByRole('radio', { name: 'Layers' }).click();
       await shot('layout');
+    }
+
+    // ── The page's own DevTools in the dock (components/live/DevTools.tsx; the views are src/main/live-devtools.ts,
+    // played here by a placeholder the stand-in draws where DevTools' view would be). The tab, the bar's control and
+    // Chrome's chord (⌥⌘I: this window says it is a Mac; a Windows window is checked after both themes) open and close
+    // it; it is laid exactly over the tab and follows it (the window, the dock's edge, its side, a theme change), clear
+    // of the Talk to Wanigan button; anything over it steps it aside; Show in DevTools, from the chosen part, a row of
+    // the tree and ⇧D, points DevTools at the centre of the element (where the page script says it is); its own window
+    // and back; and leaving: another view of the project keeps it, leaving the project closes it.
+    {
+      const calls = () => page.evaluate(() => window.__wgLive.calls.slice());
+      const mark = async () => (await calls()).length;
+      const since = async (n) => (await calls()).slice(n);
+      const nobody = () => page.evaluate(() => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(() => { document.activeElement?.blur(); done(); }))));
+      const frames = () => page.evaluate(() => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(() => done()))));
+      const devtools = page.locator('.live-bar-tools button[aria-keyshortcuts="Alt+Meta+I"]');
+      const open = () => page.waitForSelector('.editor-drawer:not([hidden]) .live-docked[data-tab="devtools"] .live-devtools-host', { timeout: 3000 }).then(() => true, () => false);
+      /** Where the stand-in laid DevTools' view, against the tab's own area: the same box, to the pixel. */
+      const laid = () => page.evaluate(() => {
+        const h = document.querySelector('.live-devtools-host')?.getBoundingClientRect();
+        const b = window.__wgLive.devtools.bounds;
+        const r = (x) => Math.round(x);
+        return { host: h ? [r(h.left), r(h.top), r(h.width), r(h.height)].join() : null, laid: b ? [r(b.x), r(b.y), r(b.width), r(b.height)].join() : null, drawn: !!document.getElementById('__wg_devtools_stub') };
+      });
+      const followed = async (what) => {
+        await frames();
+        await page.waitForFunction(() => {
+          const h = document.querySelector('.live-devtools-host')?.getBoundingClientRect();
+          const b = window.__wgLive.devtools.bounds;
+          return !!h && !!b && Math.round(h.left) === Math.round(b.x) && Math.round(h.top) === Math.round(b.y) && Math.round(h.width) === Math.round(b.width) && Math.round(h.height) === Math.round(b.height);
+        }, null, { timeout: 3000 }).catch(async () => fail(t(`devtools: after ${what} DevTools is not over the tab (${JSON.stringify(await laid())})`)));
+      };
+      /** The centre DevTools must be pointed at for a part: what of it is on screen, in the page's pixels (shared/live-devtools.ts). */
+      const centreFor = (index) => page.evaluate(async (i) => {
+        const r = await window.wanigan.live.where(i);
+        const d = document.querySelector('.live-device');
+        if (!r || !d) return null;
+        const left = Math.max(0, r.x), top = Math.max(0, r.y), right = Math.min(d.clientWidth, r.x + r.width), bottom = Math.min(d.clientHeight, r.y + r.height);
+        return `${Math.min(d.clientWidth - 1, Math.floor((left + right) / 2))} ${Math.min(d.clientHeight - 1, Math.floor((top + bottom) / 2))}`;
+      }, index);
+      /** The region a row of the tree stands for: what choosing it chooses on the page (then back to the tree alone). */
+      const regionOfRow = async (row) => {
+        const k = await mark();
+        await row.click();
+        await page.waitForFunction((x) => window.__wgLive.calls.slice(x).some((c) => /^choose \d+$/.test(c)), k, { timeout: 3000 });
+        const chosen = (await since(k)).find((c) => /^choose \d+$/.test(c))?.slice('choose '.length) ?? null;
+        await page.getByRole('button', { name: 'Back to the layers' }).click();
+        return chosen;
+      };
+      /** Show in DevTools asked: which part the page brought into view, and where DevTools was pointed. */
+      const inspected = async (n, what) => {
+        await page.waitForFunction((k) => window.__wgLive.calls.slice(k).some((c) => c.startsWith('devtoolsInspect ')), n, { timeout: 3000 })
+          .catch(() => fail(t(`devtools: ${what} did not point DevTools at anything`)));
+        const asked = await since(n);
+        const reveal = asked.find((c) => c.startsWith('reveal '));
+        const at = asked.find((c) => c.startsWith('devtoolsInspect '))?.slice('devtoolsInspect '.length) ?? null;
+        if (!reveal || asked.indexOf(reveal) > asked.findIndex((c) => c.startsWith('devtoolsInspect '))) fail(t(`devtools: ${what} did not bring the part into view first (${asked.join(', ')})`));
+        return { reveal: reveal?.slice('reveal '.length) ?? null, at };
+      };
+
+      await page.goto(`${base}#/p/NS/live`);
+      await page.waitForSelector('.live-tree', { timeout: 15_000 });
+      if (await page.$('.editor-drawer:not([hidden])')) await page.click('.editor-actions button[aria-label^="Hide the"]');
+      if (!(await devtools.count())) fail(t('devtools: no DevTools control in the bar’s tools, keyed ⌥⌘I'));
+      if ((await devtools.getAttribute('aria-label')) !== 'DevTools (⌥⌘I)') fail(t(`devtools: the control is named "${await devtools.getAttribute('aria-label')}"`));
+      if ((await devtools.getAttribute('aria-pressed')) !== 'false') fail(t('devtools: the control says DevTools is shown before it is'));
+
+      // The bar's control opens the tab, with the keyboard for DevTools, laid exactly over it, the button over the corner left clear.
+      let n = await mark();
+      await devtools.click();
+      if (!(await open())) fail(t('devtools: the bar’s DevTools did not open the tab in the dock'));
+      await page.waitForFunction((k) => window.__wgLive.calls.slice(k).includes('devtoolsShow focus'), n, { timeout: 3000 })
+        .catch(async () => fail(t(`devtools: the tab did not open DevTools there, with the keyboard (${(await since(n)).join(', ')})`)));
+      if ((await devtools.getAttribute('aria-pressed')) !== 'true') fail(t('devtools: the control does not say DevTools is shown'));
+      if (!/DevTools/.test(await dockIs(page))) fail(t(`devtools: the dock's tabs show ${await dockIs(page)}, not DevTools`));
+      await followed('opening');
+      if (!(await laid()).drawn) fail(t('devtools: nothing was drawn where DevTools goes'));
+      const clear = await page.evaluate(() => {
+        const h = document.querySelector('.live-devtools-host')?.getBoundingClientRect();
+        const f = document.querySelector('.chat-fab')?.getBoundingClientRect();
+        return !h || !f || f.top >= h.bottom || f.left >= h.right || f.bottom <= h.top || f.right <= h.left;
+      });
+      if (!clear) fail(t('devtools: DevTools’ view would cover the Talk to Wanigan button'));
+      const said = await page.locator('.live-devtools-foot').innerText();
+      if (!said.includes('Wanigan’s marks are in this page’s HTML while the live view is on.')) fail(t(`devtools: the tab does not say what of the page is Wanigan’s (${said})`));
+      if (!said.includes('X-Wanigan-Live')) fail(t('devtools: on a site with the helper the tab does not say the Network panel shows its key'));
+      if (!said.includes('⌥⌘I opens or closes this tab.')) fail(t(`devtools: the tab does not say its key (${said})`));
+      await shot('devtools');
+
+      // It follows the tab: the window resized, the dock's edge moved by the keyboard, the dock beside the page and back.
+      await page.setViewportSize({ width: 1280, height: 800 });
+      await followed('the window was resized');
+      await page.focus('.editor-resizer');
+      await page.keyboard.press('ArrowUp');
+      await page.keyboard.press('ArrowUp');
+      await followed('the dock grew');
+      await page.click('.editor-actions button[aria-label="Put the dock beside the view"]');
+      await page.waitForSelector('.editor-drawer[data-dock="right"]:not([hidden]) .live-devtools-host', { timeout: 3000 }).catch(() => fail(t('devtools: beside the page the tab is gone')));
+      await followed('the dock went beside the page');
+      await shot('devtools-beside');
+      await page.click('.editor-actions button[aria-label="Put the dock beneath the view"]');
+      await followed('the dock came back beneath the page');
+      await page.focus('.editor-resizer');
+      await page.keyboard.press('ArrowDown');
+      await page.keyboard.press('ArrowDown');
+      await page.setViewportSize({ width: 1440, height: 900 });
+      await followed('the window was resized back');
+
+      // Anything over it steps it aside, its last picture standing in: the palette, used here to change the theme.
+      const other = theme === 'dark' ? 'light' : 'dark';
+      for (const to of [other, theme]) {
+        n = await mark();
+        await page.keyboard.press('Meta+k');
+        await page.waitForSelector('.palette', { timeout: 3000 });
+        await page.waitForFunction((k) => window.__wgLive.calls.slice(k).includes('devtoolsHide frame') && !window.__wgLive.devtools.shown, n, { timeout: 3000 })
+          .catch(() => fail(t('devtools: the palette over the dock did not step DevTools aside with its picture')));
+        if ((await laid()).drawn) fail(t('devtools: DevTools is still drawn under the palette'));
+        await page.keyboard.type(`Theme: ${to === 'dark' ? 'dark' : 'light'}`);
+        await page.keyboard.press('Enter');
+        await page.waitForSelector('.palette', { state: 'detached', timeout: 3000 });
+        await page.waitForFunction((th) => document.documentElement.dataset.theme === th && window.__wgLive.devtools.shown, to, { timeout: 3000 })
+          .catch(() => fail(t(`devtools: after the theme changed to ${to} DevTools did not come back`)));
+        await followed(`the theme changed to ${to}`);
+      }
+
+      // Chrome's chord, from the window with nothing focused: closes the tab (DevTools kept, only hidden), opens it again.
+      await nobody();
+      n = await mark();
+      await page.keyboard.press('Meta+Alt+KeyI');
+      await page.waitForSelector('.dock-collapsed', { timeout: 3000 }).catch(() => fail(t('devtools: ⌥⌘I with DevTools shown did not close the tab')));
+      if ((await since(n)).includes('devtoolsClose')) fail(t('devtools: hiding the tab closed DevTools instead of keeping it'));
+      if (!(await since(n)).includes('devtoolsHide')) fail(t('devtools: hiding the tab did not step DevTools aside'));
+      const strip = await page.$$eval('.dock-collapsed button', (els) => els.map((e) => e.textContent.trim()));
+      if (strip.join() !== 'Code,Notes,Problems,Request,DevTools') fail(t(`devtools: the closed dock offers ${strip.join(', ')}`));
+      n = await mark();
+      await page.keyboard.press('Meta+Alt+KeyI');
+      if (!(await open())) fail(t('devtools: ⌥⌘I did not open the DevTools tab'));
+      await page.waitForFunction((k) => window.__wgLive.calls.slice(k).includes('devtoolsShow focus'), n, { timeout: 3000 }).catch(() => fail(t('devtools: ⌥⌘I did not show DevTools, with the keyboard')));
+      // While typing too: it is an app chord.
+      await page.getByRole('radio', { name: 'Layers' }).click();
+      await page.locator('.live-layer', { hasText: 'Opening hours' }).first().click();
+      await page.click('.live-inspector textarea[aria-label="What should change here?"]');
+      await page.keyboard.press('Meta+Alt+KeyI');
+      await page.waitForSelector('.dock-collapsed', { timeout: 3000 }).catch(() => fail(t('devtools: ⌥⌘I in the note box did not close the tab')));
+      await page.keyboard.press('Meta+Alt+KeyI');
+      if (!(await open())) fail(t('devtools: ⌥⌘I in the note box did not open the tab again'));
+      await page.getByRole('button', { name: 'Back to the layers' }).click();
+
+      // Show in DevTools, on the chosen part: the tab is open, and DevTools is pointed at the element's centre.
+      await page.click('.editor-actions button[aria-label="Hide the dock"]');
+      await page.locator('.live-layer', { hasText: /^Hero/ }).first().click();
+      await page.waitForSelector('.live-inspector', { timeout: 3000 });
+      const showHero = page.getByRole('button', { name: 'Show Hero in DevTools (⇧D)' });
+      if (!(await showHero.count())) fail(t('devtools: the chosen part has no Show in DevTools'));
+      n = await mark();
+      await showHero.click();
+      let asked = await inspected(n, 'Show in DevTools on the chosen part');
+      if (asked.reveal !== 'null') fail(t(`devtools: Show in DevTools on a chosen part brought ${asked.reveal} into view, not the element chosen`));
+      const heroAt = await page.evaluate(() => window.__wgLive.picked);
+      if (asked.at !== await centreFor(heroAt)) fail(t(`devtools: DevTools was pointed at ${asked.at}, not the centre of Hero (${await centreFor(heroAt)})`));
+      if (!(await open())) fail(t('devtools: Show in DevTools did not open the DevTools tab'));
+      await shot('devtools-inspect');
+      // ⇧D does what the button does.
+      await nobody();
+      n = await mark();
+      await page.keyboard.press('Shift+D');
+      asked = await inspected(n, '⇧D on the chosen part');
+      if (asked.at !== await centreFor(heroAt)) fail(t(`devtools: ⇧D pointed DevTools at ${asked.at}`));
+      await page.getByRole('button', { name: 'Back to the layers' }).click();
+
+      // On a row of the tree: the one pointed at has Show in DevTools at its end; ⇧D on the row with the keyboard.
+      const sidebar = page.locator('.live-layer', { hasText: /^Sidebar/ }).first();
+      const sidebarAt = await regionOfRow(sidebar);
+      await sidebar.hover();
+      const rowAct = page.getByRole('button', { name: 'Show Sidebar in DevTools (⇧D)' });
+      await rowAct.waitFor({ timeout: 3000 }).catch(() => fail(t('devtools: the row pointed at has no Show in DevTools')));
+      const beside = await page.evaluate(() => {
+        const row = [...document.querySelectorAll('.live-layer')].find((r) => /^Sidebar/.test(r.textContent ?? ''))?.getBoundingClientRect();
+        const act = document.querySelector('.live-layer-act')?.getBoundingClientRect();
+        return !!row && !!act && act.top >= row.top - 1 && act.bottom <= row.bottom + 1 && Math.abs(act.right - row.right) <= 1;
+      });
+      if (!beside) fail(t('devtools: Show in DevTools is not at the end of the row pointed at'));
+      await shot('devtools-row');
+      n = await mark();
+      await rowAct.click();
+      asked = await inspected(n, 'Show in DevTools on a row');
+      if (asked.reveal !== sidebarAt) fail(t(`devtools: the row's Show in DevTools brought ${asked.reveal} into view, not Sidebar (${sidebarAt})`));
+      if (asked.at !== await centreFor(Number(sidebarAt))) fail(t(`devtools: the row pointed DevTools at ${asked.at}, not the centre of Sidebar`));
+      const search = page.locator('.live-layer', { hasText: /^Search/ }).first();
+      const searchAt = await regionOfRow(search);
+      await search.focus();
+      n = await mark();
+      await page.keyboard.press('Shift+D');
+      asked = await inspected(n, '⇧D on a row of the tree');
+      if (asked.reveal !== searchAt) fail(t(`devtools: ⇧D on the Search row brought ${asked.reveal} into view, not Search (${searchAt})`));
+      if (await page.$('.live-inspector')) fail(t('devtools: ⇧D on a row chose the part as well'));
+
+      // In its own window, for a second screen: the tab says so and brings it back.
+      n = await mark();
+      await page.getByRole('button', { name: 'Open in its own window' }).click();
+      await page.waitForSelector('.live-devtools-away:has-text("DevTools is in its own window.")', { timeout: 3000 }).catch(() => fail(t('devtools: in its own window, the tab does not say where DevTools is')));
+      if (!(await since(n)).includes('devtoolsDetach')) fail(t('devtools: Open in its own window did not ask for DevTools’ own window'));
+      if ((await laid()).drawn) fail(t('devtools: DevTools is drawn in the dock and in its own window'));
+      await shot('devtools-detached');
+      n = await mark();
+      await page.getByRole('button', { name: 'Back into the dock' }).click();
+      await page.waitForFunction((k) => { const c = window.__wgLive.calls.slice(k); return c.indexOf('devtoolsClose') >= 0 && c.indexOf('devtoolsShow focus') > c.indexOf('devtoolsClose'); }, n, { timeout: 3000 })
+        .catch(async () => fail(t(`devtools: Back into the dock did not close its window and open it in the dock (${(await since(n)).join(', ')})`)));
+      await followed('it came back into the dock');
+
+      // Leaving: another view of the project hides it (kept); coming back shows it; leaving the project closes it.
+      n = await mark();
+      await page.goto(`${base}#/p/NS/board`);
+      await page.waitForSelector('.card', { timeout: 8000 });
+      if (!(await since(n)).includes('devtoolsHide')) fail(t('devtools: going to the board did not step DevTools aside'));
+      if ((await since(n)).includes('devtoolsClose')) fail(t('devtools: another view of the project closed DevTools'));
+      n = await mark();
+      await page.goto(`${base}#/p/NS/live`);
+      if (!(await open())) fail(t('devtools: back in the live view the dock did not come back on DevTools'));
+      await page.waitForFunction((k) => window.__wgLive.calls.slice(k).includes('devtoolsShow'), n, { timeout: 3000 }).catch(() => fail(t('devtools: back in the live view DevTools did not show again')));
+      n = await mark();
+      await page.goto(`${base}#/needs`);
+      await page.waitForFunction((k) => window.__wgLive.calls.slice(k).includes('devtoolsClose'), n, { timeout: 3000 }).catch(() => fail(t('devtools: leaving the project did not close DevTools')));
+      if (await page.$('#__wg_devtools_stub')) fail(t('devtools: DevTools is still drawn after leaving the project'));
+      await page.goto(`${base}#/p/NS/live`);
+      await page.waitForSelector('.live-tree', { timeout: 15_000 });
+      if (await page.$('.editor-drawer:not([hidden])')) await page.click('.editor-actions button[aria-label^="Hide the"]');
     }
 
     // ── The design layer: a style tried and words retyped on a chosen part are edits of the layer, shown on the page
@@ -1454,6 +1683,41 @@ try {
     }
   }
 
+  // On Windows and Linux the page's DevTools is Chrome's chord there, Ctrl+Shift+I: the control, the tab, the sheet and
+  // the key itself say and do that, and the Mac's ⌥⌘I does nothing.
+  {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'dark', deviceScaleFactor: 2 });
+    await ctx.addInitScript(BRIDGE);
+    await ctx.addInitScript('window.wanigan.platform = "win32"; try { localStorage.setItem("wanigan.theme", "dark"); } catch {}');
+    await ctx.addInitScript(liveStub, liveFixture);
+    await ctx.addInitScript(LIVE_DEFAULTS);
+    const pw = await ctx.newPage();
+    const w = (what) => `windows/${what}`;
+    await pw.goto(`${base}#/p/NS/live`);
+    await pw.waitForSelector('.live-tree', { timeout: 15_000 }).catch(() => fail(w('no layers')));
+    const control = pw.locator('.live-bar-tools button[aria-keyshortcuts="Control+Shift+I"]');
+    if ((await control.getAttribute('aria-label').catch(() => null)) !== 'DevTools (Ctrl+Shift+I)') fail(w('devtools: the bar’s control is not named with Ctrl+Shift+I'));
+    if ((await control.locator('kbd').textContent().catch(() => '')) !== 'Ctrl+Shift+I') fail(w('devtools: the control’s key cap is not Ctrl+Shift+I'));
+    const tabOpen = () => pw.waitForSelector('.editor-drawer:not([hidden]) .live-docked[data-tab="devtools"]', { timeout: 3000 }).then(() => true, () => false);
+    await pw.keyboard.press('Meta+Alt+KeyI');
+    await pw.waitForTimeout(300);
+    if (await pw.$('.live-docked[data-tab="devtools"]')) fail(w('devtools: the Mac’s ⌥⌘I opened DevTools on Windows'));
+    await pw.keyboard.press('Control+Shift+KeyI');
+    if (!(await tabOpen())) fail(w('devtools: Ctrl+Shift+I did not open the DevTools tab'));
+    const said = await pw.locator('.live-devtools-foot').innerText().catch(() => '');
+    if (!said.includes('Ctrl+Shift+I opens or closes this tab.')) fail(w(`devtools: the tab does not say Ctrl+Shift+I (${said})`));
+    await pw.screenshot({ path: join(out, 'windows-devtools.png'), animations: 'disabled' });
+    await pw.keyboard.press('Control+Shift+KeyI');
+    await pw.waitForSelector('.dock-collapsed', { timeout: 3000 }).catch(() => fail(w('devtools: Ctrl+Shift+I did not close the tab')));
+    // The sheet lists it as Windows writes it.
+    await pw.keyboard.press('Control+Slash');
+    await pw.waitForSelector('.shortcuts', { timeout: 3000 }).catch(() => fail(w('the shortcut sheet did not open')));
+    const row = await pw.$$eval('.shortcut', (els) => els.map((e) => [e.querySelector('dt')?.textContent, e.querySelector('.shortcut-keys')?.getAttribute('aria-label')])
+      .find(([l]) => l === 'The page’s DevTools, in the dock beneath it: open or close')?.[1] ?? null);
+    if (row !== 'Ctrl+Shift+I') fail(w(`devtools: the shortcut sheet lists it as ${row}`));
+    await ctx.close();
+  }
+
   // The page script itself, in a real page of made-up markup.
   const script = readFileSync(join(root, 'out/renderer/live-page.js'), 'utf8');
   const page = await browser.newPage({ viewport: { width: 900, height: 700 } });
@@ -1544,6 +1808,40 @@ try {
   }
   await page.evaluate(() => { window.__wl.awaitGoto(); });
   await page.close();
+
+  // Show in DevTools brings a part into view before DevTools is pointed at it: off screen, the page scrolls to it
+  // (instantly, even on a site that scrolls smoothly) and says where it is now; on screen, it stays put. A part marked
+  // by comments, and the picked element (none here), too.
+  {
+    const tall = await browser.newPage({ viewport: { width: 800, height: 600 } });
+    await tall.setContent(`<!doctype html><html style="scroll-behavior:smooth"><body style="margin:0;font:14px sans-serif">
+<div data-wl-block="hero@acme_hero" style="height:200px;background:#eee">Hero</div>
+<div style="height:2400px"></div>
+<!-- wl:part id="p-footer" --><footer data-wl-block="copyright@acme_copyright" style="height:80px;margin-left:120px;width:300px;background:#ddd">Copyright</footer><!-- /wl:part id="p-footer" -->
+<div style="height:400px"></div>
+</body></html>`);
+    await tall.addScriptTag({ content: script });
+    const found = await tall.evaluate(() => window.__wl.scan().map((r) => ({ index: r.index, block: r.block, part: r.part })));
+    const heroAt = found.find((r) => r.block?.startsWith('hero'))?.index;
+    const footAt = found.find((r) => r.block?.startsWith('copyright'))?.index;
+    const markedAt = found.find((r) => r.part === 'p-footer' && !r.block)?.index ?? footAt;
+    const before = await tall.evaluate((i) => window.__wl.where(i), footAt);
+    if (!before || before.y < 600) fail(`page script: the footer should start off screen (${JSON.stringify(before)})`);
+    const hero = await tall.evaluate((i) => ({ box: window.__wl.reveal(i), y: scrollY }), heroAt);
+    if (hero.y !== 0 || hero.box?.y !== 0 || hero.box?.height !== 200) fail(`page script: revealing a part on screen moved the page or read it wrong (${JSON.stringify(hero)})`);
+    const foot = await tall.evaluate((i) => ({ box: window.__wl.reveal(i), y: scrollY }), footAt);
+    if (!foot.box || foot.y <= 0 || foot.box.y < 0 || foot.box.y + foot.box.height > 600 || foot.box.x !== 120 || foot.box.width !== 300) {
+      fail(`page script: revealing a part off screen did not bring it into view (${JSON.stringify(foot)})`);
+    }
+    // The box answered is where it is now: the same as where() says after.
+    if (JSON.stringify(foot.box) !== JSON.stringify(await tall.evaluate((i) => window.__wl.where(i), footAt))) fail('page script: reveal answered a box other than where the part is');
+    await tall.evaluate(() => scrollTo({ top: 0, behavior: 'instant' }));
+    const marked = await tall.evaluate((i) => ({ box: window.__wl.reveal(i), y: scrollY }), markedAt);
+    if (!marked.box || marked.y <= 0 || marked.box.y < 0 || marked.box.y >= 600) fail(`page script: revealing a part marked by comments did not bring it into view (${JSON.stringify(marked)})`);
+    if ((await tall.evaluate(() => window.__wl.reveal(null))) !== null) fail('page script: with nothing picked, reveal(null) answered a box');
+    if ((await tall.evaluate(() => window.__wl.reveal(9999))) !== null) fail('page script: a region that is not there answered a box');
+    await tall.close();
+  }
 
   // The design layer patches words in place: only the element's own text nodes change, so the helper's wl:part marks
   // around a field item's words stay (and the part with them); an element with an element inside it is not written

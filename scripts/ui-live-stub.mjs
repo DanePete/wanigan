@@ -556,8 +556,31 @@ export function liveStub(f) {
     }
   };
 
-  const listeners = { state: new Set(), edited: new Set(), key: new Set() };
+  const listeners = { state: new Set(), edited: new Set(), key: new Set(), devtools: new Set() };
   let host = null;
+  /*
+   * The page's DevTools (src/main/live-devtools.ts), played: where it is, and a placeholder drawn where the main
+   * process lays DevTools' own view: a grey wireframe that says it stands in for Chromium's DevTools, never DevTools
+   * itself. __wgLive.devtools is what the sweep reads (the mode, the bounds it was last given, whether it is shown).
+   */
+  window.__wgLive.devtools = { mode: 'closed', bounds: null, shown: false };
+  let devHost = null;
+  const devTell = (mode) => { window.__wgLive.devtools.mode = mode; for (const l of listeners.devtools) l(mode); };
+  const devDraw = () => {
+    const d = window.__wgLive.devtools;
+    const b = d.bounds;
+    if (d.mode !== 'docked' || !d.shown || !b || b.width < 1 || b.height < 1) { devHost?.remove(); devHost = null; return; }
+    if (!devHost) {
+      devHost = document.createElement('div');
+      devHost.id = '__wg_devtools_stub';
+      const tabs = ['Elements', 'Console', 'Sources', 'Network', 'Performance', 'Application'];
+      devHost.innerHTML = `<div style="display:flex;gap:14px;align-items:center;height:26px;padding:0 10px;border-bottom:1px solid #3c4043;font:12px/26px -apple-system,system-ui,sans-serif;color:#9aa0a6">${tabs.map((t, i) => `<span style="${i === 0 ? 'color:#e8eaed;border-bottom:2px solid #8ab4f8;' : ''}">${t}</span>`).join('')}</div>`
+        + `<div style="padding:10px 14px;font:12px/18px ui-monospace,Menlo,monospace;color:#9aa0a6">${['&lt;html&gt;', '&nbsp;&nbsp;&lt;body class="acme"&gt;', '&nbsp;&nbsp;&nbsp;&nbsp;&lt;main&gt;…&lt;/main&gt;'].map((l) => `<div>${l}</div>`).join('')}</div>`
+        + '<div style="position:absolute;right:12px;bottom:8px;font:11px -apple-system,system-ui,sans-serif;color:#9aa0a6">Stand-in for Chromium’s DevTools</div>';
+      document.body.appendChild(devHost);
+    }
+    devHost.style.cssText = `position:fixed;left:${b.x}px;top:${b.y}px;width:${b.width}px;height:${b.height}px;overflow:hidden;background:#202124;z-index:40;`;
+  };
   let bounds = null;
   let projectId = null;
   let regions = [];
@@ -713,7 +736,40 @@ export function liveStub(f) {
     async reload() { window.__wgLive.calls.push('reload'); setTimeout(tell, 30); },
     async css() { return 0; },
     async go(url) { window.__wgLive.calls.push(`go ${url}`); return true; },
-    async back() {}, async forward() {}, async open() {}, async devtools() {},
+    async back() {}, async forward() {}, async open() {},
+    async devtoolsShow(b, focus) {
+      const d = window.__wgLive.devtools;
+      window.__wgLive.calls.push(`devtoolsShow${focus ? ' focus' : ''}`);
+      d.bounds = b;
+      d.shown = true;
+      if (d.mode === 'closed') devTell('docked');
+      devDraw();
+      return d.mode;
+    },
+    devtoolsBounds(b) { window.__wgLive.devtools.bounds = b; devDraw(); },
+    async devtoolsHide(frame) {
+      const d = window.__wgLive.devtools;
+      window.__wgLive.calls.push(`devtoolsHide${frame ? ' frame' : ''}`);
+      const was = d.mode === 'docked' && d.shown && d.bounds;
+      d.shown = false;
+      devDraw();
+      return frame && was ? wireAt(Math.max(1, Math.round(d.bounds.width)), Math.max(1, Math.round(d.bounds.height))) : null;
+    },
+    async devtoolsClose() { window.__wgLive.calls.push('devtoolsClose'); window.__wgLive.devtools.shown = false; if (window.__wgLive.devtools.mode !== 'closed') devTell('closed'); devDraw(); },
+    async devtoolsDetach() { window.__wgLive.calls.push('devtoolsDetach'); devTell('detached'); devDraw(); return true; },
+    async devtoolsInspect(x, y) {
+      window.__wgLive.calls.push(`devtoolsInspect ${x} ${y}`);
+      if (window.__wgLive.devtools.mode === 'closed') devTell('docked');
+      devDraw();
+      return true;
+    },
+    onDevtools(l) { listeners.devtools.add(l); return () => listeners.devtools.delete(l); },
+    // Where a part is in the view now (its box less the page's scroll), as the page script answers after bringing it into view.
+    async reveal(index) {
+      window.__wgLive.calls.push(`reveal ${index}`);
+      const r = regions[index ?? window.__wgLive.picked];
+      return r ? { ...r.rect, y: r.rect.y - (window.__wgLive.scrollY ?? 0) } : null;
+    },
     async scan() { return regions; },
     async outline(indexes, label, tone) { shown.outline = indexes.map((index) => ({ index, label, tone })); draw(); return indexes.length; },
     async clear() { shown.outline = []; draw(); },
