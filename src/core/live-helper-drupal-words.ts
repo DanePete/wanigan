@@ -1101,8 +1101,240 @@ final class ConfigWords {
 }
 `;
 
+const INLINE_WORDS = String.raw`<?php
+
+namespace Drupal\wanigan_live\Save;
+
+use Drupal\Core\Access\AccessResult;
+use Drupal\Core\Access\RefinableDependentAccessInterface;
+use Drupal\Core\Entity\ContentEntityInterface;
+use Drupal\Core\Entity\Plugin\Validation\Constraint\EntityChangedConstraint;
+use Drupal\Core\Entity\RevisionLogInterface;
+use Drupal\Core\Plugin\Context\EntityContext;
+use Drupal\wanigan_live\Edit\Targets;
+
+/**
+ * Words in a Layout Builder inline block, saved through its layout.
+ *
+ * An inline block is a block_content entity no one else uses: the layout
+ * component pins one revision of it (block_revision_id) and shows exactly
+ * that one (InlineBlock::getEntity()), so a save of the block itself would
+ * make a revision nothing shows. Core's own path is followed instead, as
+ * Layout Builder's block form does: the changed block goes into the
+ * component's block_serialized, the section storage is saved, and
+ * InlineBlockEntityOperations::handlePreSave() saves it (a new block
+ * revision when the layout's entity keeps revisions) and pins it.
+ *
+ * The layout is found by the block's usage (inline_block_usage): an entity's
+ * own layout (overrides), saved through that entity as a new revision with
+ * every gate a content save runs (no newer draft, every violation, the
+ * workflow's included); or a display's default layout, which every entity of
+ * that bundle without a layout of its own shows, so that save is answered
+ * first with how far it reaches, and made only when it is asked again with
+ * the token that answer gave. Only the version of the block the page showed
+ * is changed (the component must pin that revision), never while Layout
+ * Builder holds unsaved changes for the layout, never by a user Layout
+ * Builder's own access check would turn away, and never from a translation:
+ * Drupal refuses a layout change from one (OverridesSectionStorage::
+ * handleTranslationAccess()).
+ */
+final class InlineWords {
+
+  /**
+   * Saves the words: [HTTP status, answer].
+   */
+  public static function save(ContentEntityInterface $block, string $name, ?string $item, string $before, string $after, string $shown, string $formatter, ?string $confirm): array {
+    if ($shown === '') {
+      return [409, self::refusal('The page did not say which version of this block it showed, so nothing is saved. Reload, and try again.')];
+    }
+    $types = \Drupal::entityTypeManager();
+    $langcode = $block->language()->getId();
+    $pinned = $types->getStorage('block_content')->loadRevision($shown);
+    if (!$pinned instanceof ContentEntityInterface || (string) $pinned->id() !== (string) $block->id() || !$pinned->hasTranslation($langcode)) {
+      return [409, self::refusal('This block changed since the page loaded. Reload, and try again.')];
+    }
+    $pinned = $pinned->getTranslation($langcode);
+    if (!$pinned->isDefaultTranslation()) {
+      return [409, self::refusal('These words are a translation of a block placed in a layout, and Drupal changes a layout only in its original language (Layout Builder refuses it from a translation), so nothing is saved. Change them in the original language.')];
+    }
+    $usage = \Drupal::service('inline_block.usage')->getUsage($block->id());
+    if (!$usage) {
+      return [409, self::refusal('This block is in no layout Drupal records, so there is nowhere to save its words. Change it in Layout Builder.')];
+    }
+    [$storage, $owner, $refused] = self::layout($usage);
+    if ($refused) {
+      return $refused;
+    }
+    if (\Drupal::service('layout_builder.tempstore_repository')->has($storage)) {
+      return [409, self::refusal('This layout has changes not yet saved in Layout Builder: save or discard them there first.')];
+    }
+    // Layout Builder's own access check (LayoutBuilderAccessCheck): the
+    // storage's, and "configure any layout" unless it checks permissions
+    // itself.
+    $access = $storage->access('view', NULL, TRUE);
+    if (!$storage->getPluginDefinition()->get('handles_permission_check')) {
+      $access = $access->andIf(AccessResult::allowedIfHasPermission(\Drupal::currentUser(), 'configure any layout'));
+    }
+    if (!$access->isAllowed()) {
+      return [403, self::refusal('The user you are logged in as in the live view may not change this layout. Log in there as someone who may.')];
+    }
+    $components = [];
+    foreach ($storage->getSections() as $section) {
+      foreach ($section->getComponents() as $component) {
+        $configuration = $component->get('configuration');
+        if (str_starts_with((string) $component->getPluginId(), 'inline_block:') && (string) ($configuration['block_revision_id'] ?? '') === $shown && empty($configuration['block_serialized'])) {
+          $components[] = $component;
+        }
+      }
+    }
+    if (count($components) !== 1) {
+      return [409, self::refusal($components
+        ? 'This layout shows that version of the block more than once, so which one the page showed is not clear, and nothing is saved. Change it in Layout Builder.'
+        : 'The layout no longer shows the version of this block the page did: it changed since the page loaded. Reload, and try again.')];
+    }
+    $component = $components[0];
+    // Access to a block no one else uses is its layout's (as Layout Builder
+    // sets it: SetInlineBlockDependency).
+    if ($pinned instanceof RefinableDependentAccessInterface) {
+      $pinned->setAccessDependency($owner);
+    }
+    if (!$pinned->get($name)->access('edit')) {
+      return [403, self::refusal('The user you are logged in as in the live view may not change this field. Log in there as someone who may.')];
+    }
+    if ($words = Words::apply($pinned, $name, $item, $before, $after, $formatter)) {
+      return [$words[0], self::refusal($words[1])];
+    }
+    // The block's own violations; that it is older than the block's default
+    // revision is not one, since the layout keeps that version, not the
+    // newest.
+    $problems = [];
+    foreach ($pinned->validate() as $violation) {
+      if (!(method_exists($violation, 'getConstraint') && $violation->getConstraint() instanceof EntityChangedConstraint)) {
+        $problems[] = self::said($violation);
+      }
+    }
+    if ($problems) {
+      return [422, self::refusal('Drupal would not save it. ' . implode(' ', array_slice($problems, 0, 3)))];
+    }
+    $overrides = $storage->getStorageType() === 'overrides';
+    if (!$overrides) {
+      // A display's default layout: every entity of that bundle without one of
+      // its own shows it. Said first; saved when asked again with this token.
+      $token = substr(hash('sha256', implode("\n", [$storage->getStorageId(), $component->getUuid(), $shown, $before, $after, (string) \Drupal::currentUser()->id()])), 0, 32);
+      if ($confirm !== $token) {
+        $reach = self::reach($owner);
+        return [409, self::refusal('These words are in the default layout for ' . self::bundle($owner) . ', which every one without a layout of its own shows' . ($reach !== NULL ? ' (' . $reach . ' now)' : '') . ', so saving them changes them on all of those pages.') + ['confirm' => $token]];
+      }
+    }
+    $configuration = $component->get('configuration');
+    $configuration['block_serialized'] = serialize($pinned);
+    $component->setConfiguration($configuration);
+    if ($overrides) {
+      if ($owner->getEntityType()->isRevisionable()) {
+        $owner->setNewRevision(TRUE);
+        if ($owner instanceof RevisionLogInterface) {
+          $owner->setRevisionLogMessage('Words changed by hand in Wanigan’s live view: layout.');
+          $owner->setRevisionUserId((int) \Drupal::currentUser()->id());
+          $owner->setRevisionCreationTime(\Drupal::time()->getRequestTime());
+        }
+      }
+      $problems = [];
+      foreach ($owner->validate() as $violation) {
+        $path = (string) $violation->getPropertyPath();
+        if ($path === 'moderation_state' || str_starts_with($path, 'moderation_state.')) {
+          return [403, self::refusal('Its workflow does not let the user you are logged in as in the live view save the content this layout belongs to as it is (' . trim(strip_tags((string) $violation->getMessage())) . '): a save here keeps its state, and nothing is made a draft instead. Change it in Layout Builder.')];
+        }
+        $problems[] = self::said($violation);
+      }
+      if ($problems) {
+        return [422, self::refusal('Drupal would not save the content this layout belongs to. ' . implode(' ', array_slice($problems, 0, 3)))];
+      }
+    }
+    $storage->save();
+    $revision = $overrides && $owner->getEntityType()->isRevisionable() ? (string) $owner->getRevisionId() : NULL;
+    $state = $overrides && $owner->hasField('moderation_state') ? $owner->get('moderation_state')->value : NULL;
+    $label = $overrides ? (string) $owner->label() : 'The default layout for ' . self::bundle($owner);
+    return [200, ['ok' => TRUE, 'value' => trim($after), 'label' => $label, 'revision' => $revision, 'state' => is_string($state) ? $state : NULL]];
+  }
+
+  /**
+   * What a display's default layout is for, in words: "Article content".
+   */
+  private static function bundle(object $display): string {
+    $type = $display->getTargetEntityTypeId();
+    $bundles = \Drupal::service('entity_type.bundle.info')->getBundleInfo($type);
+    $label = (string) ($bundles[$display->getTargetBundle()]['label'] ?? $display->getTargetBundle());
+    return $label . ' ' . strtolower((string) \Drupal::entityTypeManager()->getDefinition($type)->getLabel());
+  }
+
+  /**
+   * The layout a block's usage names: [section storage, its entity or
+   * display, NULL] or [NULL, NULL, refusal].
+   */
+  private static function layout(object $usage): array {
+    $types = \Drupal::entityTypeManager();
+    $type = (string) $usage->layout_entity_type;
+    if (!$types->hasDefinition($type)) {
+      return [NULL, NULL, [409, self::refusal('The layout this block is in is gone. Reload, and try again.')]];
+    }
+    if ($type === 'entity_view_display') {
+      $display = $types->getStorage($type)->load($usage->layout_entity_id);
+      $storage = $display ? \Drupal::service('plugin.manager.layout_builder.section_storage')->load('defaults', ['display' => EntityContext::fromEntity($display)]) : NULL;
+      return $storage ? [$storage, $display, NULL] : [NULL, NULL, [409, self::refusal('The layout this block is in is gone. Reload, and try again.')]];
+    }
+    // The entity's default revision: the version visitors see, which is the
+    // one whose layout shows the block (a newer draft is refused below).
+    $entity = $types->getStorage($type)->load($usage->layout_entity_id);
+    $storage = $entity instanceof ContentEntityInterface ? Targets::layoutStorage($entity, 'full') : NULL;
+    if ($storage === NULL || $storage->getStorageType() !== 'overrides') {
+      return [NULL, NULL, [409, self::refusal('The layout this block is in is not the one its content shows any more. Reload, and try again.')]];
+    }
+    if ($entity->getEntityType()->isRevisionable()) {
+      $latest = $types->getStorage($type)->getLatestRevisionId($entity->id());
+      if ($latest !== NULL && (int) $latest > (int) $entity->getRevisionId()) {
+        return [NULL, NULL, [409, self::refusal('The content this layout belongs to has a newer draft than the version visitors see. Saving its layout here would make a new version without the draft’s changes and leave the draft behind, so nothing is saved. Change it in Layout Builder, on the draft.')]];
+      }
+    }
+    return [$storage, $entity, NULL];
+  }
+
+  /**
+   * How many entities of a display's bundle show its default layout (those
+   * without their own), or NULL when that cannot be counted.
+   */
+  private static function reach(object $display): ?int {
+    try {
+      $type = \Drupal::entityTypeManager()->getDefinition($display->getTargetEntityTypeId());
+      $query = \Drupal::entityTypeManager()->getStorage($type->id())->getQuery()->accessCheck(FALSE)->count();
+      if ($type->hasKey('bundle')) {
+        $query->condition($type->getKey('bundle'), $display->getTargetBundle());
+      }
+      $fields = \Drupal::service('entity_field.manager')->getFieldStorageDefinitions($type->id());
+      if (isset($fields['layout_builder__layout'])) {
+        $query->notExists('layout_builder__layout');
+      }
+      return (int) $query->execute();
+    }
+    catch (\Throwable) {
+      return NULL;
+    }
+  }
+
+  private static function said(object $violation): string {
+    $path = (string) $violation->getPropertyPath();
+    return ($path !== '' ? $path . ': ' : '') . trim(strip_tags((string) $violation->getMessage()));
+  }
+
+  private static function refusal(string $message): array {
+    return ['ok' => FALSE, 'error' => $message];
+  }
+
+}
+`;
+
 /** The word saves' files, by their path inside the module's folder. */
 export const DRUPAL_WORDS_FILES: Readonly<Record<string, string>> = {
   'src/Save/Words.php': WORDS,
   'src/Save/ConfigWords.php': CONFIG_WORDS,
+  'src/Save/InlineWords.php': INLINE_WORDS,
 };

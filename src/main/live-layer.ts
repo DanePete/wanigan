@@ -604,6 +604,11 @@ export function wireLiveLayer(options: LiveLayerOptions): { hooks: LiveViewHooks
   let sheet: { wc: number; key: string } | null = null;
   /** Each sheet's generation: the page's root names the one that holds (compileLayer's gate). */
   let generation = 0;
+  /**
+   * The helper's confirm tokens, by edit: a save it refused saying how far it reaches (words in a Drupal default layout
+   * every entity of a bundle shares) is made when the edit is made real again, with the token that answer gave.
+   */
+  const confirms = new Map<string, string>();
   /** Applying, one at a time; and verifying, one at a time (each loads whole pages in hidden windows). */
   let applying: Promise<unknown> = Promise.resolve();
   let verifying: Promise<unknown> = Promise.resolve();
@@ -785,8 +790,15 @@ export function wireLiveLayer(options: LiveLayerOptions): { hooks: LiveViewHooks
       // target names, never the first item that happens to hold the same words, never the default language.
       const where = saveTarget(edit.target.part, at.field);
       if (typeof where === 'string') return none(where);
-      const saved = await options.helperSave(at.field, at.words, value, where);
+      // Asked again after the site said how far it reaches: with the token it gave, so that save is made.
+      const confirm = confirms.get(id);
+      const saved = await options.helperSave(at.field, at.words, value, confirm ? { ...where, confirm } : where);
       if (!saved) return none('The live view has no helper for this site.');
+      if (!saved.ok && saved.confirm) {
+        confirms.set(id, saved.confirm);
+        return none(`${saved.error ?? 'The site asks first.'} Make it real again to save it there.`);
+      }
+      confirms.delete(id);
       if (!saved.ok) return none(saved.error ?? 'The site did not save it.');
       const refused = await mark(cur.projectId, id, 'implemented');
       // The site now has the words, whatever the layer recorded: the page shows them as it renders them, and the layer

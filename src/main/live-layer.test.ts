@@ -14,6 +14,7 @@ import type { EditTarget, LiveTrace, PartIdentity, TracePart } from '../shared/l
 import { folderOf } from './live-capture.ts';
 import { saveSchemaEdit } from './live-edit-save.ts';
 import { madeOn, pathOf, traceProblem, wireLiveLayer, type LayerRender, type LayerRenderRequest } from './live-layer.ts';
+import type { HelperSaved, SaveAt } from './live-view.ts';
 
 // Plainly not a key: the helper's real token is random hex the core keeps.
 const TOKEN = ['stand', 'in', 'token'].join('-');
@@ -96,7 +97,7 @@ function modelPage() {
 /** What the stand-in site answers a schema save (`POST /_wanigan/edit/<id>`): a status and its JSON. */
 interface SiteAnswer { status: number; body: unknown }
 
-function wire(over: { edits?: LayerEdit[]; url?: string; trace?: LiveTrace | null; trusted?: boolean; enabled?: boolean; render?: LayerRender; renderMs?: number; saved?: { ok: boolean; error: string | null }; refuseMark?: string; site?: SiteAnswer } = {}) {
+function wire(over: { edits?: LayerEdit[]; url?: string; trace?: LiveTrace | null; trusted?: boolean; enabled?: boolean; render?: LayerRender; renderMs?: number; saved?: { ok: boolean; error: string | null }; refuseMark?: string; site?: SiteAnswer; helper?: (at: SaveAt | undefined) => HelperSaved } = {}) {
   const handlers = new Map<string, (...args: unknown[]) => unknown>();
   const dataDir = mkdtempSync(join(tmpdir(), 'wanigan-layer-'));
   const { page, run } = modelPage();
@@ -137,7 +138,11 @@ function wire(over: { edits?: LayerEdit[]; url?: string; trace?: LiveTrace | nul
     current: () => ({ projectId: 'p1', base: BASE, token: TOKEN, env: null, webContents: webContents as never }),
     run,
     trace: async () => (traced ? { state: 'ok', trace: traced } : { state: 'missing' }),
-    helperSave: async (field, before, after, at) => { saves.push([field, before, after, at]); return over.saved ? { ...over.saved, label: 'Paddling 101' } : { ok: true, error: null, label: 'Paddling 101', revision: '42' }; },
+    helperSave: async (field, before, after, at) => {
+      saves.push([field, before, after, at]);
+      if (over.helper) return over.helper(at);
+      return over.saved ? { ...over.saved, label: 'Paddling 101' } : { ok: true, error: null, label: 'Paddling 101', revision: '42' };
+    },
     // live-inspect.ts schemaSave, played here: the target found in the trace the view holds (Electron's ipcMain cannot
     // load under this runner), then the real save in live-edit-save.ts against a stand-in site.
     schemaSave: async (id, value, tracedId): Promise<LiveEditSaved> => {
@@ -1047,5 +1052,27 @@ test('Drupal: words a block’s title, a view’s header or a menu link keeps ar
     assert.deepEqual(await w.implement(renamed.id), { ok: false, id: renamed.id, route: 'none', why: about.why });
     assert.equal(w.posts.length, 2, 'nothing is sent for words kept in code');
     assert.deepEqual(w.saves, [], 'none of them is a field’s save');
+  } finally { w.done(); }
+});
+
+test('Drupal: words in a default layout are saved when made real again, with the token the site’s first answer gave', async () => {
+  // An inline block's field in a layout every trip without its own shares: the helper says how far it reaches first.
+  const block: PartIdentity = { kind: 'entity', type: 'block_content', id: 'c0ffee00-0000-4000-8000-000000000009', bundle: 'card', langcode: 'en', field: 'title', item: 'delta:0' };
+  const traced: LiveTrace = { ...trace(), parts: [{ id: 'k1', kind: 'field', label: 'Title #1', identity: block }] };
+  const retitled = edit({ label: 'Title', target: { part: block, inner: null, selector: null, textHash: layerTextHash('Plan your trip') }, change: { type: 'text', value: 'Plan your paddle' } });
+  const token = 'a'.repeat(32);
+  const reach = 'These words are in the default layout for Trip content, which every one without a layout of its own shows (12 now), so saving them changes them on all of those pages.';
+  const w = wire({
+    edits: [retitled], trace: traced,
+    helper: (at) => (at?.confirm === token ? { ok: true, error: null, label: 'The default layout for Trip content', revision: null } : { ok: false, error: reach, label: null, confirm: token }),
+  });
+  try {
+    w.page.parts = { k1: { '': [words('Plan your trip', 'block_content:9:title:string:en:41:1760000000:string')] } };
+    await w.apply();
+    assert.deepEqual(await w.implement(retitled.id), { ok: false, id: retitled.id, route: 'none', why: `${reach} Make it real again to save it there.` }, 'said first');
+    assert.equal(w.marks.length, 0, 'nothing marked');
+    assert.deepEqual(await w.implement(retitled.id), { ok: true, id: retitled.id, state: 'implemented', revision: null });
+    assert.deepEqual(w.saves.map((s) => (s[3] as SaveAt).confirm ?? null), [null, token], 'the token only on the save asked again');
+    assert.deepEqual(w.marks.map((m) => m.state), ['implemented']);
   } finally { w.done(); }
 });

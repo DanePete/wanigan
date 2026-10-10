@@ -380,6 +380,7 @@ use Drupal\\Core\\Render\\Markup;
 use Drupal\\wanigan_live\\Find\\Finder;
 use Drupal\\wanigan_live\\Library\\Library;
 use Drupal\\wanigan_live\\Save\\ConfigWords;
+use Drupal\\wanigan_live\\Save\\InlineWords;
 use Drupal\\wanigan_live\\Save\\Words;
 use Drupal\\wanigan_live\\Trace\\SaveCode;
 use Symfony\\Component\\HttpFoundation\\JsonResponse;
@@ -477,9 +478,10 @@ final class LiveController extends ControllerBase {
    * It saves only over what the page showed: content saved again since, or
    * a newer draft than the version visitors see (content moderation edits
    * the latest revision; a save from the default one would leave the draft
-   * behind), is refused. An inline Layout Builder block is refused (the
-   * layout shows the revision it pinned, so a new one would change nothing
-   * on the page). Any violation Drupal's validation finds refuses it, saying
+   * behind), is refused. Words in an inline Layout Builder block are saved
+   * through its layout (InlineWords), and words that are the field's label,
+   * held by no item, to its configuration (ConfigWords). Any violation
+   * Drupal's validation finds refuses it, saying
    * which, the workflow's transition check included: a save keeps the
    * content's state, so where the user may not publish it nothing is saved,
    * and nothing is made a draft instead. A refusal saves nothing.
@@ -534,8 +536,14 @@ final class LiveController extends ControllerBase {
     if ($item === NULL && !Words::held($entity, $name, $before, $formatter) && ($label = ConfigWords::fieldLabel($entity, $name, $before, $after))) {
       return $this->json($label[1], $label[0]);
     }
+    // A block placed only in a layout: the layout shows the revision of it
+    // that it keeps, so the words are saved through the layout
+    // (InlineWords), never to the block alone, which would change nothing
+    // on the page.
     if ($entity->getEntityTypeId() === 'block_content' && method_exists($entity, 'isReusable') && !$entity->isReusable()) {
-      return $this->refuse('These words are in a block placed only in a layout: the layout shows the revision of it that it keeps, so saving the block here would change nothing on the page. Change it in Layout Builder.', 409);
+      $confirm = $given('confirm');
+      [$status, $answer] = InlineWords::save($entity, $name, $item, $before, $after, $shown, $formatter, $confirm !== NULL && preg_match('/^[a-f0-9]{32}$/', $confirm) ? $confirm : NULL);
+      return $this->json($answer, $status);
     }
     if ($entity->getEntityType()->isRevisionable()) {
       // The newest revision that changed this translation: newer than the

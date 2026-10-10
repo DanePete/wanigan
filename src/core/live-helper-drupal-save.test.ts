@@ -36,6 +36,13 @@ namespace Drupal\Component\Utility {
     public static function normalize($html) { return self::serialize(self::load($html)); }
   }
 }
+namespace Drupal\wanigan_live\Save {
+  // The layout's save, whose steps live-helper-drupal-inline-words.test.ts proves: here, what it was handed.
+  final class InlineWords {
+    public static array $asked = [];
+    public static function save($block, $name, $item, $before, $after, $shown, $formatter, $confirm) { self::$asked[] = [$block->getEntityTypeId(), $name, $item, $before, $after, $shown, $formatter, $confirm]; return [200, ['ok' => TRUE, 'revision' => '21']]; }
+  }
+}
 namespace Symfony\Component\HttpFoundation {
   class Request { public function __construct(private string $content) {} public function getContent() { return $this->content; } }
   class JsonResponse {
@@ -242,9 +249,12 @@ const SAVES = String.raw`
   // Content that keeps no revisions, changed since the page loaded: refused by its changed time.
   $fresh(function ($c) { $c->revisionable = FALSE; $c->changed = 1760000500; });
   $out['changedSince'] = [$save($at())[0], World::$content->saved];
-  // An inline Layout Builder block: the layout shows the revision it pinned, so a save here would change nothing.
-  $fresh(function ($c) { $c->type = 'block_content'; $c->reusable = FALSE; });
-  $out['inline'] = [$save(['field' => 'block_content:12:title:string:en:7:1760000000'] + $at()), World::$content->saved];
+  // An inline Layout Builder block: the layout shows the revision it pinned, so its words go through the layout, with
+  // the version of the block the page showed (and a confirmation, when the layout's answer asked for one); the block
+  // alone is never saved, and its own gates (its default revision is not the one the layout pins) are not run.
+  $fresh(function ($c) { $c->type = 'block_content'; $c->reusable = FALSE; $c->latest = ['en' => 9]; });
+  $out['inline'] = [$save(['field' => 'block_content:12:title:string:en:7:1760000000:string', 'confirm' => str_repeat('0a', 16)] + $at()), World::$content->saved, Drupal\wanigan_live\Save\InlineWords::$asked];
+  $out['inlineBadConfirm'] = [$save(['field' => 'block_content:12:title:string:en:7:1760000000:string', 'confirm' => 'yes'] + $at())[0], Drupal\wanigan_live\Save\InlineWords::$asked[1][7]];
 `;
 
 /**
@@ -350,7 +360,7 @@ test('words are saved to the translation and the item named, and to nothing else
     'the label’s words go to the label, never to an item');
 });
 
-test('words are saved only over what the page showed: any violation, a newer draft, a later save or an inline block refuses them', (t) => {
+test('words are saved only over what the page showed: any violation, a newer draft or a later save refuses them; an inline block’s go through its layout', (t) => {
   const out = runSaves(t, SAVES);
   if (!out) return;
   type Answer = [number, { ok: boolean; error?: string }];
@@ -371,9 +381,9 @@ test('words are saved only over what the page showed: any violation, a newer dra
   assert.match(since[1].error ?? '', /saved again since the page loaded/);
   assert.match(out.showsDraft as string, /The page shows a draft/);
   assert.deepEqual(out.changedSince, [409, []], 'content without revisions is checked by when it changed');
-  const [inline, inlineSaved] = out.inline as [Answer, string[]];
-  assert.deepEqual([inline[0], inlineSaved], [409, []]);
-  assert.match(inline[1].error ?? '', /placed only in a layout: .* Layout Builder/);
+  assert.deepEqual(out.inline, [[200, { ok: true, revision: '21' }], [], [['block_content', 'title', 'delta:0', 'Paddling 101', 'Paddling 102', '7', 'string', '0a'.repeat(16)]]],
+    'through the layout, with the version the page showed; the block alone is not saved');
+  assert.deepEqual(out.inlineBadConfirm, [200, null], 'a confirmation that is not a token is not passed on');
 });
 
 test('formatted text: one run of words is spliced where it is kept, and kept only when its format shows nothing else changed', (t) => {
