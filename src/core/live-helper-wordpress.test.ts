@@ -33,7 +33,7 @@ test('the plugin carries its token, version, mark and where WordPress sits in th
   assert.ok(src.includes(` * Version: ${WORDPRESS_HELPER_VERSION}\n`));
   assert.ok(src.includes(`const WANIGAN_LIVE_TOKEN = '${TOKEN}';`));
   assert.ok(src.includes("const WANIGAN_LIVE_SITE_DIR = 'web';"));
-  assert.equal(WORDPRESS_HELPER_VERSION, 4, 'a helper installed by an older Wanigan reads as outdated');
+  assert.equal(WORDPRESS_HELPER_VERSION, 5, 'a helper installed by an older Wanigan reads as outdated');
   assert.ok(!/__WANIGAN_[A-Z_]+__/.test(src), 'every placeholder is filled');
   assert.ok(wordpressHelper(TOKEN, '/web/').includes("WANIGAN_LIVE_SITE_DIR = 'web';"), 'slashes around the folder are dropped');
   assert.ok(wordpressHelper(TOKEN).includes("WANIGAN_LIVE_SITE_DIR = '';"));
@@ -175,6 +175,42 @@ echo json_encode(array_map(function ($c) { return Wanigan_Live::place($c[0], $c[
       encoding: 'utf8',
     })) as (string | null | false)[];
     assert.deepEqual(got, cases.map((c) => c[3]));
+  });
+
+  test('the palette is core’s theme.json presets by origin, each slug as core prints its custom property, a plugin’s own palette said as not read yet', () => {
+    const pal = join(dir, 'palette.php');
+    writeFileSync(pal, `<?php
+define('ABSPATH', __DIR__ . '/');
+function add_action() { return true; }
+function add_filter() { return true; }
+// functions.php _wp_to_kebab_case(), as core turns a preset's slug into its custom property's (stand-in: camelCase and spaces).
+function _wp_to_kebab_case($s) { return strtolower(trim(preg_replace('/([a-z0-9])([A-Z])|[^A-Za-z0-9]+/', '$1-$2', $s), '-')); }
+require getenv('WL_PLUGIN');
+Wanigan_Live::colour_source(function () { return array('id' => 'acme-builder', 'name' => 'Acme Builder', 'why' => 'Not read yet.'); });
+Wanigan_Live::colour_source(function () { return null; });
+$by_origin = array(
+  'default' => array(array('slug' => 'black', 'color' => '#000000', 'name' => 'Black')),
+  'theme' => array(array('slug' => 'accentOne', 'color' => '#2f5d50', 'name' => 'Pine'), array('slug' => 'paper', 'color' => '#f7f4ee'), 'not an entry', array('color' => '#123456')),
+  'custom' => array(array('slug' => 'sand', 'color' => 'rgb(231, 220, 196)', 'name' => 'Sand')),
+  'blocks' => array(array('slug' => 'never', 'color' => '#ffffff', 'name' => 'Never')),
+);
+echo json_encode(Wanigan_Live::colour_palette_answer($by_origin, array(array('id' => 'acme-builder', 'name' => 'Acme Builder', 'why' => 'Not read yet.'))));
+`);
+    const got = JSON.parse(execFileSync(php as string, [pal], { env: { PATH: process.env.PATH ?? '', WL_PLUGIN: plugin }, encoding: 'utf8' }));
+    assert.deepEqual(got, {
+      version: 1, platform: 'wordpress',
+      palette: [
+        { slug: 'black', name: 'Black', color: '#000000', origin: 'default' },
+        { slug: 'accent-one', name: 'Pine', color: '#2f5d50', origin: 'theme' },
+        { slug: 'paper', name: '', color: '#f7f4ee', origin: 'theme' },
+        { slug: 'sand', name: 'Sand', color: 'rgb(231, 220, 196)', origin: 'custom' },
+      ],
+      notYet: [{ id: 'acme-builder', name: 'Acme Builder', why: 'Not read yet.' }],
+    });
+    const src = wordpressHelper(TOKEN);
+    assert.ok(src.includes("wp_get_global_settings(array('color', 'palette'))"), 'read through core’s merged global settings');
+    assert.ok(src.includes("if ($route === 'palette' && !$post) self::colour_palette();"), 'a read-only route');
+    assert.equal(src.match(/ai\|palette\|components/g)?.length, 2, 'routed at boot and at wp_loaded');
   });
 
   test('PHP finds no syntax error in it', () => {

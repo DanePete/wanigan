@@ -46,6 +46,7 @@ export const LIVE_DEFAULTS = String.raw`(() => {
     layerType: async () => ({ ended: 'refused', why: nothing }),
     layerTypeEnd: async () => {},
     layerTry: async () => 0,
+    siteColours: async () => ({ palette: { state: 'no-helper' }, tokens: [], used: [] }),
     layerUndo: async (id) => ({ ok: false, id, why: nothing }),
     // Local and Live (live-compare.ts).
     compareShot: async () => { throw new Error(nothing); },

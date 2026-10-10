@@ -281,7 +281,7 @@ describe('the Drupal helper, before anything is written', () => {
     assert.match(site.token ?? '', /^[0-9a-f]{48}$/);
     assert.ok(readFileSync(file, 'utf8').includes(`WANIGAN_LIVE_TOKEN = '${site.token}'`));
     assert.ok(readFileSync(file, 'utf8').includes("WANIGAN_LIVE_SITE_DIR = '';"), 'WordPress is the project’s own folder');
-    assert.deepEqual([site.helper?.version, site.helper?.outdated], [4, false]);
+    assert.deepEqual([site.helper?.version, site.helper?.outdated], [5, false]);
     // A helper an older Wanigan wrote says this one writes a newer one.
     t.core.db.prepare('UPDATE live_sites SET helper = ? WHERE project_id = ?').run(JSON.stringify({ kind: 'wordpress', version: 1 }), projectId);
     assert.equal((await t.owner.call('live.site', { projectId })).helper?.outdated, true);
@@ -290,7 +290,7 @@ describe('the Drupal helper, before anything is written', () => {
     const record = t.core.db.prepare('SELECT helper, token FROM live_sites WHERE project_id = ?').get(projectId) as { helper: string; token: string };
     t.core.db.prepare('UPDATE live_sites SET helper = NULL, token = NULL WHERE project_id = ?').run(projectId);
     const other = await t.owner.call('live.site', { projectId });
-    assert.deepEqual([other.helper, other.token, other.found], [null, null, { kind: 'wordpress', version: 4, outdated: false }]);
+    assert.deepEqual([other.helper, other.token, other.found], [null, null, { kind: 'wordpress', version: 5, outdated: false }]);
     t.core.db.prepare('UPDATE live_sites SET helper = ?, token = ? WHERE project_id = ?').run(record.helper, record.token, projectId);
     assert.equal((await t.owner.call('live.site', { projectId })).found, null, 'its own helper is not found as another’s');
     const gone = await t.owner.call('live.removeHelper', { projectId });
