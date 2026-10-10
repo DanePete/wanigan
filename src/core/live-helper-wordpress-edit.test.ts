@@ -710,6 +710,13 @@ interface Result {
   options: Record<string, unknown>;
 }
 
+test('the plugin fits in what the core reads of an installed helper to know it, with room to grow', () => {
+  // src/core/live.ts reads the installed file back under MAX_HELPER_FILE (2 MiB) to find its mark and version; past
+  // that it reads as someone else's, so an update is refused and removing it leaves it in place.
+  const bytes = Buffer.byteLength(wordpressHelper(TOKEN, 'web'));
+  assert.ok(bytes < 1024 * 1024, `${bytes} bytes: half of the core's bound is the most it should take`);
+});
+
 describe('what a WordPress page offers to change, and what saving it writes, under a stand-in WordPress', { skip: php ? false : 'PHP is not installed here' }, () => {
   const dir = mkdtempSync(join(tmpdir(), 'wg-wp-edit-'));
   const site = join(dir, 'site');
