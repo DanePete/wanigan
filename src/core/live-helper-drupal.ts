@@ -483,18 +483,28 @@ final class LiveController extends ControllerBase {
    * reference's ref:<type>:<uuid>). The words go to that translation, never
    * another, and to that item only, which must hold the words before.
    * Without an item, the one item holding the words before is saved; two
-   * that hold them are refused, never guessed between.
+   * that hold them are refused, never guessed between. Where the page shows
+   * the item's words with more around them (the site's templates or code
+   * add it as they show the field), and the mark shows the content is as
+   * the page rendered it, the edit is made on the item's own words: saved
+   * when what is added is kept, unchanged, around new words, refused as
+   * code when the change touches it. Words the field does not hold are said
+   * to have changed since only where the content might have.
    *
    * It saves only over what the page showed: content saved again since, or
    * a newer draft than the version visitors see (content moderation edits
    * the latest revision; a save from the default one would leave the draft
    * behind), is refused. Words in an inline Layout Builder block are saved
    * through its layout (InlineWords), and words that are the field's label,
-   * held by no item, to its configuration (ConfigWords). Any violation
-   * Drupal's validation finds refuses it, saying
-   * which, the workflow's transition check included: a save keeps the
-   * content's state, so where the user may not publish it nothing is saved,
-   * and nothing is made a draft instead. A refusal saves nothing.
+   * held by no item, to its configuration (ConfigWords). Validation refuses
+   * it as Drupal's own form for this one field would (ContentEntityForm::
+   * validateForm()): a violation of this field or of the content as a
+   * whole, saying which; and besides, any the change brings, wherever it
+   * is, and any of the workflow's: a save keeps the content's state, so
+   * where the user may not publish it nothing is saved, and nothing is made
+   * a draft instead. A problem the content already had, in a field the
+   * change does not touch (a stored value core's validator now rejects),
+   * does not stop it; the answer's note says it. A refusal saves nothing.
    */
   public function saveWords(array $body): JsonResponse {
     $mark = array_pad(explode(':', (string) ($body['field'] ?? '')), 8, '');
@@ -574,9 +584,23 @@ final class LiveController extends ControllerBase {
     if (!$entity->access('update') || !$entity->get($name)->access('edit')) {
       return $this->refuse('The user you are logged in as in the live view may not change this. Log in there as someone who may.', 403);
     }
+    // What Drupal reports of the content as it is, before the words change,
+    // to tell a problem the change brings from one it already had.
+    $was = Words::problems($entity);
+    // Whether the field's mark shows the content is as the page rendered it:
+    // the revision it showed is this one (a later one is refused above), or
+    // the changed time it showed is this translation's, and where it carried
+    // both, both are. Only then are words the page shows around the field's
+    // own read as the site's, and words the field does not hold never said
+    // to have changed since (Words::apply()).
+    $changed = method_exists($entity, 'getChangedTime') ? (string) $entity->getChangedTime() : NULL;
+    $unchanged = (($entity->getEntityType()->isRevisionable() && $shown !== '') || ($shownChanged !== '' && $changed === $shownChanged))
+      && ($shownChanged === '' || $changed === NULL || $changed === $shownChanged);
     // The words, in the one item that holds them: a plain value, or one run
-    // inside formatted text checked through its own format.
-    if ($refused = Words::apply($entity, $name, $item, $before, $after, $formatter)) {
+    // inside formatted text checked through its own format; or the field's
+    // own words, where the page shows them with more around them.
+    $wrapped = NULL;
+    if ($refused = Words::apply($entity, $name, $item, $before, $after, $formatter, $unchanged, $wrapped)) {
       return $this->refuse($refused[1], $refused[0]);
     }
     if ($entity->getEntityType()->isRevisionable()) {
@@ -587,16 +611,14 @@ final class LiveController extends ControllerBase {
         $entity->setRevisionCreationTime(\\Drupal::time()->getRequestTime());
       }
     }
-    // Every violation refuses it, wherever it is: one on another field, on
-    // the content as a whole, or on its workflow's state.
-    $problems = [];
-    foreach ($entity->validate() as $violation) {
-      $path = (string) $violation->getPropertyPath();
-      $message = trim(strip_tags((string) $violation->getMessage()));
-      if ($path === 'moderation_state' || str_starts_with($path, 'moderation_state.')) {
-        return $this->refuse('Its workflow does not let the user you are logged in as in the live view save it as it is (' . $message . '): a save here keeps its state, and nothing is made a draft instead. Change it in Drupal’s form.', 403);
-      }
-      $problems[] = ($path !== '' ? $path . ': ' : '') . $message;
+    // Refused as Drupal's own form for this one field would refuse it: a
+    // violation of this field or of the content as a whole; and besides,
+    // any of its workflow's, and any the change brings, wherever it is
+    // (Words::judge()). A problem the content already had, in a field this
+    // change does not touch, does not stop it, and the answer says it.
+    [$workflow, $problems, $already] = Words::judge($was, Words::problems($entity), $name);
+    if ($workflow) {
+      return $this->refuse('Its workflow does not let the user you are logged in as in the live view save it as it is (' . $workflow[0] . '): a save here keeps its state, and nothing is made a draft instead. Change it in Drupal’s form.', 403);
     }
     if ($problems) {
       return $this->refuse('Drupal would not save it. ' . implode(' ', array_slice($problems, 0, 3)), 422);
@@ -606,10 +628,17 @@ final class LiveController extends ControllerBase {
     // workflow's state, where it has one.
     $revision = $entity->getEntityType()->isRevisionable() ? $entity->getRevisionId() : NULL;
     $state = $entity->hasField('moderation_state') ? $entity->get('moderation_state')->value : NULL;
+    $notes = [];
+    if ($wrapped) {
+      $notes[] = 'Saved to the field’s own words, “' . $wrapped['words'] . '”: the site’s templates or code add ' . Words::added($wrapped['lead'], $wrapped['tail']) . ' them on the page.';
+    }
+    if ($already) {
+      $notes[] = Words::already($already, ($wrapped ? 'Note' : 'Saved. Note') . ' that this content');
+    }
     return $this->json([
-      'ok' => TRUE, 'value' => $after, 'label' => (string) $entity->label(),
+      'ok' => TRUE, 'value' => $wrapped['words'] ?? $after, 'label' => (string) $entity->label(),
       'revision' => $revision !== NULL ? (string) $revision : NULL, 'state' => is_string($state) ? $state : NULL,
-    ]);
+    ] + ($notes ? ['note' => implode(' ', $notes)] : []));
   }
 
   /**

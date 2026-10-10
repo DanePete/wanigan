@@ -3,10 +3,15 @@
 // validation, text format and render APIs they call made up here and recording which translation was saved. What it
 // proves: the words go to the translation and the item the request names and to nothing else, a translation that is
 // not there or an item whose words changed is refused, two items holding the same words are never guessed between, and
-// the answer carries the new revision; it saves only over what the page showed: any violation (another field's, the
-// workflow's) refuses it, as do a newer draft, a page from before another save, and an inline Layout Builder block; and
+// the answer carries the new revision; it saves only over what the page showed: a violation Drupal's own form for that
+// field would flag (the field's, the content's as a whole), the workflow's, or one the change brings, wherever it is,
+// refuses it (a problem the content already had in a field the change does not touch is said, not refused), as do a
+// newer draft, a page from before another save, and an inline Layout Builder block; and
 // in formatted text one run of words is spliced where it is kept, every other byte kept, and saved only when the text's
 // own format shows nothing else changed (filter-made words, words across tags or twice, a trimmed cut are refused).
+// Words the page shows around a field's own (a template's) are the site's only where the field's mark proves the
+// content is as the page rendered it: then the field's own words are saved and a change to the rest is refused as code;
+// otherwise nothing is saved, and nothing is said to have changed since unless it might have.
 // Nothing here runs Drupal or touches a site; it needs PHP. Made-up content (acme, example.test); nothing real.
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
@@ -28,6 +33,10 @@ namespace Drupal\Core\Controller {
 }
 namespace Drupal\Core\Entity { interface EntityInterface {} interface ContentEntityInterface extends EntityInterface {} interface RevisionLogInterface {} }
 namespace Drupal\Core\Field { interface FieldItemInterface {} }
+namespace Drupal\Core\Entity\Plugin\Validation\Constraint {
+  // A constraint on more than one field, as core's composite constraints are: it names the fields it covers.
+  class CompositeConstraintBase { public function __construct(private array $fields) {} public function coversFields() { return $this->fields; } }
+}
 namespace Drupal\Component\Utility {
   // Core's Html parses with an HTML5 parser; PHP's own DOM stands in for it here.
   class Html {
@@ -106,11 +115,17 @@ namespace {
     public function access($op) { return TRUE; }
     public function getFieldDefinition() { return new class($this->type) { public function __construct(private string $t) {} public function getType() { return $this->t; } }; }
   }
-  final class Violation { public function __construct(private string $path, private string $message) {} public function getPropertyPath() { return $this->path; } public function getMessage() { return $this->message; } }
+  final class Violation {
+    public function __construct(private string $path, private string $message, private $constraint = NULL) {}
+    public function getPropertyPath() { return $this->path; }
+    public function getMessage() { return $this->message; }
+    public function getConstraint() { return $this->constraint; }
+  }
   /**
    * One stored piece of content: its type, its translations by language (the default first), its default revision,
    * the newest revision that changed each translation when that is newer (a draft), when it last changed, and what
-   * validating it finds.
+   * validating it finds: [property path, message], with, where given, when it is found (a test of the translation as it
+   * is then: a violation a change brings is not there before it) and the fields a composite constraint covers.
    */
   final class Content {
     public string $type = 'node';
@@ -144,7 +159,10 @@ namespace {
     public function setRevisionLogMessage($m) {}
     public function setRevisionUserId($v) {}
     public function setRevisionCreationTime($v) {}
-    public function validate() { return array_map(fn ($v) => new Violation($v[0], $v[1]), $this->content->violations); }
+    public function validate() {
+      $found = array_filter($this->content->violations, fn ($v) => !isset($v[2]) || $v[2]($this));
+      return array_map(fn ($v) => new Violation($v[0], $v[1], isset($v[3]) ? new Drupal\Core\Entity\Plugin\Validation\Constraint\CompositeConstraintBase($v[3]) : NULL), array_values($found));
+    }
     public function save() { $this->content->rev++; $this->content->saved[] = $this->langcode; }
     public function label() { return 'Paddling'; }
     public function getRevisionId() { return $this->content->rev; }
@@ -153,7 +171,7 @@ namespace {
     public static Content $content;
     public static function types() {
       return new class {
-        public function hasDefinition($t) { return in_array($t, ['node', 'block_content'], TRUE); }
+        public function hasDefinition($t) { return in_array($t, ['node', 'block_content', 'acme_settings'], TRUE); }
         public function getStorage($t) {
           return new class {
             public function load($id) { return $id === '12' ? reset(World::$content->translations) : NULL; }
@@ -228,9 +246,36 @@ const SAVES = String.raw`
   $fresh = function (?callable $change = NULL) { World::make(['en' => ['title' => ['Paddling 101']]]); if ($change) $change(World::$content); };
   $fresh();
   $out['shown'] = [$save($at()), World::$content->saved];
-  // Violations on other fields than the one changed: refused, saying which.
-  $fresh(fn ($c) => $c->violations = [['field_summary', 'This value is too long. It should have 255 characters or less.'], ['field_tags.0.value', 'This value should not be null.']]);
-  $out['otherField'] = [$save($at()), World::$content->saved];
+  // Validation, as Drupal's own form for the one field changed has it. Content with more fields than the one changed;
+  // a violation given $brought is found only once the title is changed (the change brings it).
+  $fuller = function (array $violations) {
+    World::make(['en' => ['title' => ['Paddling 101'], 'uuid' => ['acme-0012'], 'field_summary' => [str_repeat('Long ', 60)], 'field_tags' => ['Canoe']]]);
+    World::$content->violations = $violations;
+  };
+  $brought = fn ($node) => $node->get('title')->get(0)->value !== 'Paddling 101';
+  // Violations the change brings, on other fields than the one changed: refused, saying which.
+  $fuller([['field_summary', 'This value is too long. It should have 255 characters or less.', $brought], ['field_tags.0.value', 'This value should not be null.', $brought]]);
+  $out['brought'] = [$save($at()), World::$content->saved];
+  // A stored value core's validator rejects, in a field the change does not touch (old content's UUID): the words are
+  // saved, as Drupal's own form saves them, and the answer says what was already there.
+  $fuller([['uuid.0.value', 'This is not a valid UUID.']]);
+  $out['already'] = [$save($at()), World::words('en', 'title'), World::$content->saved];
+  $fuller([['uuid.0.value', 'This is not a valid UUID.'], ['field_summary', 'This value is too long. It should have 255 characters or less.']]);
+  $out['alreadyTwo'] = $save($at())[1]['note'] ?? NULL;
+  // One already there and one the change brings: refused for the one it brings.
+  $fuller([['uuid.0.value', 'This is not a valid UUID.'], ['field_tags.0.value', 'This value should not be null.', $brought]]);
+  $out['alreadyAndBrought'] = [$save($at()), World::$content->saved];
+  // On the content as a whole (no field's path), already there: refused, as Drupal's form flags it.
+  $fuller([['', 'The content has either been modified by another user, or you have already submitted modifications.']]);
+  $out['entityLevel'] = [$save($at()), World::$content->saved];
+  $fuller([['acme_rule', 'Acme rules this out.']]);
+  $out['notAField'] = $save($at())[0];
+  // On the field changed, already there and still there after: refused.
+  $fuller([['title.0.value', 'This value is too long.']]);
+  $out['editedField'] = [$save($at()), World::$content->saved];
+  // On another field, already there, but its constraint covers the field changed too: refused, as core moves it there.
+  $fuller([['field_tags', 'Acme pairs tags with titles.', NULL, ['field_tags', 'title']]]);
+  $out['composite'] = [$save($at()), World::$content->saved];
   // The workflow's transition check, on its own field: a save keeps the state, so a user who may not publish saves nothing.
   $fresh(fn ($c) => $c->violations = [['moderation_state', 'You do not have access to transition from Published to Published.']]);
   $out['workflow'] = [$save($at()), World::$content->saved];
@@ -318,6 +363,67 @@ const FORMATTED = String.raw`
   $out['unnamed'] = [$save($words('Canoe', 'Raft', 'text_default', NULL))[0], World::kept('en', 'body')];
 `;
 
+/**
+ * Words the page shows around a field's own, which the field does not hold: a theme's template or a preprocess adds them
+ * as it shows the field (a symbol and a year before a site's notice, a sentence after it). Made-up content.
+ */
+const AROUND = String.raw`
+  // A kind of content that keeps no revisions but its changed time (made-up site settings), with a plain text field.
+  $mark = 'acme_settings:12:field_notice:string:en::1760000000:string';
+  $settings = function (array $values = ['Acme Outfitters'], ?callable $change = NULL) {
+    World::make(['en' => ['field_notice' => $values]]);
+    World::$content->type = 'acme_settings';
+    World::$content->revisionable = FALSE;
+    if ($change) $change(World::$content);
+  };
+  $notice = fn (string $before, string $after, ?string $item = 'delta:0', ?string $field = NULL) => ['field' => $field ?? $mark, 'before' => $before, 'after' => $after, 'uuid' => '${UUID}', 'langcode' => 'en'] + ($item ? ['item' => $item] : []);
+  // The theme adds "© 2026" before the field's words: the new words keep it, so the field's own new words are saved.
+  $settings();
+  $out['before'] = [$save($notice('© 2026 Acme Outfitters', '© 2026 Northwind Outfitters')), World::words('en', 'field_notice'), World::$content->saved];
+  // Before and after, typed with other spacing: the field's own words between, trimmed. The theme adds the full stop
+  // too, so new words ending "Co." before it are "Co" in the field: the page then shows exactly what was typed.
+  $settings();
+  $out['both'] = [$save($notice('© 2026 Acme Outfitters. All rights reserved.', '© 2026  Northwind Trading. All rights reserved.'))[1], World::words('en', 'field_notice')];
+  $settings();
+  $out['stop'] = [$save($notice('© 2026 Acme Outfitters. All rights reserved.', '© 2026 Northwind Co. All rights reserved.'))[0], World::words('en', 'field_notice')];
+  // The change touches what the theme adds: refused, saying what is true; nothing saved.
+  $settings();
+  $out['touches'] = [$save($notice('© 2026 Acme Outfitters', '© 2027 Acme Outfitters')), World::words('en', 'field_notice'), World::$content->saved];
+  $settings();
+  $out['emptied'] = $save($notice('© 2026 Acme Outfitters', '© 2026'));
+  // The window's own save names no item: the one item whose words the page shows with more around them; two that are
+  // among the page's words are refused, never guessed between.
+  $settings();
+  $out['unnamed'] = [$save($notice('© 2026 Acme Outfitters', '© 2026 Northwind Outfitters', NULL))[0], World::words('en', 'field_notice')];
+  $settings(['Acme Outfitters', 'Acme Outfitters Ltd.']);
+  $out['twoAmong'] = [$save($notice('© 2026 Acme Outfitters Ltd.', '© 2026 Northwind Ltd.', NULL)), World::words('en', 'field_notice')];
+  // Saved since the page loaded (its changed time is later): refused as the change it is, never read as a template's.
+  $settings(['Acme'], fn ($c) => $c->changed = 1760000500);
+  $out['changedSince'] = [$save($notice('© 2026 Acme Outfitters', '© 2026 Northwind Outfitters')), World::words('en', 'field_notice')];
+  // A mark that carried no version: a template's words or a change since cannot be told apart, so nothing is saved.
+  $settings();
+  $out['unproven'] = [$save($notice('© 2026 Acme Outfitters', '© 2026 Northwind Outfitters', 'delta:0', 'acme_settings:12:field_notice:string:en')), World::words('en', 'field_notice')];
+  // Words the field does not hold even within them, in content the mark shows unchanged: never said to have changed.
+  $settings();
+  $out['shownOtherwise'] = $save($notice('ACME OUTFITTERS', 'NORTHWIND OUTFITTERS'));
+  // Content that keeps revisions: the revision the page showed proves it, unless its changed time moved since.
+  $title = ['field' => 'node:12:title:string:en:7:1760000000', 'before' => 'Course: Paddling 101', 'after' => 'Course: Paddling 102', 'uuid' => '${UUID}', 'langcode' => 'en', 'item' => 'delta:0'];
+  World::make(['en' => ['title' => ['Paddling 101']]]);
+  $out['revision'] = [$save($title)[0], World::words('en', 'title')];
+  World::make(['en' => ['title' => ['Paddling 101']]]);
+  World::$content->changed = 1760000500;
+  $out['revisionMoved'] = [$save($title), World::words('en', 'title')];
+  // Formatted text kept as one run of words: that run changed, as any run is; a run across tags is refused as such.
+  $motto = fn (string $value) => World::make(['en' => ['field_motto' => [['value' => $value, 'format' => 'basic_html']]]], ['field_motto' => 'text_long']);
+  $words = fn (string $before, string $after) => ['field' => 'node:12:field_motto:text_long:en:7:1760000000:text_default', 'before' => $before, 'after' => $after, 'uuid' => '${UUID}', 'langcode' => 'en', 'item' => 'delta:0'];
+  $motto('Acme Outfitters');
+  $out['formatted'] = [$save($words('© 2026 Acme Outfitters', '© 2026 Northwind & Co.')), World::kept('en', 'field_motto')];
+  $motto('<strong>Acme</strong> Outfitters');
+  $out['formattedAcross'] = [$save($words('© 2026 Acme Outfitters', '© 2026 Northwind Outfitters')), World::kept('en', 'field_motto')];
+  $motto('Paddle on');
+  $out['formattedOther'] = $save($words('Paddle far', 'Paddle further'));
+`;
+
 /** Runs scenarios under the stand-in Drupal with the helper's own controller and word saves; what they put in $out. */
 function runSaves(t: { skip(why: string): void }, scenarios: string): Record<string, unknown> | null {
   const bin = which('php', process.env.PATH ?? '');
@@ -345,7 +451,8 @@ test('words are saved to the translation and the item named, and to nothing else
   assert.deepEqual(out.secondItem, [[200, { ok: true, value: 'Raft', label: 'Paddling', revision: '8', state: null }], ['Canoe', 'Raft', 'Kayak']], 'only the item named');
   const [changed, after] = out.itemChanged as [[number, { error: string }], string[]];
   assert.deepEqual([changed[0], after], [409, ['Canoe', 'Raft', 'Kayak']]);
-  assert.match(changed[1].error, /no longer holds those words/);
+  assert.match(changed[1].error, /does not hold those words: it changed since the page loaded, or the site shows it other than as it keeps it/,
+    'a page whose mark carried no version: a change is one of two things it may be');
   assert.equal(out.itemGone, 409);
   const [two, kept] = out.twoHold as [[number, { error: string }], string[]];
   assert.deepEqual([two[0], kept], [409, ['Canoe', 'Canoe', 'Kayak']]);
@@ -360,15 +467,30 @@ test('words are saved to the translation and the item named, and to nothing else
     'the label’s words go to the label, never to an item');
 });
 
-test('words are saved only over what the page showed: any violation, a newer draft or a later save refuses them; an inline block’s go through its layout', (t) => {
+test('words are saved only over what the page showed: a violation of the field, the content, its workflow or the change, a newer draft or a later save refuses them; a problem already there elsewhere is said; an inline block’s go through its layout', (t) => {
   const out = runSaves(t, SAVES);
   if (!out) return;
   type Answer = [number, { ok: boolean; error?: string }];
 
   assert.deepEqual(out.shown, [[200, { ok: true, value: 'Paddling 102', label: 'Paddling', revision: '8', state: null }], ['en']], 'the version the page showed, saved as a new revision');
-  const [other, otherSaved] = out.otherField as [Answer, string[]];
-  assert.deepEqual([other[0], otherSaved], [422, []], 'a violation on another field refuses it too');
+  const [other, otherSaved] = out.brought as [Answer, string[]];
+  assert.deepEqual([other[0], otherSaved], [422, []], 'a violation the change brings refuses it, on another field too');
   assert.equal(other[1].error, 'Drupal would not save it. field_summary: This value is too long. It should have 255 characters or less. field_tags.0.value: This value should not be null.');
+  const [already, alreadyWords, alreadySaved] = out.already as [[number, { ok: boolean; note?: string; error?: string }], string[], string[]];
+  assert.deepEqual([already[0], already[1].ok, alreadyWords, alreadySaved], [200, true, ['Paddling 102'], ['en']],
+    'a problem the content already had, in a field the change does not touch, does not stop the save');
+  assert.equal(already[1].note, 'Saved. Note that this content already had a problem Drupal reports, in a field this change does not touch: uuid.0.value: This is not a valid UUID.');
+  assert.equal(out.alreadyTwo, 'Saved. Note that this content already had problems Drupal reports, in fields this change does not touch: uuid.0.value: This is not a valid UUID. field_summary: This value is too long. It should have 255 characters or less.');
+  const [both, bothSaved] = out.alreadyAndBrought as [Answer, string[]];
+  assert.deepEqual([both[0], both[1].error, bothSaved], [422, 'Drupal would not save it. field_tags.0.value: This value should not be null.', []], 'refused for the one the change brings, and only that one is named');
+  const [whole, wholeSaved] = out.entityLevel as [Answer, string[]];
+  assert.deepEqual([whole[0], wholeSaved], [422, []], 'a violation of the content as a whole refuses it, already there or not');
+  assert.match(whole[1].error ?? '', /^Drupal would not save it\. The content has either been modified by another user/);
+  assert.equal(out.notAField, 422, 'a path that starts with no field of the content is the content’s as a whole');
+  const [edited, editedSaved] = out.editedField as [Answer, string[]];
+  assert.deepEqual([edited[0], edited[1].error, editedSaved], [422, 'Drupal would not save it. title.0.value: This value is too long.', []], 'the field changed is checked whole, as its form would');
+  const [composite, compositeSaved] = out.composite as [Answer, string[]];
+  assert.deepEqual([composite[0], compositeSaved], [422, []], 'a constraint covering the field changed counts as on it');
   const [workflow, workflowSaved] = out.workflow as [Answer, string[]];
   assert.deepEqual([workflow[0], workflowSaved], [403, []]);
   assert.match(workflow[1].error ?? '', /^Its workflow does not let the user .* \(You do not have access to transition from Published to Published\.\).* nothing is made a draft instead/);
@@ -427,4 +549,51 @@ test('formatted text: one run of words is spliced where it is kept, and kept onl
   assert.match(format[1].error ?? '', /may not use this text’s format \(full_html\)/);
   assert.match(said('integer'), /^Wanigan does not save words to this kind of field yet \(integer\)/);
   assert.deepEqual(out.unnamed, [200, ['<p>Kayak</p>', '<p>Raft</p>']], 'no item named: the one place holding the words');
+});
+
+test('words the page shows around a field’s own are the site’s where the content is as the page rendered it: the field’s own words are saved, and a change to the rest is refused as code', (t) => {
+  const out = runSaves(t, AROUND);
+  if (!out) return;
+  type Answer = [number, { ok: boolean; error?: string; note?: string; value?: string }];
+  const said = (key: string): string => ((out[key] as Answer)[1].error ?? '');
+
+  const [before, beforeWords, beforeSaved] = out.before as [Answer, string[], string[]];
+  assert.deepEqual([before[0], before[1].value, beforeWords, beforeSaved], [200, 'Northwind Outfitters', ['Northwind Outfitters'], ['en']],
+    'the field holds its own new words, not the year and symbol the theme adds');
+  assert.equal(before[1].note, 'Saved to the field’s own words, “Northwind Outfitters”: the site’s templates or code add “© 2026” before them on the page.');
+  const [both, bothWords] = out.both as [{ note?: string }, string[]];
+  assert.deepEqual(bothWords, ['Northwind Trading'], 'what is added before and after is kept out, whatever the spacing typed');
+  assert.deepEqual(out.stop, [200, ['Northwind Co']], 'the full stop the theme adds is not saved into the field');
+  assert.match(both.note ?? '', /add “© 2026” before and “\. All rights reserved\.” after them on the page/);
+
+  const [touches, touchesWords, touchesSaved] = out.touches as [Answer, string[], string[]];
+  assert.deepEqual([touches[0], touchesWords, touchesSaved], [409, ['Acme Outfitters'], []]);
+  assert.equal(touches[1].error, 'The site’s templates or code add “© 2026” before this field’s words on the page, and only the field’s own words (“Acme Outfitters”) can be saved here: this change also changes what is added around them. Change only the field’s words, or ask an agent to change the rest, which is code.');
+  assert.doesNotMatch(touches[1].error ?? '', /changed since/, 'nothing changed, and nothing says so');
+  assert.match(said('emptied'), /and this change leaves them empty/);
+
+  assert.deepEqual(out.unnamed, [200, ['Northwind Outfitters']], 'the window’s own save maps the same way');
+  const [two, twoWords] = out.twoAmong as [Answer, string[]];
+  assert.deepEqual([two[0], twoWords], [409, ['Acme Outfitters', 'Acme Outfitters Ltd.']]);
+  assert.match(two[1].error ?? '', /the words of more than one item are among them, so none is changed/);
+
+  const [since, sinceWords] = out.changedSince as [Answer, string[]];
+  assert.deepEqual([since[0], sinceWords], [409, ['Acme']], 'a real change since the page loaded is still refused');
+  assert.match(since[1].error ?? '', /saved again since the page loaded/);
+  const [unproven, unprovenWords] = out.unproven as [Answer, string[]];
+  assert.deepEqual([unproven[0], unprovenWords], [409, ['Acme Outfitters']]);
+  assert.equal(unproven[1].error, 'The page shows “© 2026” before the words this field holds (“Acme Outfitters”), and Wanigan cannot tell here whether the site’s templates or code add that or the field changed since the page loaded, so nothing is saved. Reload, and try again, or change it in Drupal’s form.');
+  assert.equal(said('shownOtherwise'), 'That item of the field holds other words (“Acme Outfitters”) than the page shows, and the content has not changed since the page loaded: the site shows them other than as it keeps them (a formatter, a template or code changes them), so they are not saved from here. Change them in Drupal’s form, or ask an agent to change the code that shows them.');
+
+  assert.deepEqual(out.revision, [200, ['Paddling 102']], 'the revision the page showed proves it');
+  const [moved, movedWords] = out.revisionMoved as [Answer, string[]];
+  assert.deepEqual([moved[0], movedWords], [409, ['Paddling 101']], 'the same revision with a later changed time: not proven, not mapped');
+  assert.match(moved[1].error ?? '', /cannot tell here whether the site’s templates or code add that or the field changed since/);
+
+  assert.deepEqual(out.formatted, [[200, { ok: true, value: 'Northwind & Co.', label: 'Paddling', revision: '8', state: null, note: 'Saved to the field’s own words, “Northwind & Co.”: the site’s templates or code add “© 2026” before them on the page.' }], ['Northwind &amp; Co.']],
+    'formatted text kept as one run: that run spliced, escaped as markup');
+  const [across, acrossKept] = out.formattedAcross as [Answer, string[]];
+  assert.deepEqual([across[0], acrossKept], [409, ['<strong>Acme</strong> Outfitters']]);
+  assert.match(across[1].error ?? '', /run across formatting/);
+  assert.match(said('formattedOther'), /^This field’s text does not hold the words the page shows, and the content has not changed since the page loaded/);
 });

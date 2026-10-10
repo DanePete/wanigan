@@ -541,6 +541,18 @@ test('the same stored thing shown twice is saved once; elements that differ, or 
   } finally { path.done(); }
 });
 
+test('what the site says beside a save is in the answer: the field’s own words saved where the page adds more around them', async () => {
+  const notice = edit({ label: 'Title', change: { type: 'text', value: '© 2026 Northwind Outfitters' }, target: { part: title(), inner: null, selector: null, textHash: layerTextHash('© 2026 Acme Outfitters') } });
+  const note = 'Saved to the field’s own words, “Northwind Outfitters”: the site’s templates or code add “© 2026” before them on the page.';
+  const w = wire({ edits: [notice], helper: () => ({ ok: true, error: null, label: 'Acme settings', revision: null, note }) });
+  try {
+    w.page.parts = { p6: { '': [words('© 2026 Acme Outfitters', 'node:12:title:string:fr')] } };
+    await w.apply();
+    assert.deepEqual(await w.implement(notice.id), { ok: true, id: notice.id, state: 'implemented', revision: null, note });
+    assert.deepEqual(w.saves.map((x) => x.slice(1, 3)), [['© 2026 Acme Outfitters', '© 2026 Northwind Outfitters']], 'the words as the page shows them go to the helper, which maps them');
+  } finally { w.done(); }
+});
+
 /** On a Drupal page, words nothing holds and no template around them writes. */
 const DRUPAL_NOTHING_HOLDS = 'Nothing this page offers to edit holds exactly these words, and Wanigan finds them written in no template around them: code makes them (a formatter, a module or the theme) from something Wanigan does not save from here yet.';
 
