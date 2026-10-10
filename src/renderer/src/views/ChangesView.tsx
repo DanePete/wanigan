@@ -111,7 +111,7 @@ export function ChangesView({ project }: { project: ProjectSummary }) {
         <PullRequestChip where={where} status={s} />
         <RemoteActions where={where} status={s} onReload={reload} />
         <IconButton icon="stash" size="s" label="Stash the changes" data-tour="changes-stash" onClick={() => setDialog('stash')} />
-        <HowButton onClick={how.show} />
+        <span className="git-how" data-tour="changes-how"><HowButton onClick={how.show} /></span>
       </Toolbar>
       {s.operation && tab !== 'changes' ? (
         <div className={`git-strip ${s.conflicted.length ? 'git-strip-needs' : ''}`} role="status">

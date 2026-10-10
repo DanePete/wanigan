@@ -55,7 +55,7 @@ export function DecisionsView({ project }: { project: ProjectSummary }) {
   return (
     <div className="records">
       <Toolbar label="Decisions" className="records-toolbar">
-        <label className="search-field records-filter">
+        <label className="search-field records-filter" data-tour="decisions-filter">
           <Icon name="search" size={14} />
           <span className="visually-hidden">Filter decisions</span>
           <input value={filter} onChange={(e) => setFilter(e.target.value)} placeholder="Filter decisions" spellCheck={false}

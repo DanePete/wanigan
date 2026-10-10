@@ -193,7 +193,7 @@ export function EditorDrawer({ project, page = false }: {
                   ) : null}
                 </>
               ) : null}
-              {onPage ? <HowButton onClick={how.show} /> : null}
+              {onPage ? <span className="editor-how" data-tour="code-how"><HowButton onClick={how.show} /></span> : null}
               {onPage ? null : (
                 <>
                   <IconButton icon={prefs.dock === 'bottom' ? 'dockRight' : 'dockBottom'} size="s" tipSide="bottom" label={prefs.dock === 'bottom' ? `Put the ${what} beside the view` : `Put the ${what} beneath the view`}

@@ -52,6 +52,10 @@
   flex: 1;
 }
 
+.git-how {
+  display: inline-flex;
+}
+
 .git-tabs {
   flex: none;
 }

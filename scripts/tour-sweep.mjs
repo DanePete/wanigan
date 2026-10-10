@@ -120,7 +120,7 @@ try {
     const ns = nsHref.match(/#\/p\/([^/]+)/)[1];
     const places = [['board', `#/p/${ns}/board`], ['sessions', `#/p/${ns}/sessions`], ['changes', `#/p/${ns}/changes`], ['history', `#/p/${ns}/history`],
       ['decisions', `#/p/${ns}/decisions`], ['activity', `#/p/${ns}/activity`], ['list', `#/p/${ns}/list`], ['running', '#/running'], ['needs', '#/needs'], ['settings', '#/settings'],
-      ['live', `#/p/${ns}/live`]];
+      ['live', `#/p/${ns}/live`], ['code', `#/p/${ns}/code`]];
     let offered = 0;
     for (const [place, hash] of places) {
       await page.goto(`${base}${hash}`);
@@ -153,12 +153,28 @@ try {
       }
     }
 
-    // ── the board's and the List's tours: each stop lights what it names, its card in the window and beside it ──
-    for (const [place, hash, want] of [
+    // ── the views' own tours: each stop lights what it names, its card in the window and beside it ──
+    // Code's tour is walked with a file open, so its stop on the text is not passed over.
+    const openAFile = async () => {
+      await page.waitForSelector('.code-tree [role="treeitem"]', { timeout: 8000 });
+      await page.keyboard.press('Meta+p');
+      await page.waitForSelector('.quick-open', { timeout: 4000 });
+      await page.keyboard.type('pay-button.css');
+      await page.waitForSelector('.quick-open-option.active:has-text("pay-button.css")', { timeout: 5000 });
+      await page.keyboard.press('Enter');
+      await page.waitForSelector('.editor-code .cm-line', { timeout: 15000 });
+      await page.keyboard.press('Escape');
+    };
+    for (const [place, hash, want, setup] of [
       ['board', `#/p/${ns}/board`, ['The lanes', 'A card', 'Move a card', 'Narrow the board', 'Saved views', 'New card', 'How this works']],
       ['list', `#/p/${ns}/list`, ['Every card', 'Sort', 'Walk the rows', 'Open a card', 'Board or List']],
+      ['changes', `#/p/${ns}/changes`, ['Four parts', 'Where you are', 'What changed', 'Read the diff', 'Commit', 'Pull and push', 'How this works']],
+      ['code', `#/p/${ns}/code`, ['The project’s files', 'Open any file', 'Open files', 'The text', 'How this works'], openAFile],
+      ['decisions', `#/p/${ns}/decisions`, ['The rules in force', 'Read one', 'Find one', 'New decision']],
+      ['activity', `#/p/${ns}/activity`, ['What happened', 'Narrow it', 'Read an entry', 'Its card']],
     ]) {
       await page.goto(`${base}${hash}`);
+      if (setup) await setup().catch((e) => fail(`${place} tour: could not get ready (${String(e.message ?? e).split('\n')[0]})`));
       if (!(await page.waitForSelector('.status-tour', { timeout: 8000 }).catch(() => null))) { fail(`${place} tour: no compass`); continue; }
       await page.click('.status-tour');
       await page.waitForSelector('.tour-card', { timeout: 4000 }).catch(() => fail(`${place} tour: the compass did not play it`));
@@ -181,7 +197,7 @@ try {
         if (!s.name) fail(`${place} tour "${s.title}": it points at nothing`);
         else if (!s.target) fail(`${place} tour "${s.title}": "${s.name}" is not on the screen`);
         else if (s.spot && overlaps(s.card, s.spot) && (s.spot.r - s.spot.l) * (s.spot.b - s.spot.t) < s.view.w * s.view.h * 0.5) fail(`${place} tour "${s.title}": the card covers what it describes`);
-        if (s.name === 'board-card' || s.name === 'list-row') await page.screenshot({ path: join(out, `${theme}-tour-${place}.png`) });
+        if (['board-card', 'list-row', 'changes-files', 'code-files', 'decisions-reader', 'activity-list'].includes(s.name)) await page.screenshot({ path: join(out, `${theme}-tour-${place}.png`) });
         if (s.primary === 'Done') { await page.keyboard.press('Enter'); break; }
         await page.keyboard.press('ArrowRight');
         await page.waitForFunction((was) => document.querySelector('.tour-title')?.textContent !== was || !document.querySelector('.tour-card'), s.title, { timeout: 4000 }).catch(() => {});

@@ -33,9 +33,9 @@ export function Ref({ name, kind = 'branch', current = false }: { name: string; 
 }
 
 /** A card's key, stamped like its mark on the board; it opens the card. */
-export function CardBadge({ cardKey, tip }: { cardKey: string; tip?: string }) {
+export function CardBadge({ cardKey, tip, tour }: { cardKey: string; tip?: string; tour?: string }) {
   return (
-    <button type="button" className="card-key-badge" data-tip={tip ?? `Made for ${cardKey}: open the card`} aria-label={tip ?? `Made for ${cardKey}: open the card`} onClick={(e) => { e.stopPropagation(); openCard(cardKey); }}>
+    <button type="button" className="card-key-badge" data-tour={tour} data-tip={tip ?? `Made for ${cardKey}: open the card`} aria-label={tip ?? `Made for ${cardKey}: open the card`} onClick={(e) => { e.stopPropagation(); openCard(cardKey); }}>
       {cardKey}
     </button>
   );

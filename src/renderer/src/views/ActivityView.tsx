@@ -112,7 +112,7 @@ export function ActivityView({ project }: { project: ProjectSummary }) {
                               {a.detail ? <span className="activity-detail"> {a.detail}</span> : null}
                             </span>
                           </button>
-                          {c ? <CardBadge cardKey={c.key} tip={`Open ${c.key}: ${c.title}`} /> : null}
+                          {c ? <CardBadge cardKey={c.key} tip={`Open ${c.key}: ${c.title}`} tour="activity-card" /> : null}
                         </li>
                       );
                     })}
