@@ -130,8 +130,18 @@ export function SnapPanel({ first, project, regions, traceParts, traced, compone
   };
   const chose = (r: Rect): void => { setCrop(r); setScope('area'); setPhase('mark'); setSaid('Mark it up, then Ask an agent.'); };
 
-  const undo = (): void => setMarks((m) => { if (!m.length) return m; setUndone((u) => [...u, m[m.length - 1] as SnapMark]); return m.slice(0, -1); });
-  const redo = (): void => setUndone((u) => { if (!u.length) return u; setMarks((m) => [...m, u[u.length - 1] as SnapMark]); return u.slice(0, -1); });
+  const undo = (): void => {
+    const last = marks[marks.length - 1];
+    if (!last) return;
+    setUndone([...undone, last]);
+    setMarks(marks.slice(0, -1));
+  };
+  const redo = (): void => {
+    const last = undone[undone.length - 1];
+    if (!last) return;
+    setMarks([...marks, last]);
+    setUndone(undone.slice(0, -1));
+  };
   const add = (m: SnapMark): void => { setMarks((all) => [...all, m]); setUndone([]); };
 
   const ask = (): void => {
@@ -142,7 +152,9 @@ export function SnapPanel({ first, project, regions, traceParts, traced, compone
   };
   const back = (): void => {
     if (phase === 'compose') { setPhase('mark'); setPicture(null); return; }
-    if (phase === 'mark' && scope !== 'page') { setPhase('area'); setCrop(null); setMarks([]); setUndone([]); return; }
+    // From the whole page, back to the view's picture taken first; from an area, back to choosing one.
+    if (phase === 'mark' && scope === 'page') { void show(first); return; }
+    if (phase === 'mark') { setPhase('area'); setCrop(null); setMarks([]); setUndone([]); return; }
     onClose();
   };
 

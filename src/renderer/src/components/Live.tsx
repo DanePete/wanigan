@@ -309,10 +309,11 @@ function LiveShown({ site, url, project, follow, card, compact, following, shots
   const [snap, setSnap] = useState<SnapShot | null>(null);
   const [review, setReview] = useState<LiveRecording | null>(null);
   const rec = useRecorder(project.id, setReview);
-  useRecordEscape(rec, !!snap || !!review);
+  useRecordEscape(rec, compact || !!snap || !!review);
   const recording = useRef(false);
-  recording.current = rec.on;
-  // Leaving the live view stops a recording of it: a recording is never on where it cannot be seen.
+  recording.current = rec.on && !compact;
+  // Leaving the live view stops a recording of it: a recording is never on where it cannot be seen. (Only the project's
+  // own live view records; a session's split beside its terminal has no Record.)
   useEffect(() => () => { if (recording.current) void liveBridge()?.recordStop(); }, []);
   /** The component library takes the side panel while it is open; so does the design layer's tray. */
   const [library, setLibrary] = useState(false);

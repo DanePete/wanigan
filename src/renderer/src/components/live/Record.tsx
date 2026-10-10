@@ -194,7 +194,10 @@ export function RecordReview({ project, recording, partName, components, prefer,
       const typing = !!t && isTyping(t);
       const mod = mac ? e.metaKey && !e.ctrlKey : e.ctrlKey && !e.metaKey;
       if (e.key === 'Escape' && !typing) { e.preventDefault(); e.stopPropagation(); if (composing) setComposing(false); else close.current(); return; }
-      if (!composing && !typing && mod && !e.shiftKey && !e.altKey && e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); setComposing(true); }
+      if (composing || typing || e.altKey) return;
+      if (mod && !e.shiftKey && e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); setComposing(true); return; }
+      if (mod && !e.shiftKey && e.key === 'Backspace') { e.preventDefault(); e.stopPropagation(); void actions.current.remove(); return; }
+      if (!mod && !e.shiftKey && !e.metaKey && !e.ctrlKey && e.key.toLowerCase() === 'o') { e.preventDefault(); e.stopPropagation(); void actions.current.reveal(); }
     };
     document.addEventListener('keydown', key, true);
     return () => document.removeEventListener('keydown', key, true);
@@ -206,6 +209,8 @@ export function RecordReview({ project, recording, partName, components, prefer,
     toast('Deleted the recording: its clip, key frames and log.');
     onClose();
   };
+  const actions = useRef({ reveal, remove });
+  actions.current = { reveal, remove };
   const chord = (...k: string[]): string => k.map((x) => keyLabel(x, mac)).join(mac ? '' : '+');
   const why = r.stopped === 'limit' ? `It stopped at ${length(r.ms)}, the longest a recording runs.`
     : r.stopped === 'view' ? 'It stopped when the live view went away.' : r.stopped === 'escape' ? 'Escape on the page stopped it.' : null;
@@ -278,8 +283,9 @@ export function RecordReview({ project, recording, partName, components, prefer,
                 {r.clip ? <>, the clip a WebM video of {formatBytes(r.clip.bytes)}</> : null}. A project keeps its last {RECORDINGS_KEPT} recordings; a file is held to 20 MB, as attachments are.
               </p>
               <div className="live-record-kept-actions">
-                <Button size="s" tone="quiet" icon="folder" onClick={() => void reveal()}>{revealLabel(platform)}</Button>
-                <Button size="s" tone="quiet" icon="trash" onClick={() => void remove()}>Delete</Button>
+                <Button size="s" tone="quiet" icon="folder" onClick={() => void reveal()} aria-keyshortcuts="O" title={`${revealLabel(platform)} (O)`}>{revealLabel(platform)}</Button>
+                <Button size="s" tone="quiet" icon="trash" onClick={() => void remove()} aria-keyshortcuts={mac ? 'Meta+Backspace' : 'Control+Backspace'}
+                  title={`Delete the clip, its key frames and its log (${chord('Mod', 'Backspace')})`}>Delete</Button>
               </div>
             </div>
           </div>

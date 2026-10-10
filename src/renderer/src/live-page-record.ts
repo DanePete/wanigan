@@ -142,8 +142,12 @@ export function livePageRecord(): void {
     if (['Shift', 'Control', 'Alt', 'Meta', 'CapsLock', 'Fn'].includes(e.key)) return;
     const el = targetIn(e);
     const typed = field(el) ? el : null;
-    // Escape, while nothing is typed into, stops the recording; the page still hears it.
-    if (e.key === 'Escape' && !typed) { endTyping(); stop = true; answer(); return; }
+    // Escape, while nothing is typed into, stops the recording; the page still hears it. While picking or typing on the
+    // page's words, Escape is theirs.
+    if (e.key === 'Escape' && !typed) {
+      if ((wl.busy as (() => boolean) | undefined)?.()) return;
+      endTyping(); stop = true; answer(); return;
+    }
     if (!typed) {
       push({ type: 'key', time: Date.now(), key: e.metaKey || e.ctrlKey ? 'a shortcut' : e.key, secret: false, target: null });
       return;

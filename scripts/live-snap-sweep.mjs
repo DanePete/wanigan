@@ -227,7 +227,9 @@ try {
     await phase('mark', 'snap: F did not take the whole page');
     if (!(await page.evaluate(() => window.__wgLive.calls.includes('snap page')))) fail(t('snap: the whole page was not asked for'));
     await page.keyboard.press('Escape');
-    await page.waitForSelector('.live-stage-snap', { state: 'detached', timeout: 2000 }).catch(() => fail(t('snap: Escape on the whole page did not close the snap')));
+    await phase('area', 'snap: Escape on the whole page did not go back to the view’s picture');
+    await page.keyboard.press('Escape');
+    await page.waitForSelector('.live-stage-snap', { state: 'detached', timeout: 2000 }).catch(() => fail(t('snap: Escape on the view’s picture did not close the snap')));
     await page.waitForFunction(() => document.querySelector('#__wg_live_stub')?.style.visibility !== 'hidden', null, { timeout: 2000 }).catch(() => fail(t('snap: the view did not come back')));
 
     // ── Record: ⇧R, Recording in sight with its time, Escape stops it, the review.
