@@ -5,7 +5,7 @@ import { spawn } from 'node:child_process';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { BrowserWindow, Menu, app, dialog, ipcMain, shell, type IpcMainInvokeEvent } from 'electron';
+import { BrowserWindow, Menu, MessageChannelMain, app, dialog, ipcMain, net, session, shell, systemPreferences, utilityProcess, type IpcMainInvokeEvent } from 'electron';
 import { corePaths } from '../core/paths.ts';
 import { alertKeys } from '../shared/notifications.ts';
 import { ACCESS, type Method } from '../shared/protocol.ts';
@@ -23,6 +23,8 @@ import { wireLiveAgent } from './live-agent.ts';
 import { wireLiveView, type LiveViewHooks, type LiveViewWiring } from './live-view.ts';
 import { wireLiveDevtools } from './live-devtools.ts';
 import { CoreConnection } from './core-process.ts';
+import { guardMicrophone, wireVoice, type VoiceWiring } from './voice.ts';
+import type { MicAccess } from '../shared/voice.ts';
 import { menuTemplate, type MenuProject } from './menu.ts';
 import { createUpdateMenu } from './update-menu.ts';
 import { NeedNotifier } from './notify.ts';
@@ -59,6 +61,7 @@ const core = new CoreConnection({
 let win: BrowserWindow | null = null;
 let appSettings: AppSettingsWiring | null = null;
 let liveView: LiveViewWiring | null = null;
+let voice: VoiceWiring | null = null;
 
 const notifier = new NeedNotifier(async () => (await core.get()).call('needs.list', {}), () => win, showRoute,
   () => appSettings?.store.get().notifications ?? 'all');
@@ -124,7 +127,7 @@ function createWindow(route = ''): void {
   win.webContents.on('will-navigate', (event, url) => {
     if (!ownPage(url)) event.preventDefault();
   });
-  win.on('closed', () => { liveView?.release(); win = null; notifier.schedule(); });
+  win.on('closed', () => { liveView?.release(); voice?.release(); win = null; notifier.schedule(); });
   // Coming forward or going away changes where a need is announced.
   win.on('focus', () => notifier.schedule());
   win.on('blur', () => notifier.schedule());
@@ -200,6 +203,18 @@ function wireBridge(): void {
     ipc: ipcMain, openExternal: (url) => shell.openExternal(url), window: () => win, trusted, enabled: () => appSettings?.store.get().liveView === true, settings: () => appSettings?.store.get() ?? null,
     client: () => core.get(), current: () => view.current(), run: <T>(code: string, fallback: T) => view.run(code, fallback),
     sessionFor: (id, url) => view.sessionFor(id, url),
+  });
+  // Voice input: speech to text on this computer, in a utilityProcess forked on the first use (src/main/voice.ts).
+  voice = wireVoice({
+    ipc: ipcMain, trusted, dataDir,
+    send: (channel, payload) => { if (win && !win.isDestroyed()) win.webContents.send(channel, payload); },
+    fork: () => utilityProcess.fork(join(__dirname, 'voice-worker.js'), [], { serviceName: 'Wanigan Voice', stdio: ['ignore', 'ignore', 'pipe'] }),
+    channel: () => new MessageChannelMain(),
+    fetch: (input, init) => net.fetch(input instanceof URL ? input.href : input as string, init),
+    micAccess: () => (process.platform === 'darwin' || process.platform === 'win32' ? systemPreferences.getMediaAccessStatus('microphone') as MicAccess : 'unknown'),
+    openExternal: (url) => shell.openExternal(url),
+    platform: process.platform,
+    memory: (pid) => { const m = app.getAppMetrics().find((x) => x.pid === pid); return m ? m.memory.workingSetSize * 1024 : null; },
   });
   ipcMain.handle('core:call', async (event, method: unknown, params: unknown) => {
     if (!trusted(event)) return { ok: false, error: { code: 'forbidden', message: 'Untrusted sender.' } };
@@ -319,6 +334,8 @@ if (!app.requestSingleInstanceLock()) {
 } else {
   app.on('second-instance', () => { if (win) { if (win.isMinimized()) win.restore(); win.focus(); } });
   void app.whenReady().then(() => {
+    // The microphone, for voice input: Wanigan's own page in its own window, audio only.
+    guardMicrophone(session.defaultSession, (wc, url) => !!win && wc === win.webContents && ownPage(url));
     wireBridge();
     buildMenu();
     createWindow();
@@ -330,7 +347,7 @@ if (!app.requestSingleInstanceLock()) {
   app.on('window-all-closed', () => { if (demo || process.platform !== 'darwin') app.quit(); });
   app.on('before-quit', (event) => {
     // The demo's stand-in agents need no warning.
-    if (quitChecked || demo) { appSettings?.release(); core.close(); return; }
+    if (quitChecked || demo) { appSettings?.release(); voice?.release(); core.close(); return; }
     event.preventDefault();
     quitChecked = true;
     void confirmQuit().catch(() => true).then((quit) => { if (quit) app.quit(); });

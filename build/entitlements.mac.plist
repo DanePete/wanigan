@@ -26,5 +26,14 @@
   -->
   <key>com.apple.security.cs.disable-library-validation</key>
   <true/>
+
+  <!--
+    Voice input listens through the microphone (getUserMedia in the window).
+    Under the hardened runtime macOS refuses the microphone outright without
+    this key, even with NSMicrophoneUsageDescription in Info.plist: no prompt,
+    just a silent "denied".
+  -->
+  <key>com.apple.security.device.audio-input</key>
+  <true/>
 </dict>
 </plist>

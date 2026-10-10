@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron';
-import type { CoreProblem, CoreStatus, LiveBridge, LiveRecordState, LiveViewState, PickedFiles, WaniganBridge } from '../shared/bridge.ts';
+import type { CoreProblem, CoreStatus, LiveBridge, LiveRecordState, LiveViewState, PickedFiles, VoiceBridge, WaniganBridge } from '../shared/bridge.ts';
+import type { VoiceState } from '../shared/voice.ts';
 import type { LiveEdited } from '../shared/live-lens.ts';
 import type { AppState } from '../shared/settings.ts';
 
@@ -105,7 +106,7 @@ const live: LiveBridge = {
   snap: (mode) => ipcRenderer.invoke('live:snap', mode) as ReturnType<LiveBridge['snap']>,
   recordStart: () => ipcRenderer.invoke('live:recordStart') as ReturnType<LiveBridge['recordStart']>,
   recordStop: () => ipcRenderer.invoke('live:recordStop') as ReturnType<LiveBridge['recordStop']>,
-  recordSay: (text) => ipcRenderer.invoke('live:recordSay', text) as Promise<boolean>,
+  recordSay: (text, at) => ipcRenderer.invoke('live:recordSay', text, at ?? null) as Promise<boolean>,
   onRecord(listener) {
     const handler = (_e: IpcRendererEvent, state: LiveRecordState): void => listener(state);
     ipcRenderer.on('live:record', handler);
@@ -115,6 +116,29 @@ const live: LiveBridge = {
   recordReveal: (projectId, id) => ipcRenderer.invoke('live:recordReveal', projectId, id) as Promise<boolean>,
   recordDelete: (projectId, id) => ipcRenderer.invoke('live:recordDelete', projectId, id) as Promise<boolean>,
 };
+
+// Voice input (src/main/voice.ts). A stream's MessagePort comes from the main process and is handed to the page with
+// window.postMessage, the one way a port crosses into a context-isolated page; lib/voice.ts takes it from there.
+const voice: VoiceBridge = {
+  state: () => ipcRenderer.invoke('voice:state') as Promise<VoiceState | null>,
+  onState(listener) {
+    const handler = (_e: IpcRendererEvent, state: VoiceState): void => listener(state);
+    ipcRenderer.on('voice:state', handler);
+    return () => { ipcRenderer.off('voice:state', handler); };
+  },
+  setSettings: (patch) => ipcRenderer.invoke('voice:setSettings', patch) as Promise<VoiceState | null>,
+  download: (id) => ipcRenderer.invoke('voice:download', id) as Promise<VoiceState | null>,
+  cancel: (id) => ipcRenderer.invoke('voice:cancel', id) as Promise<VoiceState | null>,
+  remove: (id) => ipcRenderer.invoke('voice:remove', id) as Promise<VoiceState | null>,
+  start: () => ipcRenderer.invoke('voice:start') as ReturnType<VoiceBridge['start']>,
+  openMicSettings: () => ipcRenderer.invoke('voice:openMicSettings') as Promise<boolean>,
+};
+ipcRenderer.on('voice:port', (event, data: unknown) => {
+  const port = event.ports[0];
+  const id = data && typeof data === 'object' ? (data as { id?: unknown }).id : null;
+  const page = globalThis as unknown as { postMessage(message: unknown, origin: string, transfer: unknown[]): void };
+  if (port && typeof id === 'string') page.postMessage({ wanigan: 'voice-port', id }, '*', [port]);
+});
 
 const bridge: WaniganBridge = {
   async call(method, params) {
@@ -171,6 +195,7 @@ const bridge: WaniganBridge = {
     return () => { ipcRenderer.off('app:state', handler); };
   },
   live,
+  voice,
   platform: process.platform,
   toursOff: process.env.WANIGAN_TOURS === 'off',
 };

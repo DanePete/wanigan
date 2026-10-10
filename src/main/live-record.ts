@@ -363,10 +363,13 @@ export function wireLiveRecord(options: {
 
   ipc.handle('live:recordStart', async (event) => (ok(event) ? start() : state()));
   ipc.handle('live:recordStop', async (event) => (options.trusted(event) ? end('owner') : null));
-  ipc.handle('live:recordSay', (event, text: unknown) => {
+  // Narration (voice input): `at` is when the words began, on the window's clock; kept inside the recording.
+  ipc.handle('live:recordSay', (event, text: unknown, at: unknown) => {
     if (!options.trusted(event) || !active || typeof text !== 'string') return false;
     const before = active.steps.length;
-    step(active, { type: 'said', time: now(), text });
+    const t = now();
+    const time = typeof at === 'number' && Number.isFinite(at) ? Math.min(t, Math.max(active.startedAt, at)) : t;
+    step(active, { type: 'said', time, text });
     return active.steps.length > before;
   });
   ipc.handle('live:recordFile', async (event, rawProject: unknown, rawId: unknown, rawFile: unknown) => {

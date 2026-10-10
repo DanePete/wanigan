@@ -30,7 +30,11 @@ export class TranscribeQueue {
   /** Model calls made, finals and partials. */
   calls = 0;
 
-  constructor(private readonly transcribe: Transcriber) {}
+  private readonly transcribe: Transcriber;
+
+  constructor(transcribe: Transcriber) {
+    this.transcribe = transcribe;
+  }
 
   /** A final: queued in order, always run. */
   final(run: (t: Transcriber) => Promise<void>): void {
@@ -86,13 +90,16 @@ export class VoiceStream {
   private stretch = 0;
   private speaking = false;
 
-  constructor(
-    private readonly send: (msg: VoiceOut) => void,
-    private readonly queue: TranscribeQueue,
-    private readonly language: string | null,
-    vad: Partial<VadOptions> = {},
-    private readonly onDone: () => void = () => {},
-  ) {
+  private readonly send: (msg: VoiceOut) => void;
+  private readonly queue: TranscribeQueue;
+  private readonly language: string | null;
+  private readonly onDone: () => void;
+
+  constructor(send: (msg: VoiceOut) => void, queue: TranscribeQueue, language: string | null, vad: Partial<VadOptions> = {}, onDone: () => void = () => {}) {
+    this.send = send;
+    this.queue = queue;
+    this.language = language;
+    this.onDone = onDone;
     this.vad = new Segmenter(vad);
   }
 

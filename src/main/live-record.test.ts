@@ -162,3 +162,30 @@ test('a recording ends when its view goes away, and Escape on the page ends it t
     rmSync(data, { recursive: true, force: true });
   }
 });
+
+test('narration is kept at the moment the words began, inside the recording, and as words only', async () => {
+  const data = mkdtempSync(join(tmpdir(), 'wanigan-record-'));
+  try {
+    const r = setup(data, () => null);
+    await r.call('live:recordStart');
+    await wait(10);
+    r.tick(5_000);
+    // Voice input says when each sentence began, on the window's clock: 1.2 s in, though it arrived at 5 s.
+    assert.equal(await r.call('live:recordSay', 'The banner covers the search box.', T0 + 1_200), true);
+    // A time before the recording began, or after now, is held inside it; none at all is now.
+    assert.equal(await r.call('live:recordSay', 'Before it began.', T0 - 60_000), true);
+    assert.equal(await r.call('live:recordSay', 'From the future.', T0 + 999_000), true);
+    assert.equal(await r.call('live:recordSay', 'As it arrived.'), true);
+    assert.equal(await r.call('live:recordSay', 'Not a time.', 'soon'), true);
+    // Control characters go; an empty line is not a step.
+    assert.equal(await r.call('live:recordSay', '  \u0007 '), false);
+    const rec = await r.call('live:recordStop') as LiveRecording;
+    const said = rec.steps.filter((s) => s.type === 'said');
+    assert.deepEqual(said.map((s) => [s.at, s.type === 'said' ? s.text : '']), [
+      [0, 'Before it began.'], [1_200, 'The banner covers the search box.'],
+      [5_000, 'From the future.'], [5_000, 'As it arrived.'], [5_000, 'Not a time.'],
+    ]);
+  } finally {
+    rmSync(data, { recursive: true, force: true });
+  }
+});

@@ -15,6 +15,7 @@ import type { LiveStep } from './live-record.ts';
 import type { Need } from './model.ts';
 import type { EventName, Events, Method, Params, Result } from './protocol.ts';
 import type { AppSettings, AppState } from './settings.ts';
+import type { VoiceModelId, VoiceSettings, VoiceStart, VoiceState } from './voice.ts';
 
 export type CoreStatus = 'connected' | 'connecting' | 'unavailable';
 
@@ -383,8 +384,12 @@ export interface LiveBridge {
   recordStart(): Promise<LiveRecordState>;
   /** Stop recording, and answer the recording once its clip and key frames are saved (null when none was running). */
   recordStop(): Promise<LiveRecording | null>;
-  /** Narration while recording (voice input), kept in the step log as a `said` step. False when nothing is recording. */
-  recordSay(text: string): Promise<boolean>;
+  /**
+   * Narration while recording (voice input), kept in the step log as a `said` step. `at` is when the words began, in
+   * milliseconds since the epoch (clamped into the recording); without it, when they arrive. False when nothing is
+   * recording.
+   */
+  recordSay(text: string, at?: number): Promise<boolean>;
   /** The recorder as it changes: started, a second later, stopped, saved. */
   onRecord(listener: (state: LiveRecordState) => void): () => void;
   /** One file of a kept recording, base64: its clip (WebM) or key frame n (JPEG). Null when it is not there. */
@@ -431,7 +436,26 @@ export interface WaniganBridge {
   onAppState(listener: (state: AppState) => void): () => void;
   /** The live view; absent where nothing can show a site. */
   live?: LiveBridge;
+  /** Voice input (src/main/voice.ts); absent where it cannot run (the phone page, a sweep that does not stub it). */
+  voice?: VoiceBridge;
   platform: string;
   /** Tours never start on their own (WANIGAN_TOURS=off): automation that drives the window. Replaying one still works. */
   toursOff?: boolean;
+}
+
+/**
+ * Voice input: settings, the speech models (downloaded only on the owner's click), and starting a stream. A started
+ * stream's MessagePort arrives as a window message `{ wanigan: 'voice-port', id }` with the port (lib/voice.ts reads
+ * it): audio goes to the voice worker and words come back over it, never through the bridge.
+ */
+export interface VoiceBridge {
+  state(): Promise<VoiceState | null>;
+  onState(listener: (state: VoiceState) => void): () => void;
+  setSettings(patch: Partial<VoiceSettings>): Promise<VoiceState | null>;
+  download(id: VoiceModelId): Promise<VoiceState | null>;
+  cancel(id: VoiceModelId): Promise<VoiceState | null>;
+  remove(id: VoiceModelId): Promise<VoiceState | null>;
+  start(): Promise<VoiceStart>;
+  /** Open the OS's microphone settings, where it has a page for them. False where it has none. */
+  openMicSettings(): Promise<boolean>;
 }
