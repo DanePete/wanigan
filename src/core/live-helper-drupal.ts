@@ -13,7 +13,7 @@
 // Design: docs/design/2026-10-08-live-view.md. How it hooks core:
 // docs/research/2026-10-09-drupal-core-live-trace.md.
 import { DRUPAL_TRACE_FILES } from './live-helper-drupal-trace.ts';
-import { DRUPAL_INTERCEPT_FILES } from './live-helper-drupal-intercept.ts';
+import { DRUPAL_INTERCEPT_FILES, DRUPAL_TRACE_MODULE } from './live-helper-drupal-intercept.ts';
 import { DRUPAL_BUILD_FILES } from './live-helper-drupal-build.ts';
 import { DRUPAL_ASSEMBLE_FILES } from './live-helper-drupal-assemble.ts';
 import { DRUPAL_EDIT_FILES } from './live-helper-drupal-edit.ts';
@@ -799,7 +799,7 @@ export const DRUPAL_HELPER_FILES: Readonly<Record<string, string>> = {
   'wanigan_live.info.yml': INFO,
   'wanigan_live.services.yml': SERVICES + DRUPAL_VERIFY_SERVICES,
   'wanigan_live.routing.yml': ROUTING,
-  'wanigan_live.module': MODULE + DRUPAL_VERIFY_MODULE,
+  'wanigan_live.module': MODULE + DRUPAL_TRACE_MODULE + DRUPAL_VERIFY_MODULE,
   'src/Token.php': TOKEN,
   'src/PageCache/DenyWanigan.php': DENY,
   'src/Controller/LiveController.php': CONTROLLER,

@@ -101,13 +101,15 @@ final class TraceBuilder {
       'hooks' => array_map(fn ($s) => $this->step($s), $this->recorder->hooks),
       'queries' => $this->queries(),
       'assets' => $this->assets(),
-      'logs' => array_map(static function ($log) {
+      // What the trace lacks on this core (Recorder::sense()), then what the
+      // site logged.
+      'logs' => array_merge(array_map(static fn ($note) => ['level' => 'notice', 'message' => $note], $this->recorder->notes), array_map(static function ($log) {
         $out = ['level' => $log['level'], 'message' => $log['message']];
         if ($source = Source::of($log['file'], $log['line'])) {
           $out['source'] = $source;
         }
         return $out;
-      }, $this->recorder->logs),
+      }, $this->recorder->logs)),
       'collections' => $collections,
       'palette' => array_values($this->palette),
       'saves' => array_slice(array_values($saves), 0, 200),
@@ -382,10 +384,10 @@ final class TraceBuilder {
       try {
         $modules = \Drupal::moduleHandler();
         $themes = \Drupal::theme();
-        if ($modules->moduleExists($by) && $modules instanceof TraceModuleHandler) {
+        if ($modules->moduleExists($by) && $modules instanceof HookListeners) {
           $listener = $modules->listenerFor($by, $hook);
         }
-        elseif ($themes instanceof TraceThemeManager) {
+        elseif ($themes instanceof HookListeners) {
           $listener = $themes->listenerFor($by, $hook);
         }
       }
