@@ -961,6 +961,29 @@ describe('what a WordPress page offers to change, and what saving it writes, und
     assert.match(target(r, 'Settings of the Acme Legacy widget').why ?? '', /^Wanigan does not do this yet: /);
   });
 
+  test('an image’s alt in the media library is its own target, through /wp/v2/media alt_text, beside the image block’s own alt, each saying what it changes', () => {
+    const image = '<!-- wp:image {"id":12} -->\n<figure class="wp-block-image"><img src="/uploads/image-12.jpg" alt="Block alt" class="wp-image-12"/></figure>\n<!-- /wp:image -->';
+    const r = run(page(`${image}\n\n<!-- wp:post-featured-image /-->`, {
+      posts: { 7: { post_type: 'page', post_title: 'Welcome', post_content: `${image}\n\n<!-- wp:post-featured-image /-->` }, 12: { post_type: 'attachment', post_title: 'image-12' } },
+      meta: { 7: { _thumbnail_id: 12 }, 12: { _wp_attachment_image_alt: 'Library alt' } },
+      saves: [{ find: 'Alt text of the image “image-12.jpg” in the media library', value: 'Loaves on a board' }],
+    }));
+    const library = edits(r).filter((x) => x.label.startsWith('Alt text of the image'));
+    assert.equal(library.length, 1, 'one target for the attachment, though the image block and the featured image both show it');
+    const alt = library[0]!;
+    assert.equal(alt.value, 'Library alt');
+    assert.equal(alt.why, undefined);
+    assert.equal(alt.revisions, false, 'core keeps no revisions of it');
+    assert.match(alt.label, /featured image/);
+    const block = target(r, 'Image block in page “Welcome”');
+    assert.equal((block.value as Record<string, unknown>).alt, 'Block alt');
+    assert.match(String(prop(block, 'alt').description), /media library/);
+    assert.ok(r.answers[0]?.data.ok, r.answers[0]?.data.error);
+    assert.deepEqual(r.rest, [['POST', '/wp/v2/media/12', { alt_text: 'Loaves on a board' }]]);
+    assert.equal(r.meta[12]?._wp_attachment_image_alt, 'Loaves on a board');
+    assert.equal(r.posts[7]?.includes('alt="Block alt"'), true, 'the image block keeps its own alt');
+  });
+
   test('a static block’s own settings stay read-only, saying WordPress keeps no PHP save() to write them', () => {
     const r = run(page('<!-- wp:heading {"level":3} -->\n<h3 class="wp-block-heading">Hours</h3>\n<!-- /wp:heading -->'));
     const e = target(r, 'Heading block');

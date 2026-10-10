@@ -1698,7 +1698,11 @@ final class Wanigan_Live {
 		$field = isset($m['field']) ? $m['field'] : null;
 		if ($field === 'the_title') $p['edits'] = array($edits['title']);
 		elseif ($field === 'the_excerpt') $p['edits'] = isset($edits['excerpt']) ? array($edits['excerpt']) : array();
-		elseif ($field === 'post_thumbnail_html') $p['edits'] = isset($edits['featured']) ? array($edits['featured']) : array();
+		elseif ($field === 'post_thumbnail_html') {
+			$p['edits'] = isset($edits['featured']) ? array($edits['featured']) : array();
+			$alt = self::attachment_alt_edit((int) get_post_thumbnail_id($post));
+			if ($alt) $p['edits'][] = $alt;
+		}
 		else {
 			$p['edits'] = array_values($edits);
 			$p['variables'] = self::post_variables($post, $edits);
@@ -1929,6 +1933,15 @@ final class Wanigan_Live {
 			$e = self::placement_edit($name, $type, $m, $attrs);
 			if ($e) $edits[] = $e;
 		}
+		// The image's alt in the media library, beside a block's own: what core prints wherever it prints the attachment.
+		$attachment = 0;
+		if ($name === 'core/image' && !empty($attrs['id'])) $attachment = (int) $attrs['id'];
+		elseif ($name === 'core/post-featured-image' && isset($m['context']['postId'])) $attachment = (int) get_post_thumbnail_id((int) $m['context']['postId']);
+		elseif ($name === 'core/site-logo') $attachment = (int) get_theme_mod('custom_logo');
+		if ($attachment) {
+			$e = self::attachment_alt_edit($attachment);
+			if ($e) $edits[] = $e;
+		}
 		if ($edits) $p['edits'] = $edits;
 		return $p;
 	}
@@ -2077,6 +2090,7 @@ final class Wanigan_Live {
 				$found = self::sourced($node, $def, $name, $attr);
 				$current = $found['value'];
 				if (!$why && $found['why']) $why = $found['why'];
+				if (!$why && $name === 'core/image' && $attr === 'alt') $schema['description'] = 'This image block’s own alt text, kept in its markup. The image’s alt in the media library is a separate edit: that one is what a featured image or the site logo prints.';
 				if (!$why && $source !== 'attribute') {
 					$schema['contentMediaType'] = $source === 'text' ? 'text/plain' : 'text/html';
 					if ($source !== 'text') $schema['description'] = 'Its words as HTML, with inline formatting (bold, italic, links and the editor’s other formats). Saved as WordPress saves bound rich text: cleaned by wp_kses_post(), spliced into the block’s own element.';
@@ -2196,6 +2210,27 @@ final class Wanigan_Live {
 		if (!isset(self::$edits[$id])) {
 			self::$edits[$id] = array('id' => $id, 'kind' => 'menu-link', 'label' => self::block_label($name) . ' words in a Navigation block with no menu chosen', 'via' => 'schema', 'revisions' => false, 'why' => self::NO_SUCH . 'this Navigation block names no menu, so WordPress builds its links as a fallback each time it renders (the newest menu, or the list of pages), and no stored menu belongs to it. Choose a menu for the block in the Site Editor; then its labels change here.');
 		}
+		return $id;
+	}
+
+	/**
+	 * An image's alt text in the media library (_wp_attachment_image_alt), saved through /wp/v2/media alt_text
+	 * (class-wp-rest-attachments-controller.php update_item()). Core prints it wherever it prints the attachment itself:
+	 * wp_get_attachment_image(), a featured image that does not link, the site logo. An image block keeps its own alt in
+	 * its markup, which this does not change.
+	 */
+	private static function attachment_alt_edit(int $aid): ?string {
+		$att = $aid ? get_post($aid) : null;
+		if (!$att instanceof WP_Post || $att->post_type !== 'attachment') return null;
+		$id = 'media-alt-' . $aid;
+		if (isset(self::$edits[$id])) return $id;
+		$file = basename((string) get_attached_file($aid));
+		$target = array('id' => $id, 'kind' => 'field', 'label' => 'Alt text of the image “' . ($file !== '' ? $file : $aid) . '” in the media library (shows wherever WordPress prints the image from the library: a featured image, the site logo; an image block keeps its own)', 'via' => 'schema', 'schema' => array('type' => 'string', 'title' => 'Alt text', 'description' => 'What the image says to someone who cannot see it. Saved on the image in the media library, with no revision.'), 'value' => (string) get_post_meta($aid, '_wp_attachment_image_alt', true), 'revisions' => false);
+		$route = rest_get_route_for_post($att);
+		$why = $route === '' ? self::NOT_YET . 'attachments are not in the REST API on this site, which is how Wanigan saves.' : self::cannot('edit_post', 'change this image', $aid);
+		if ($why) $target['why'] = $why;
+		self::$edits[$id] = $target;
+		self::$private[$id] = array('type' => 'post', 'post' => $aid, 'field' => 'alt_text', 'route' => $route);
 		return $id;
 	}
 
