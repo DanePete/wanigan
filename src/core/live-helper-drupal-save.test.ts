@@ -10,11 +10,14 @@
 // in formatted text one run of words is spliced where it is kept, every other byte kept, and saved only when the text's
 // own format shows nothing else changed (filter-made words, words across tags or twice, a trimmed cut are refused).
 // Words the page shows around a field's own (a template's) are the site's only where the field's mark proves the
-// content is as the page rendered it: then the field's own words are saved and a change to the rest is refused as code;
-// otherwise nothing is saved, and nothing is said to have changed since unless it might have.
+// content is as the page rendered it (its revision or changed time; for content that keeps neither, a hash of the
+// field's stored words as the page rendered them, made by the helper's own preprocess): then the field's own words are
+// saved and a change to the rest is refused as code; otherwise nothing is saved, and nothing is said to have changed
+// since unless it might have.
 // Nothing here runs Drupal or touches a site; it needs PHP. Made-up content (acme, example.test); nothing real.
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -31,7 +34,7 @@ namespace Drupal\Core\Controller {
     protected function currentUser() { return new class { public function id() { return 1; } }; }
   }
 }
-namespace Drupal\Core\Entity { interface EntityInterface {} interface ContentEntityInterface extends EntityInterface {} interface RevisionLogInterface {} }
+namespace Drupal\Core\Entity { interface EntityInterface {} interface FieldableEntityInterface extends EntityInterface {} interface ContentEntityInterface extends FieldableEntityInterface {} interface RevisionLogInterface {} }
 namespace Drupal\Core\Field { interface FieldItemInterface {} }
 namespace Drupal\Core\Entity\Plugin\Validation\Constraint {
   // A constraint on more than one field, as core's composite constraints are: it names the fields it covers.
@@ -68,7 +71,8 @@ namespace {
     public static function time() { return new class { public function getRequestTime() { return 1760000000; } }; }
     public static function config($name) { return new class { public function get($k) { return 'plain_text'; } }; }
     public static function entityTypeManager() { return new class { public function getStorage($t) { return new class { public function load($id) { return Format::all()[$id] ?? NULL; } }; } }; }
-    public static function service($id) { return new Renderer(); }
+    // The live view's token is carried: the helper's own marks are made (wanigan_live.module).
+    public static function service($id) { return $id === 'wanigan_live.token' ? new class { public function carried() { return TRUE; } } : new Renderer(); }
   }
   /**
    * Text formats as core's filters would treat them: basic_html shows its markup as kept; full_html too, but this user
@@ -138,14 +142,15 @@ namespace {
     public array $translations = [];
     public array $saved = [];
   }
-  final class Node implements ContentEntityInterface, RevisionLogInterface {
+  /** One translation of stored content: its fields, its translations, its validation and its save. */
+  trait Stored {
     public function __construct(public Content $content, public string $langcode, public array $fields) {}
     public function uuid() { return '${UUID}'; }
     public function id() { return '12'; }
+    public function isNew() { return FALSE; }
     public function getEntityTypeId() { return $this->content->type; }
     public function language() { return new class($this->langcode) { public function __construct(private string $l) {} public function getId() { return $this->l; } }; }
     public function isReusable() { return $this->content->reusable; }
-    public function getChangedTime() { return $this->content->changed; }
     public function hasField($n) { return isset($this->fields[$n]); }
     // A field the content type defines in code (a base field): its label is the field's name, made a word.
     public function getFieldDefinition($n) { return new class($n) { public function __construct(private string $n) {} public function getLabel() { return ucfirst(str_replace('_', ' ', $this->n)); } }; }
@@ -167,6 +172,15 @@ namespace {
     public function label() { return 'Paddling'; }
     public function getRevisionId() { return $this->content->rev; }
   }
+  /** Content that says when each translation last changed (a node). */
+  final class Node implements ContentEntityInterface, RevisionLogInterface {
+    use Stored;
+    public function getChangedTime() { return $this->content->changed; }
+  }
+  /** Content that keeps no changed time (no getChangedTime()), as a site's settings entity may not. */
+  final class Settings implements ContentEntityInterface {
+    use Stored;
+  }
   final class World {
     public static Content $content;
     public static function types() {
@@ -181,14 +195,14 @@ namespace {
       };
     }
     /** Content in these languages, each translation with these words in its fields (of these types; plain text by default). */
-    public static function make(array $languages, array $types = []): void {
+    public static function make(array $languages, array $types = [], string $class = Node::class): void {
       World::$content = new Content();
       foreach ($languages as $l => $fields) {
         $built = [];
         foreach ($fields as $f => $values) {
           $built[$f] = new Items(array_map(fn ($v) => new Item($v), $values), $types[$f] ?? 'string');
         }
-        World::$content->translations[$l] = new Node(World::$content, $l, $built);
+        World::$content->translations[$l] = new $class(World::$content, $l, $built);
       }
     }
     /** A formatted field's items as kept: [value, summary]. */
@@ -199,6 +213,8 @@ namespace {
   require getenv('WL_HELPER') . '/src/Save/Words.php';
   require getenv('WL_HELPER') . '/src/Save/ConfigWords.php';
   require getenv('WL_HELPER') . '/src/Controller/LiveController.php';
+  // The module's hooks: the field's mark the page carries (wanigan_live_preprocess_field()).
+  require getenv('WL_HELPER') . '/wanigan_live.module';
   use Drupal\wanigan_live\Controller\LiveController;
   $save = function (array $body): array {
     $r = (new LiveController())->save(new Symfony\Component\HttpFoundation\Request(json_encode($body)));
@@ -424,13 +440,74 @@ const AROUND = String.raw`
   $out['formattedOther'] = $save($words('Paddle far', 'Paddle further'));
 `;
 
+/**
+ * Content that keeps neither revisions nor a changed time (made-up site settings, as a site's settings entity may be):
+ * its field's mark, made by the helper's own preprocess as the page renders the field, carries a hash of the field's
+ * stored words as rendered (vh), never the words, and that hash is what proves the content is as the page rendered it.
+ */
+const STAMPED = String.raw`
+  $settings = function (array $values = ['Acme Outfitters'], string $type = 'string') {
+    World::make(['en' => ['field_notice' => $values]], ['field_notice' => $type], Settings::class);
+    World::$content->type = 'acme_settings';
+    World::$content->revisionable = FALSE;
+  };
+  $notice = fn () => World::$content->translations['en']->get('field_notice');
+  // The field's mark as the helper's preprocess makes it while the page renders the field.
+  $marked = function (string $formatter = 'string') use ($notice) {
+    $variables = ['element' => ['#object' => World::$content->translations['en'], '#field_name' => 'field_notice', '#field_type' => $notice()->getFieldDefinition()->getType(), '#formatter' => $formatter, '#items' => $notice()], 'attributes' => []];
+    wanigan_live_preprocess_field($variables);
+    return $variables['attributes']['data-wl-field'];
+  };
+  $words = fn (string $mark, string $before = '© 2026 Acme Outfitters', string $after = '© 2026 Northwind Outfitters', ?string $item = 'delta:0') => ['field' => $mark, 'before' => $before, 'after' => $after, 'uuid' => '${UUID}', 'langcode' => 'en'] + ($item ? ['item' => $item] : []);
+  $unstamped = fn (string $mark) => implode(':', array_slice(explode(':', $mark), 0, 8));
+
+  // The theme adds "© 2026" before the field's words, and the field holds what the page rendered: the field's own new
+  // words are saved.
+  $settings();
+  $out['mark'] = $mark = $marked();
+  $out['stamped'] = [$save($words($mark)), World::words('en', 'field_notice'), World::$content->saved];
+  // The window's own save, which names no item, maps the same way.
+  $settings();
+  $out['unnamed'] = [$save($words($marked(), item: NULL))[0], World::words('en', 'field_notice')];
+  // A change to what the theme adds is still refused as code, and says nothing changed.
+  $settings();
+  $out['touches'] = $save($words($marked(), after: '© 2027 Acme Outfitters'));
+  // Saved since the page loaded: the stored words hash otherwise, refused as the change it is; nothing saved.
+  $settings();
+  $mark = $marked();
+  $notice()->get(0)->value = 'Acme Trading';
+  $out['changed'] = [$save($words($mark)), World::words('en', 'field_notice'), World::$content->saved];
+  // An item added since: the hash is of every item the page rendered.
+  $settings();
+  $mark = $marked();
+  $notice()->items[] = new Item('Northwind');
+  $out['added'] = [$save($words($mark))[0], World::$content->saved];
+  // A page from before the mark carried the hash: as before, a template's words and a change since cannot be told apart.
+  $settings();
+  $out['unstamped'] = [$save($words($unstamped($marked()))), World::words('en', 'field_notice'), World::$content->saved];
+  // What is not a hash is refused before anything is loaded.
+  $settings();
+  $out['notAHash'] = $save($words($unstamped($marked()) . ':acme-outfitters'))[0];
+  // Formatted text kept as one run of words: mapped the same way. Its format is part of what is hashed: one changed
+  // since is a change since.
+  $settings([['value' => 'Acme Outfitters', 'format' => 'basic_html']], 'text_long');
+  $out['formatted'] = [$save($words($marked('text_default'), after: '© 2026 Northwind & Co.')), World::kept('en', 'field_notice')];
+  $settings([['value' => 'Acme Outfitters', 'format' => 'basic_html']], 'text_long');
+  $mark = $marked('text_default');
+  $notice()->get(0)->format = 'plain_text';
+  $out['formatChanged'] = [$save($words($mark))[0], World::$content->saved];
+  // A field of a type the word saves do not model carries no hash.
+  $settings(['4'], 'integer');
+  $out['integer'] = $marked('number_integer');
+`;
+
 /** Runs scenarios under the stand-in Drupal with the helper's own controller and word saves; what they put in $out. */
 function runSaves(t: { skip(why: string): void }, scenarios: string): Record<string, unknown> | null {
   const bin = which('php', process.env.PATH ?? '');
   if (!bin) { t.skip('PHP is not installed here'); return null; }
   const folder = mkdtempSync(join(tmpdir(), 'wanigan-drupal-save-'));
   try {
-    for (const file of ['src/Controller/LiveController.php', 'src/Save/Words.php', 'src/Save/ConfigWords.php']) {
+    for (const file of ['src/Controller/LiveController.php', 'src/Save/Words.php', 'src/Save/ConfigWords.php', 'wanigan_live.module']) {
       mkdirSync(join(folder, file, '..'), { recursive: true });
       writeFileSync(join(folder, file), DRUPAL_HELPER_FILES[file] ?? '');
     }
@@ -596,4 +673,42 @@ test('words the page shows around a field’s own are the site’s where the con
   assert.deepEqual([across[0], acrossKept], [409, ['<strong>Acme</strong> Outfitters']]);
   assert.match(across[1].error ?? '', /run across formatting/);
   assert.match(said('formattedOther'), /^This field’s text does not hold the words the page shows, and the content has not changed since the page loaded/);
+});
+
+test('content that keeps neither revisions nor a changed time: the field’s mark carries a hash of its stored words as rendered, never the words, and words the page shows around them are mapped only while the field still hashes to it', (t) => {
+  const out = runSaves(t, STAMPED);
+  if (!out) return;
+  type Answer = [number, { ok: boolean; error?: string; note?: string; value?: string }];
+
+  const mark = out.mark as string;
+  const kept = createHash('sha256').update(String.raw`a:1:{i:0;a:1:{i:0;s:15:"Acme Outfitters";}}`).digest('hex').slice(0, 16);
+  assert.equal(mark, `acme_settings:12:field_notice:string:en:::string:${kept}`,
+    'no revision and no changed time: the first 16 hex of a sha256 of the items’ stored words, as the page rendered them');
+  assert.doesNotMatch(mark, /Outfitters/, 'never the stored words themselves');
+
+  const [stamped, stampedWords, stampedSaved] = out.stamped as [Answer, string[], string[]];
+  assert.deepEqual([stamped[0], stamped[1].value, stampedWords, stampedSaved], [200, 'Northwind Outfitters', ['Northwind Outfitters'], ['en']],
+    'the field holds its own new words, not the year and symbol the theme adds');
+  assert.equal(stamped[1].note, 'Saved to the field’s own words, “Northwind Outfitters”: the site’s templates or code add “© 2026” before them on the page.');
+  assert.deepEqual(out.unnamed, [200, ['Northwind Outfitters']], 'the window’s own save maps the same way');
+  const touches = out.touches as Answer;
+  assert.equal(touches[0], 409);
+  assert.match(touches[1].error ?? '', /^The site’s templates or code add “© 2026” before this field’s words .* this change also changes what is added around them/);
+  assert.doesNotMatch(touches[1].error ?? '', /changed since/, 'nothing changed, and nothing says so');
+
+  const [changed, changedWords, changedSaved] = out.changed as [Answer, string[], string[]];
+  assert.deepEqual([changed[0], changedWords, changedSaved], [409, ['Acme Trading'], []], 'the hash is not the stored words’ now: nothing is saved');
+  assert.equal(changed[1].error, 'This content was saved again since the page loaded. Reload, and try again.');
+  assert.deepEqual(out.added, [409, []], 'an item added since is a change since');
+
+  const [unstamped, unstampedWords, unstampedSaved] = out.unstamped as [Answer, string[], string[]];
+  assert.deepEqual([unstamped[0], unstampedWords, unstampedSaved], [409, ['Acme Outfitters'], []]);
+  assert.equal(unstamped[1].error, 'The page shows “© 2026” before the words this field holds (“Acme Outfitters”), and Wanigan cannot tell here whether the site’s templates or code add that or the field changed since the page loaded, so nothing is saved. Reload, and try again, or change it in Drupal’s form.',
+    'a mark without the hash proves nothing, as before');
+  assert.equal(out.notAHash, 400);
+
+  assert.deepEqual(out.formatted, [[200, { ok: true, value: 'Northwind & Co.', label: 'Paddling', revision: null, state: null, note: 'Saved to the field’s own words, “Northwind & Co.”: the site’s templates or code add “© 2026” before them on the page.' }], ['Northwind &amp; Co.']],
+    'formatted text kept as one run: that run spliced, escaped as markup');
+  assert.deepEqual(out.formatChanged, [409, []], 'a format changed since is a change since');
+  assert.equal(out.integer, 'acme_settings:12:field_notice:integer:en:::number_integer:', 'a field the word saves do not model: no hash');
 });

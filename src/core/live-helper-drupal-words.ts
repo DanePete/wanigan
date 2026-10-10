@@ -163,7 +163,8 @@ final class Words {
    * mark said: which of a summary and a text it showed, and whether trimmed.
    *
    * $unchanged says the field's mark showed the content is as the page
-   * rendered it (its revision and changed time). Only then are words the
+   * rendered it (its revision and changed time; for content that keeps
+   * neither, the field's stamp, stamp()). Only then are words the
    * page shows around the field's own, which the field does not hold, read
    * as the site's (a template or code adds them as it shows the field):
    * the edit is made on the field's own words (within()), and $wrapped is
@@ -188,6 +189,38 @@ final class Words {
       return [409, 'Wanigan does not save words this field shows through the ' . $formatter . ' formatter yet: it may show them other than as they are kept. Change them in Drupal’s form.'];
     }
     return self::formatted($entity, $field, $type, $item, $before, $after, $formatter, $unchanged, $wrapped);
+  }
+
+  /**
+   * A field's stored words as a page renders them, as a stamp its mark
+   * carries (the field's mark, wanigan_live_preprocess_field()) and a save
+   * checks (LiveController::saveWords()): the first 16 hex of a sha256 of
+   * every item's stored value, and a formatted text's format and summary,
+   * for the field types these saves handle; '' for any other. The same
+   * stamp later means the field holds what the page rendered, which is
+   * what content that keeps neither revisions nor a changed time (a site's
+   * settings entity) has nothing else to prove. Only the hash leaves the
+   * site, never the words.
+   */
+  public static function stamp(mixed $items): string {
+    try {
+      if (!is_iterable($items) || !is_object($items) || !method_exists($items, 'getFieldDefinition')) {
+        return '';
+      }
+      $type = (string) $items->getFieldDefinition()->getType();
+      $plain = in_array($type, self::PLAIN, TRUE);
+      if (!$plain && !in_array($type, self::FORMATTED, TRUE)) {
+        return '';
+      }
+      $kept = [];
+      foreach ($items as $item) {
+        $kept[] = $plain ? [(string) $item->value] : [(string) $item->value, (string) ($item->format ?? ''), $type === 'text_with_summary' ? (string) ($item->summary ?? '') : ''];
+      }
+      return substr(hash('sha256', serialize($kept)), 0, 16);
+    }
+    catch (\Throwable) {
+      return '';
+    }
   }
 
   /**

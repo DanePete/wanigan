@@ -227,6 +227,7 @@ use Drupal\\Core\\Block\\BlockPluginInterface;
 use Drupal\\Core\\Entity\\Display\\EntityViewDisplayInterface;
 use Drupal\\Core\\Entity\\EntityInterface;
 use Drupal\\Core\\Entity\\FieldableEntityInterface;
+use Drupal\\wanigan_live\\Save\\Words;
 
 /**
  * Whether this request came from Wanigan's live view.
@@ -292,9 +293,12 @@ function wanigan_live_preprocess_field(array &$variables) {
   }
   // Then what a save of these words checks against (LiveController::save()):
   // the translation the page rendered, the revision it showed, and, for
-  // content that keeps no revisions, when that translation last changed; and
-  // the formatter it was shown with (FormatterBase::view() puts it there),
-  // which says what of a formatted text the page showed, whole or trimmed.
+  // content that keeps no revisions, when that translation last changed; the
+  // formatter it was shown with (FormatterBase::view() puts it there), which
+  // says what of a formatted text the page showed, whole or trimmed; and a
+  // hash of the field's stored words as the page rendered them (its #items,
+  // Words::stamp()), never the words, which proves the same for content that
+  // keeps neither revisions nor a changed time.
   $variables['attributes']['data-wl-field'] = implode(':', [
     $entity->getEntityTypeId(),
     (string) $entity->id(),
@@ -304,6 +308,7 @@ function wanigan_live_preprocess_field(array &$variables) {
     $entity->getEntityType()->isRevisionable() ? (string) $entity->getRevisionId() : '',
     method_exists($entity, 'getChangedTime') ? (string) $entity->getChangedTime() : '',
     (string) ($element['#formatter'] ?? ''),
+    Words::stamp($element['#items'] ?? NULL),
   ]);
 }
 
@@ -489,26 +494,31 @@ final class LiveController extends ControllerBase {
    *
    * The field is named as the page marked it (data-wl-field: entity type,
    * id, field name, field type, the language the page rendered, the
-   * revision it showed, when that translation last changed, and the
-   * formatter that showed it). The design layer names its edit's target too:
-   * the content's UUID, its language, and the item (a value's delta:<n>, a
-   * reference's ref:<type>:<uuid>). The words go to that translation, never
-   * another, and to that item only, which must hold the words before.
-   * Without an item, the one item holding the words before is saved; two
-   * that hold them are refused, never guessed between. Where the page shows
-   * the item's words with more around them (the site's templates or code
-   * add it as they show the field), and the mark shows the content is as
-   * the page rendered it, the edit is made on the item's own words: saved
-   * when what is added is kept, unchanged, around new words, refused as
-   * code when the change touches it. Words the field does not hold are said
-   * to have changed since only where the content might have.
+   * revision it showed, when that translation last changed, the formatter
+   * that showed it, and a hash of the field's stored words as the page
+   * rendered them, Words::stamp()). The design layer names its edit's
+   * target too: the content's UUID, its language, and the item (a value's
+   * delta:<n>, a reference's ref:<type>:<uuid>). The words go to that
+   * translation, never another, and to that item only, which must hold the
+   * words before. Without an item, the one item holding the words before is
+   * saved; two that hold them are refused, never guessed between. Where the
+   * page shows the item's words with more around them (the site's templates
+   * or code add it as they show the field), and the mark shows the content
+   * is as the page rendered it (its revision or changed time; for content
+   * that keeps neither, the field's stamp), the edit is made on the item's
+   * own words: saved when what is added is kept, unchanged, around new
+   * words, refused as code when the change touches it. Words the field does
+   * not hold are said to have changed since only where the content might
+   * have.
    *
-   * It saves only over what the page showed: content saved again since, or
-   * a newer draft than the version visitors see (content moderation edits
-   * the latest revision; a save from the default one would leave the draft
-   * behind), is refused. Words in an inline Layout Builder block are saved
-   * through its layout (InlineWords), and words that are the field's label,
-   * held by no item, to its configuration (ConfigWords). Validation refuses
+   * It saves only over what the page showed: content saved again since (a
+   * later revision or changed time, or, where the mark carries neither, a
+   * field that no longer hashes to its stamp), or a newer draft than the
+   * version visitors see (content moderation edits the latest revision; a
+   * save from the default one would leave the draft behind), is refused.
+   * Words in an inline Layout Builder block are saved through its layout
+   * (InlineWords), and words that are the field's label, held by no item,
+   * to its configuration (ConfigWords). Validation refuses
    * it as Drupal's own form for this one field would (ContentEntityForm::
    * validateForm()): a violation of this field or of the content as a
    * whole, saying which; and besides, any the change brings, wherever it
@@ -519,14 +529,14 @@ final class LiveController extends ControllerBase {
    * does not stop it; the answer's note says it. A refusal saves nothing.
    */
   public function saveWords(array $body): JsonResponse {
-    $mark = array_pad(explode(':', (string) ($body['field'] ?? '')), 8, '');
-    [$type, $id, $name, , $marked, $shown, $shownChanged, $formatter] = $mark;
+    $mark = array_pad(explode(':', (string) ($body['field'] ?? '')), 9, '');
+    [$type, $id, $name, , $marked, $shown, $shownChanged, $formatter, $stamp] = $mark;
     $before = $this->words((string) ($body['before'] ?? ''));
     $after = trim((string) ($body['after'] ?? ''));
     if ($type === '' || $id === '' || $name === '' || $after === '') {
       return $this->refuse('Which field, and what words?', 400);
     }
-    if (!preg_match('/^\\d{0,20}$/', $shown) || !preg_match('/^\\d{0,20}$/', $shownChanged) || !preg_match('/^[A-Za-z0-9_.-]{0,128}$/', $formatter)) {
+    if (!preg_match('/^\\d{0,20}$/', $shown) || !preg_match('/^\\d{0,20}$/', $shownChanged) || !preg_match('/^[A-Za-z0-9_.-]{0,128}$/', $formatter) || !preg_match('/^(?:[a-f0-9]{16})?$/', $stamp)) {
       return $this->refuse('Which version of the content did the page show?', 400);
     }
     $given = static fn (string $key): ?string => is_string($body[$key] ?? NULL) && $body[$key] !== '' ? $body[$key] : NULL;
@@ -593,6 +603,14 @@ final class LiveController extends ControllerBase {
     elseif ($shownChanged !== '' && method_exists($entity, 'getChangedTime') && (string) $entity->getChangedTime() !== $shownChanged) {
       return $this->refuse('This content was saved again since the page loaded. Reload, and try again.', 409);
     }
+    // A mark with neither a revision nor a changed time (content that keeps
+    // neither, as a site's settings entity may): the field's stamp, a hash of
+    // its stored words as the page rendered them (Words::stamp()), is what
+    // proves the page showed it as it is. Another hash now is a change since.
+    $stamped = $shown === '' && $shownChanged === '' && $stamp !== '';
+    if ($stamped && Words::stamp($entity->get($name)) !== $stamp) {
+      return $this->refuse('This content was saved again since the page loaded. Reload, and try again.', 409);
+    }
     if (!$entity->access('update') || !$entity->get($name)->access('edit')) {
       return $this->refuse('The user you are logged in as in the live view may not change this. Log in there as someone who may.', 403);
     }
@@ -602,11 +620,12 @@ final class LiveController extends ControllerBase {
     // Whether the field's mark shows the content is as the page rendered it:
     // the revision it showed is this one (a later one is refused above), or
     // the changed time it showed is this translation's, and where it carried
-    // both, both are. Only then are words the page shows around the field's
-    // own read as the site's, and words the field does not hold never said
-    // to have changed since (Words::apply()).
+    // both, both are; or, where it carried neither, the field still hashes to
+    // its stamp (another hash is refused above). Only then are words the page
+    // shows around the field's own read as the site's, and words the field
+    // does not hold never said to have changed since (Words::apply()).
     $changed = method_exists($entity, 'getChangedTime') ? (string) $entity->getChangedTime() : NULL;
-    $unchanged = (($entity->getEntityType()->isRevisionable() && $shown !== '') || ($shownChanged !== '' && $changed === $shownChanged))
+    $unchanged = (($entity->getEntityType()->isRevisionable() && $shown !== '') || ($shownChanged !== '' && $changed === $shownChanged) || $stamped)
       && ($shownChanged === '' || $changed === NULL || $changed === $shownChanged);
     // The words, in the one item that holds them: a plain value, or one run
     // inside formatted text checked through its own format; or the field's
