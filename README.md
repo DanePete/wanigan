@@ -173,16 +173,23 @@ WordPress and other sites can each be on or off.
   before → after, what it reaches, its state, and why when it no longer finds
   its element. Make it real saves words through the site itself to the one
   thing that holds exactly those words: a plain text field on Drupal; on
-  WordPress a title, an excerpt, a string meta, the site's title or tagline, or
-  a menu link's text, each through core's REST API with a revision where
-  WordPress keeps one; or to your own template when they are written there
-  exactly once (with a revert). Formatted text (a block's, a post's content)
-  goes to an agent, as does a style: never written into the stylesheets by
-  hand. Then Verify renders the page with and without the layer and says what
-  differs, with pictures. Undo, redo, discard, and the page shown without the
-  layer to compare. The window has been checked against the UI sweep's
-  stand-in; on the Northstar demo, a script driving the real app made words
-  real and verified them. On WordPress that has been tested with stand-ins only.
+  WordPress a title, an excerpt, a string meta, the site's title or tagline, a
+  menu link's text, or a block's words (a paragraph, a heading, a navigation
+  label), each through core's REST API with a revision where WordPress keeps
+  one; or to your own template when they are written there exactly once (with
+  a revert). A block's words are sent as the HTML they are kept as: typed
+  words escaped, so a typed `<` stays a character, and words between a link's
+  or bold's tags changed only where the change falls inside one run of them,
+  every tag kept. Words kept in something shown beyond the page (a template or
+  part, a synced pattern, a menu, a widget, a setting) say where they show
+  first, and are saved when you make them real again. A change across
+  formatting, words in a classic post's content, and a style go to an agent,
+  saying why: never written into the stylesheets by hand. Then Verify renders
+  the page with and without the layer and says what differs, with pictures.
+  Undo, redo, discard, and the page shown without the layer to compare. The
+  window has been checked against the UI sweep's stand-in; on the Northstar
+  demo, a script driving the real app made words real and verified them. On
+  WordPress that has been tested with stand-ins only.
 - **Go to**, in the address field (click it, or Shift+Space in the live view,
   ⌘⇧Space anywhere in a project): an address, or any page of the site by
   typing a few letters of its title, an admin or structure page, a path or an id, ranked as you type and by what you choose
@@ -211,7 +218,12 @@ WordPress and other sites can each be on or off.
   a template's or template part's words (the first save copies the theme's
   file into the database, as the Site Editor does); a navigation menu's labels;
   a classic widget's settings; an image's alt in the media library, beside an image
-  block's own. Each says where it shows. What WordPress keeps nowhere it can
+  block's own. Each says where it shows, and the edit sheet says it again and
+  asks before saving anything shown beyond this page (a template or part, a
+  synced pattern's own words, a menu, a widget, a setting, a library alt).
+  Formatted text is edited as its words when it holds no tag (sent escaped, so
+  a typed `<b>` is words, never markup) and as its HTML when it holds inline
+  tags, saying which tags WordPress keeps. What WordPress keeps nowhere it can
   write (a static block's settings, words from a theme's pattern file, a
   fallback menu's links) says so, and so does what Wanigan does not do yet.
   How it hooks core:

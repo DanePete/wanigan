@@ -374,22 +374,42 @@ or the project.
      whose value, or a string property of it, equals the words as the site
      rendered them (whitespace folded, wptexturize's quotes, dashes and
      ellipsis read as typed): a title, an excerpt, a string meta, the site
-     title or tagline, a menu link's text (its address sent back as it was).
-     Never a slug, a status, a choice, an address or a read-only value. It is
-     looked for in the parts the edit's identity names, then outward a level
-     at a time, the nearest level deciding: each part's parent, and the post
-     a block shows through its block context (`context.postId`), so a
-     post-title block finds its post's title whether it sits inside the post
-     or beside it in the template. It is saved through the window's own
-     schema save (`POST /_wanigan/edit/<id>` with the trace's id, checked
-     with `checkValue` in main and again by the helper), refused if the view
-     holds another trace by then.
-   - Formatted text (a block's rich text, words inside a post's content, a
-     value holding markup) answers `route: 'agent'`, as styles and tokens do
-     until phase 3. Nothing holding the words, more than one thing holding
-     them (named), a changed page, a target the trace says this user may not
-     change, or a refusal from the site (passed on as the site said it)
-     answers `route: 'none'`, with why.
+     title or tagline, a menu link's text (its address sent back as it was),
+     a block's words. Never a slug, a status, a choice, an address or a
+     read-only value. It is looked for in the parts the edit's identity
+     names, then outward a level at a time, the nearest level deciding: each
+     part's parent, and the post a block shows through its block context
+     (`context.postId`), so a post-title block finds its post's title whether
+     it sits inside the post or beside it in the template. It is saved
+     through the window's own schema save (`POST /_wanigan/edit/<id>` with
+     the trace's id, checked with `checkValue` in main and again by the
+     helper), refused if the view holds another trace by then.
+   - A string its schema calls HTML (`contentMediaType: 'text/html'`: a
+     block's rich text, a field a block binds as rich text, a navigation
+     label) is sent as HTML, never as typed text
+     (`src/shared/rich-text.ts`). Words alone (no tag inside): the new words
+     escaped as the helper's own save writes text (`WP_HTML_Processor`
+     serialization: `&`, `<`, `>`, `"` and `'` as `&amp;`, `&lt;`, `&gt;`,
+     `&quot;` and `&apos;`), so what is sent is what the site keeps. Words
+     between tags: the one stretch where old and new words differ (compared
+     as words) must fall inside one run of text between two tags, at both
+     ends of the slide repeated letters allow; it is written there escaped,
+     every tag and every other run kept byte for byte, the new words taking
+     the formatting of the words they replace.
+   - A target the helper says shows beyond this page (its `shows`: a
+     template or template part, a synced pattern's own words, a navigation
+     menu, a widget, a site setting, a media library alt) is said first,
+     with where (`route: 'none'`, nothing saved), and saved when the edit is
+     made real again within five minutes for the same target, reach and
+     words. The edit sheet asks the same way (`editNotice()`).
+   - A change across formatting (or words added right beside a tag, which
+     could go inside it or outside), words inside a classic post's content,
+     and a block setting whose schema says neither HTML nor text answer
+     `route: 'agent'`, saying which (and where they show, when beyond this
+     page), as styles and tokens do until phase 3. Nothing holding the words,
+     more than one thing holding them (named), a changed page, a target the
+     trace says this user may not change, or a refusal from the site (passed
+     on as the site said it) answers `route: 'none'`, with why.
 4. `layerVerify(id)` renders the page with the layer (the design) and without
    it (the result) in hidden windows in the view's session at each width,
    measures the noise floor by rendering each version twice (every width is

@@ -3,7 +3,9 @@
 // and a stand-in live view (scripts/ui-live-stub.mjs): a made-up acme trace
 // over a plain wireframe, never a website. Screenshots go to
 // .artifacts/live/<theme>-<name>.png: the lenses' legends, the Inspector's
-// sections, moving a part by the keyboard, both edit sheets, the request, the
+// sections, moving a part by the keyboard, both edit sheets (and, on a made-up
+// WordPress trace, formatted text edited as words or as its HTML, and a save
+// shown beyond the page asked first with where), the request, the
 // palette, the component library (listed, searched, pictured, an entry's
 // details, placing one, a WordPress library's patterns and styles, an outdated
 // helper), taking a part out (at once, or asked first with its reach), the
