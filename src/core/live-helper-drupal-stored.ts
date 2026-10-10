@@ -9,7 +9,12 @@
 //   string_long, text, text_long, text_with_summary) and that can hold words: each item's stored string properties
 //   (a plain value, markup, JSON read token by token, a serialized list without classes) and map properties, walked by
 //   the shared matcher (live-helper-stored-match.ts). References, files, numbers, dates, choices, addresses, paths and
-//   computed fields hold no words of their own and are not searched. Read-only until the save.
+//   computed fields hold no words of their own and are not searched, nor are values a contributed module keeps in its
+//   own shape (metatag, yoast_seo, viewsreference, webform, ui_patterns_source, a Canvas component tree's inputs), a
+//   paragraph's behaviour settings and parent fields, or a value that is a machine name. Only the default revision is
+//   searched. Read-only until the save.
+// - A paragraph (an entity kept as a revision of the content holding it) is refused: saved alone, its host's next
+//   save or draft brings the old words back; its save through the host is another change.
 // - Found once, as words, or refused, saying why, exactly as the WordPress helper says it.
 // - Saved through the Entity API with the gates the other word saves have: the translation the page rendered (never
 //   another), only over the revision it showed (a save since, a newer draft or a page that showed a draft is refused;
@@ -47,13 +52,28 @@ final class StoredWords {
    * Field types that keep no words of their own: references, files, numbers,
    * dates, choices, addresses, flags, paths.
    */
-  public const NOT_WORDS = ['entity_reference', 'entity_reference_revisions', 'file', 'image', 'integer', 'decimal', 'float', 'boolean', 'timestamp', 'created', 'changed', 'datetime', 'daterange', 'list_string', 'list_integer', 'list_float', 'email', 'telephone', 'uri', 'path', 'language', 'uuid', 'password', 'comment', 'map_reference'];
+  public const NOT_WORDS = ['entity_reference', 'entity_reference_revisions', 'file', 'image', 'integer', 'decimal', 'float', 'boolean', 'timestamp', 'created', 'changed', 'datetime', 'daterange', 'list_string', 'list_integer', 'list_float', 'email', 'telephone', 'uri', 'path', 'language', 'uuid', 'password', 'comment', 'map_reference',
+    // Structured values a contributed module reads and writes in its own shape: tags with tokens, an SEO analysis,
+    // a view's arguments, a webform's elements and defaults, a pattern's source, a page builder's component tree.
+    'metatag', 'yoast_seo', 'viewsreference', 'webform', 'ui_patterns_source', 'component_tree'];
+
+  /**
+   * Fields that are a structure's bookkeeping, never words: a paragraph's behaviour settings and the host it belongs
+   * to.
+   */
+  private const NOT_FIELDS = ['behavior_settings', 'parent_id', 'parent_type', 'parent_field_name'];
 
   /**
    * Item properties that are never words: what an item refers to, its text
    * format, its language, an address.
    */
-  private const NOT_PROPERTIES = ['target_id', 'target_revision_id', 'target_type', 'target_uuid', 'format', 'langcode', 'pid', 'uri', 'url', 'alias', 'options'];
+  private const NOT_PROPERTIES = ['target_id', 'target_revision_id', 'target_type', 'target_uuid', 'format', 'langcode', 'pid', 'uri', 'url', 'alias', 'options', 'inputs', 'elements', 'default_data', 'behavior_settings', 'plugin_id', 'bundle', 'machine_name', 'display_id'];
+
+  /**
+   * A value that is a machine name (lower case, joined by underscores): what
+   * code reads, never words the page shows.
+   */
+  private const MACHINE = '/^[a-z][a-z0-9]*(?:_[a-z0-9]+)+$/';
 
   /**
    * Words longest that are saved here (the design layer cuts at the same).
@@ -138,6 +158,11 @@ final class StoredWords {
     }
     if (!$entity->hasTranslation($langcode)) {
       return self::refuse(409, 'refused', 'This content has no translation in that language, and Wanigan does not make one from here yet, so the words are not saved to another one. Translate it in Drupal first.');
+    }
+    // A paragraph (any entity kept as a revision of the content that holds it) belongs to that content: saved alone,
+    // the host's next save or draft brings the old words back. Its save through the host is not built yet.
+    if ($entity->getEntityType()->get('entity_revision_parent_id_field')) {
+      return self::refuse(409, 'refused', 'These words are in a paragraph, which belongs to the page that holds it: saving the paragraph alone would let that page’s next save or draft bring the old words back, and Wanigan does not save it through its page yet. Change it in that page’s form.');
     }
     $entity = $entity->getTranslation($langcode);
     if ($why = self::since($entity, $private['shown'][$type . '|' . $uuid . '|' . $langcode] ?? NULL)) {
@@ -279,7 +304,7 @@ final class StoredWords {
     $keys = array_values(array_filter(array_merge(array_values($type->getKeys()), method_exists($type, 'getRevisionMetadataKeys') ? array_values($type->getRevisionMetadataKeys()) : [])));
     $out = [];
     foreach ($entity->getFieldDefinitions() as $name => $definition) {
-      if (in_array($name, $keys, TRUE) || $definition->isComputed() || in_array($definition->getType(), self::MODELLED, TRUE) || in_array($definition->getType(), self::NOT_WORDS, TRUE)) {
+      if (in_array($name, $keys, TRUE) || in_array($name, self::NOT_FIELDS, TRUE) || $definition->isComputed() || in_array($definition->getType(), self::MODELLED, TRUE) || in_array($definition->getType(), self::NOT_WORDS, TRUE)) {
         continue;
       }
       $label = (string) $definition->getLabel();
@@ -290,7 +315,7 @@ final class StoredWords {
             continue;
           }
           $value = $typed->getValue();
-          if (!is_string($value) && !is_array($value)) {
+          if ((!is_string($value) && !is_array($value)) || (is_string($value) && preg_match(self::MACHINE, $value))) {
             continue;
           }
           $hits = WordsMatch::in_value($value, $want, $property === 'value' ? NULL : $property, [self::class, 'unserialize']);

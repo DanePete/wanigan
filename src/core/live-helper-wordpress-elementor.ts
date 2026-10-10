@@ -21,8 +21,10 @@
 //   as hints (live-stored-words.ts), so a template shown on the page (a header, say) is found too, and two widgets
 //   holding the same words are told apart. A document that is not the page's own is said to show wherever it is
 //   used, and saved only once the owner says so.
-// - Undo puts back `_elementor_data` and the plain-text copy byte for byte, then clears the CSS file and the element
-//   cache as Elementor's own save does.
+// - Undo saves the tree as it was through Document::save() again (never a raw write of its data), so its plain-text
+//   copy, its caches and a revision follow as on any save.
+// - For the live view's own requests Elementor's element cache is switched off (pre_option_elementor_element_cache_ttl
+//   → "disable"): on a cache hit no element renders, so the trace would see none, and a read-back could see old ones.
 
 const SOURCE = String.raw`
 /**
@@ -93,13 +95,14 @@ final class Wanigan_Live_Elementor implements Wanigan_Live_Words_Adapter {
 		$places = array();
 		foreach ($ids as $id) {
 			$doc = $id === $post->ID ? $own : self::document($id);
-			if (!$doc || !$doc->is_editable_by_current_user()) continue;
+			$theirs = get_post($id);
+			// A revision or an autosave of a document is never what the page shows.
+			if (!$doc || !$theirs || $theirs->post_type === 'revision' || !$doc->is_editable_by_current_user()) continue;
 			$elements = $doc->get_elements_data();
 			if (!is_array($elements)) continue;
 			$hits = self::hits($elements, $want, array());
 			if (!$hits) continue;
 			$raw = (string) get_post_meta($id, self::DATA, true);
-			$theirs = get_post($id);
 			$title = $theirs ? trim((string) $theirs->post_title) : '';
 			$kind = $id === $post->ID ? $noun : ($theirs && $theirs->post_type === 'elementor_library' ? 'template' : Wanigan_Live_Stored::noun($theirs));
 			$places[] = array(
@@ -115,6 +118,10 @@ final class Wanigan_Live_Elementor implements Wanigan_Live_Words_Adapter {
 
 	public static function claim(array $places, WP_Post $post, string $noun, string $after): array {
 		return $places;
+	}
+
+	public static function owned(string $key): ?string {
+		return null;
 	}
 
 	public static function site_places(string $want, string $after): array {
@@ -165,20 +172,31 @@ final class Wanigan_Live_Elementor implements Wanigan_Live_Words_Adapter {
 		$theirs = get_post($id);
 		if ($theirs && ($why = Wanigan_Live::post_refusal($theirs, Wanigan_Live_Stored::noun($theirs)))) return new WP_Error('wanigan', $why);
 		if (md5((string) get_post_meta($id, self::DATA, true)) !== $u['after']) return new WP_Error('wanigan', 'It changed again since, so putting it back could undo other work.');
+		$old = json_decode((string) $u['before'], true);
+		if (!is_array($old)) return new WP_Error('wanigan', 'The tree as it was cannot be read back, so it is not put back.');
 		$before = Wanigan_Live::revision_of($id);
-		// The data as it was, byte for byte (update_metadata() unslashes what it is given), then the plain-text copy as it
-		// was: a revision, which Elementor fills with its data.
-		update_metadata('post', $id, self::DATA, wp_slash((string) $u['before']));
-		if ((string) get_post_field('post_content', $id, 'raw') !== (string) $u['content']) wp_update_post(array('ID' => $id, 'post_content' => wp_slash((string) $u['content'])));
-		// What Elementor kept of the words, let go as its own save lets it go: the post's CSS file and its element cache.
-		if (class_exists('\Elementor\Core\Files\CSS\Post')) \Elementor\Core\Files\CSS\Post::create($id)->delete();
-		$doc->delete_meta(self::CACHE);
-		clean_post_cache($id);
+		// The tree as it was, through Elementor's own save again: its plain-text copy, its caches and a revision follow.
+		$plugin = \Elementor\Plugin::$instance;
+		$plugin->documents->switch_to_document($doc);
+		$plugin->db->switch_to_post($id);
+		try {
+			$saved = $doc->save(array('elements' => $old));
+		} finally {
+			$plugin->db->restore_current_post();
+			$plugin->documents->restore_document();
+		}
+		if (!$saved) return new WP_Error('wanigan', 'Elementor did not put it back.');
 		$after = Wanigan_Live::revision_of($id);
 		return array('revision' => $after && $after !== $before ? $after : null);
 	}
 }
 Wanigan_Live_Stored::adapt('Wanigan_Live_Elementor');
+// For the live view's own requests only, Elementor renders every element afresh rather than from its element cache
+// (Document::print_elements() reads elementor_element_cache_ttl, and "disable" skips the cache): on a cache hit no
+// element is rendered, so the trace would see none of them, and a page read back after a save could show the old ones.
+if (wanigan_live_on()) {
+	add_filter('pre_option_elementor_element_cache_ttl', function () { return 'disable'; });
+}
 `;
 
 export const WORDPRESS_ELEMENTOR_SOURCE = SOURCE;

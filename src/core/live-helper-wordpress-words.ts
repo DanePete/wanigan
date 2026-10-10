@@ -44,6 +44,11 @@ interface Wanigan_Live_Words_Adapter {
 	 * custom fields that are the plugin's own copy or cache]). Null when the plugin keeps nothing for it.
 	 */
 	public static function places(WP_Post $post, string $want, array $hints, string $noun): ?array;
+	/**
+	 * Why a custom field is the plugin's own data, never a field to type words into (a page builder's layout, its
+	 * cache, a mirror of its own table), or null: the core search leaves it out, and the trace does not offer it.
+	 */
+	public static function owned(string $key): ?string;
 	/** The core search's places, with any the plugin saves through its own API claimed (writer, label). */
 	public static function claim(array $places, WP_Post $post, string $noun, string $after): array;
 	/** Places outside the post (site-wide), searched only when the post holds the words nowhere; $after is the new words. */
@@ -120,6 +125,8 @@ final class Wanigan_Live_Stored {
 		if (!self::on_page($stored, $pid)) return self::refuse(409, 'refused', 'That content is not on the page this edit was made on: reload it and try again.');
 		$post = get_post($pid);
 		if (!$post instanceof WP_Post) return self::refuse(404, 'refused', 'That content is gone.');
+		// A revision or an autosave is a copy of the post kept for going back, never what the page shows.
+		if ($post->post_type === 'revision' || (function_exists('wp_is_post_autosave') && wp_is_post_autosave($post))) return self::refuse(409, 'refused', 'That is a revision or an autosave of the content, not what the page shows: Wanigan saves only into the content itself.');
 		$noun = self::noun($post);
 		$why = Wanigan_Live::post_refusal($post, $noun);
 		if ($why) return self::refuse(strpos($why, 'Your WordPress user cannot') === 0 || strpos($why, 'Log in') === 0 ? 403 : 409, 'refused', $why);
@@ -520,12 +527,41 @@ final class Wanigan_Live_Stored {
 			foreach ($skip as $prefix) {
 				if ($prefix !== '' && strpos($key, $prefix) === 0) continue 2;
 			}
+			if (self::owned($key) !== null) continue;
 			$hits = Wanigan_Live_Words_Match::in_value($raw, $want, $key, array(self::class, 'unserialize'));
 			if (!$hits) continue;
 			$form = $hits[0]['steps'] ? ($hits[0]['steps'][0][0] === 'j' ? ' (in its JSON)' : ($hits[0]['steps'][0][0] === 's' ? ' (in its saved list)' : '')) : '';
 			$out[] = array('root' => 'meta:' . (int) $row['meta_id'], 'mid' => (int) $row['meta_id'], 'key' => $key, 'label' => 'this ' . $noun . '’s custom field “' . $key . '”' . $form, 'raw' => $raw, 'hash' => md5($raw), 'hits' => $hits, 'writer' => 'core', 'revisions' => in_array($key, $kept, true), 'site' => false, 'post' => $post->ID);
 		}
 		return $out;
+	}
+
+	/** Why a custom field is a plugin's own data and never words to type into (an adapter says so), or null. */
+	public static function owned(string $key): ?string {
+		foreach (self::$adapters as $a) {
+			try {
+				$why = call_user_func(array($a, 'owned'), $key);
+			} catch (Throwable $e) {
+				continue;
+			}
+			if (is_string($why) && $why !== '') return $why;
+		}
+		return null;
+	}
+
+	/**
+	 * Why a registered custom field the post's REST route offers is not a field to type words into, or null: a
+	 * plugin's own data (an adapter says whose), or a string holding a structure (JSON or a serialized list), which a
+	 * field of plain words would write over whole, past whatever owns it.
+	 */
+	public static function meta_why(string $key, $schema, $value): ?string {
+		$owned = self::owned($key);
+		if ($owned !== null) return $owned;
+		$type = is_array($schema) && isset($schema['type']) ? $schema['type'] : null;
+		if ($type === 'string' && is_string($value) && (Wanigan_Live_Words_Match::json_values($value) !== null || (function_exists('is_serialized') && is_serialized($value)))) {
+			return 'Wanigan does not offer this field as words to type: it holds a structure (JSON or a saved list), and saving it whole would go past whatever keeps it. Retype the words on the page, and Make it real saves them where they are kept inside it.';
+		}
+		return null;
 	}
 
 	/** A post's custom fields as stored (wp-admin/includes/post.php has_meta(): key, value, meta_id), read only. */

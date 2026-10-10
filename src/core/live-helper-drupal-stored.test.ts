@@ -65,7 +65,7 @@ namespace {
     public function id() { return '31'; }
     public function uuid() { return '${UUID}'; }
     public function language() { return new class($this->langcode) { public function __construct(private string $l) {} public function getId() { return $this->l; } }; }
-    public function getEntityType() { return new class { public function isRevisionable() { return World::$revisionable; } public function getKeys() { return ['id' => 'nid', 'uuid' => 'uuid', 'langcode' => 'langcode', 'bundle' => 'type', 'revision' => 'vid', 'label' => 'title']; } public function getRevisionMetadataKeys() { return ['revision_log_message' => 'revision_log']; } }; }
+    public function getEntityType() { return new class { public function get($k) { return World::$paragraph && $k === 'entity_revision_parent_id_field' ? 'parent_id' : NULL; } public function isRevisionable() { return World::$revisionable; } public function getKeys() { return ['id' => 'nid', 'uuid' => 'uuid', 'langcode' => 'langcode', 'bundle' => 'type', 'revision' => 'vid', 'label' => 'title']; } public function getRevisionMetadataKeys() { return ['revision_log_message' => 'revision_log']; } }; }
     public function hasTranslation($l) { return isset(World::$translations[$l]); }
     public function getTranslation($l) { return World::$translations[$l]; }
     public function access($op) { return !in_array('update', World::$cannot, TRUE); }
@@ -87,6 +87,7 @@ namespace {
     public static ?int $latest = NULL;
     public static int $changed = 1760000000;
     public static bool $revisionable = TRUE;
+    public static bool $paragraph = FALSE;
     public static array $violations = [];
     public static array $cannot = [];
     public static array $saved = [];
@@ -96,7 +97,7 @@ namespace {
     public static array $trace = [];
     /** A trip in these languages, each with these fields: name => [type, label, [item values...], [property types]]. */
     public static function make(array $languages): void {
-      self::$translations = []; self::$rev = 7; self::$latest = NULL; self::$violations = []; self::$cannot = []; self::$saved = []; self::$log = []; self::$revisionable = TRUE; self::$changed = 1760000000;
+      self::$translations = []; self::$rev = 7; self::$latest = NULL; self::$violations = []; self::$cannot = []; self::$saved = []; self::$log = []; self::$revisionable = TRUE; self::$paragraph = FALSE; self::$changed = 1760000000;
       foreach ($languages as $l => $fields) {
         $built = []; $defs = [];
         foreach ($fields as $name => [$type, $label, $values, $types]) {
@@ -200,6 +201,14 @@ const SCENARIOS = String.raw`
   // Made from tokens at render: a field of tags whose title is a template.
   World::make(['en' => $trip(['field_tags_meta' => ['acme_meta', 'Page tags', [['value' => serialize(['title' => '[node:title] | [site:name]'])]], []]])]);
   $out['made'] = $ask('find', 'Northwind trips | Acme', 'Northwind tours | Acme');
+  // Left out: tags a contributed module keeps in its own shape, and a value that is a machine name.
+  World::make(['en' => $trip(['field_meta' => ['metatag', 'Meta tags', [['value' => serialize(['title' => 'Northwind trips for everyone'])]], []], 'field_style' => ['acme_choice', 'Style', [['value' => 'acme_wide_card']], []]])]);
+  $out['metatag'] = $ask('find', 'Northwind trips for everyone', 'Northwind trips');
+  $out['machine'] = $ask('find', 'acme_wide_card', 'acme_narrow_card');
+  // A paragraph belongs to the page that holds it: refused, never saved alone.
+  World::make(['en' => $trip()]);
+  World::$paragraph = TRUE;
+  $out['paragraph'] = [$save('See the trips', 'See every trip'), World::$saved];
   // Every violation refuses it; the workflow's with a 403; access.
   World::make(['en' => $trip()]);
   World::$violations = [['field_acme_layout.0.value', 'This value is not valid JSON.']];
@@ -281,6 +290,10 @@ test('only over what the page showed, in its translation: a later save, a newer 
   const [[violation, refused], saved] = out.violation as [Answer, string[]];
   assert.deepEqual([violation, refused.error, saved], [422, 'Drupal would not save it. field_acme_layout.0.value: This value is not valid JSON.', []]);
   assert.deepEqual((out.cannot as Answer)[0], 403);
+  assert.deepEqual([(out.metatag as Answer)[1].reason, (out.machine as Answer)[1].reason], ['nowhere', 'nowhere'], 'a metatag field and a machine name are not searched');
+  const [[paragraph, refusal], paragraphSaved] = out.paragraph as [Answer, string[]];
+  assert.deepEqual([paragraph, paragraphSaved], [409, []]);
+  assert.match(refusal.error ?? '', /^These words are in a paragraph, which belongs to the page that holds it/);
   assert.deepEqual([(out.otherUser as Answer)[0], (out.otherUser as Answer)[1].reason], [409, 'changed']);
   assert.deepEqual([(out.elsewhere as Answer)[0], (out.elsewhere as Answer)[1].error], [409, 'That content is not on the page this edit was made on: reload it and try again.']);
 });

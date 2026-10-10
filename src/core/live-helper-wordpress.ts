@@ -1798,7 +1798,8 @@ final class Wanigan_Live {
 				$value = array_key_exists($key, $values) ? $values[$key] : null;
 				$rev = !empty($registered[$key]['revisions_enabled']);
 				$label = (isset($s['description']) && $s['description'] !== '' ? $s['description'] : $key) . ' (' . $title . ')';
-				$add('meta-' . $n, 'meta', $label, $s, $secret ? null : $value, 'meta', $rev, $secret ? 'Wanigan does not show or change a value that looks like a secret.' : null);
+				// A plugin's own data, or a structure in a string, is not offered as words to type (Wanigan_Live_Stored::meta_why()).
+				$add('meta-' . $n, 'meta', $label, $s, $secret ? null : $value, 'meta', $rev, $secret ? 'Wanigan does not show or change a value that looks like a secret.' : Wanigan_Live_Stored::meta_why((string) $key, $s, $value));
 				$id = $out['meta-' . $n];
 				unset($out['meta-' . $n]);
 				$out['meta:' . $key] = $id;

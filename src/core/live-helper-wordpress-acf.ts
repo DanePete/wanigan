@@ -50,6 +50,10 @@ final class Wanigan_Live_Acf implements Wanigan_Live_Words_Adapter {
 		return null;
 	}
 
+	public static function owned(string $key): ?string {
+		return null;
+	}
+
 	/** The ACF field a stored value is, by its name and where it is stored (a post's ID, or 'options'); null when it is not ACF's. */
 	private static function field(string $name, $where): ?array {
 		$ref = acf_get_reference($name, $where);

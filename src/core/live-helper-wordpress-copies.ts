@@ -17,6 +17,10 @@
 // - Pagelayer: `pagelayer-data` is a copy that never renders; its words are in the post's block markup, as core keeps
 //   them.
 // - All in One SEO: `_aioseo_*` custom fields mirror its own table, which is what renders: never written.
+// - Bricks (`_bricks_*`) and Breakdance (`_breakdance_data`): their own page data, not saved into.
+// Every one of these custom fields is also kept out of the fields the trace offers to type into (owned()), and words
+// found in one are refused, saying whose data it is. For the live view's own requests, The Events Calendar's HTML cache
+// is switched off (tribe_events_views_v2_should_cache_html), so the trace and a read-back see what it renders now.
 
 const SOURCE = String.raw`
 /**
@@ -39,37 +43,48 @@ final class Wanigan_Live_Copies implements Wanigan_Live_Words_Adapter {
 		return is_array($v) || $v instanceof stdClass ? $v : null;
 	}
 
-	public static function places(WP_Post $post, string $want, array $hints, string $noun): ?array {
-		if (get_post_meta($post->ID, '_fl_builder_enabled', true)) {
-			// Beaver Builder renders its own layout: found there, said so; its stored-content copy and its fields are not searched.
-			$places = array();
-			foreach (array('_fl_builder_data' => 'Beaver Builder’s layout for this ' . $noun) as $key => $label) {
-				foreach (Wanigan_Live_Stored::meta_rows($post->ID) as $row) {
-					if ((string) $row['meta_key'] !== $key || !is_string($row['meta_value'])) continue;
-					$hits = Wanigan_Live_Words_Match::in_value($row['meta_value'], $want, $key, array(self::class, 'nodes'));
-					foreach ($hits as &$h) {
-						if ($h['stuck'] === '') $h['stuck'] = 'Wanigan does not save into Beaver Builder’s layout yet (its published and draft layouts and its asset cache move together): change them in Beaver Builder';
-					}
-					unset($h);
-					if ($hits) $places[] = array('root' => 'copy:' . $key, 'label' => $label, 'raw' => $row['meta_value'], 'hash' => md5($row['meta_value']), 'hits' => $hits, 'writer' => 'core', 'revisions' => false, 'site' => false, 'post' => $post->ID);
-				}
-			}
-			return array('places' => $places, 'content' => true, 'meta' => array('_fl_builder_'));
+	/** Custom fields that are a plugin's own data, by the start of their names, and why; none is a field to type into, or saved by the core search. */
+	const OWNED = array(
+		'_elementor_' => 'it is Elementor’s own data for the page, which only Elementor’s own save keeps right (its CSS, its element cache, its revisions)',
+		'_fl_builder_' => 'it is Beaver Builder’s layout, which Wanigan does not save into yet (its published and draft layouts and its asset cache move together): change it in Beaver Builder',
+		'panels_data' => 'it is SiteOrigin Page Builder’s layout, which Wanigan does not save into yet: change it in SiteOrigin Page Builder',
+		'_bricks_' => 'it is Bricks’ own data for the page, which Wanigan does not save into: change it in Bricks',
+		'_breakdance_data' => 'it is Breakdance’s own data for the page, which Wanigan does not save into: change it in Breakdance',
+		'pagelayer-data' => 'it is a copy Pagelayer keeps that never shows; the words it shows are in the page’s own blocks',
+		'_aioseo_' => 'it is a copy All in One SEO keeps of its own table, which is what the page shows, so saving it would change nothing: change it in All in One SEO',
+	);
+
+	public static function owned(string $key): ?string {
+		foreach (self::OWNED as $prefix => $why) {
+			if (strpos($key, $prefix) === 0) return $why;
 		}
-		$skip = array('pagelayer-data');
-		// SiteOrigin Page Builder renders panels_data; the stored content is its copy.
+		return null;
+	}
+
+	public static function places(WP_Post $post, string $want, array $hints, string $noun): ?array {
+		// What a plugin's own data holds is said, never saved: found there read only, each hit refused with whose it is.
+		// Elementor's is its adapter's when Elementor is loaded; when it is not, the page shows the stored content.
+		$places = array();
+		foreach (Wanigan_Live_Stored::meta_rows($post->ID) as $row) {
+			$key = (string) $row['meta_key'];
+			$why = self::owned($key);
+			if ($why === null || strpos($key, '_elementor_') === 0 || !is_string($row['meta_value']) || $row['meta_value'] === '') continue;
+			$hits = Wanigan_Live_Words_Match::in_value($row['meta_value'], $want, $key, array(self::class, 'nodes'));
+			foreach ($hits as &$h) {
+				if ($h['stuck'] === '') $h['stuck'] = $why;
+			}
+			unset($h);
+			$form = $hits && $hits[0]['steps'] ? ($hits[0]['steps'][0][0] === 's' ? ' (in its saved list)' : ($hits[0]['steps'][0][0] === 'j' ? ' (in its JSON)' : '')) : '';
+			if ($hits) $places[] = array('root' => 'owned:' . (int) $row['meta_id'], 'label' => 'this ' . $noun . '’s custom field “' . $key . '”' . $form, 'raw' => $row['meta_value'], 'hash' => md5($row['meta_value']), 'hits' => $hits, 'writer' => 'core', 'revisions' => false, 'site' => false, 'post' => $post->ID);
+		}
+		// Beaver Builder and SiteOrigin Page Builder render their own layouts: the stored content is their copy.
 		$panels = get_post_meta($post->ID, 'panels_data', true);
-		return array('places' => array(), 'content' => is_array($panels) && $panels !== array(), 'meta' => $skip);
+		$copy = (bool) get_post_meta($post->ID, '_fl_builder_enabled', true) || (is_array($panels) && $panels !== array());
+		return array('places' => $places, 'content' => $copy, 'meta' => array());
 	}
 
 	public static function claim(array $places, WP_Post $post, string $noun, string $after): array {
 		foreach ($places as $i => $p) {
-			// All in One SEO's mirror of its own table: what renders is the table.
-			if (isset($p['key']) && strpos((string) $p['key'], '_aioseo_') === 0) {
-				foreach ($places[$i]['hits'] as $j => $h) {
-					if ($h['stuck'] === '') $places[$i]['hits'][$j]['stuck'] = 'that field is a copy All in One SEO keeps of its own table, which is what the page shows, so saving it would change nothing: change it in All in One SEO for this ' . $noun;
-				}
-			}
 			// A SiteOrigin widget block's rendered copies, rebuilt from its widgetData.
 			if (isset($p['block']['name']) && strpos((string) $p['block']['name'], 'sowb/') === 0) {
 				foreach ($places[$i]['hits'] as $j => $h) {
@@ -97,6 +112,11 @@ final class Wanigan_Live_Copies implements Wanigan_Live_Words_Adapter {
 	}
 }
 Wanigan_Live_Stored::adapt('Wanigan_Live_Copies');
+// For the live view's own requests only, The Events Calendar renders its views afresh rather than from its HTML cache:
+// on a cache hit the trace would see none of the events' parts, and a read-back could see old words.
+if (wanigan_live_on()) {
+	add_filter('tribe_events_views_v2_should_cache_html', '__return_false');
+}
 `;
 
 export const WORDPRESS_COPIES_SOURCE = SOURCE;

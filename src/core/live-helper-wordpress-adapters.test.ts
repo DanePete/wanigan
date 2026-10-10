@@ -107,7 +107,7 @@ const ELEMENTOR_SCENARIOS = String.raw`
   $out['templateData'] = json_decode(wl_data(77), true)[0]['settings']['title'];
 `;
 
-test('Elementor: words are found in the elements tree it renders, never its copies, and saved through its own Document::save(), caches cleared; undo puts back the exact bytes', (t) => {
+test('Elementor: words are found in the elements tree it renders, never its copies, and saved through its own Document::save(), caches cleared; undo saves the old tree the same way', (t) => {
   const out = runWords(t, ELEMENTOR_SCENARIOS, WORDPRESS_STAND_IN, ELEMENTOR);
   if (!out) return;
   type A = [{ ok: boolean; error?: string; reason?: string; where?: string; writer?: string; revision?: string | null; undo?: string; ask?: string | null; place?: string; hash?: string; cache?: string }, number];
@@ -122,29 +122,30 @@ test('Elementor: words are found in the elements tree it renders, never its copi
   assert.deepEqual(out.cleared, [[12], false, ['document 12', 'document restored'], ['post 12', 'post restored']], 'its CSS file and element cache gone; set up as the editor’s save is');
   assert.equal(out.editorValue, '<p>Rent a kayak &amp; go.</p>');
   assert.deepEqual([out.undoEditor, out.undoTitle], [{ revision: 902 }, { revision: 903 }]);
-  assert.deepEqual(out.undone, [true, 'a plain-text copy: Paddle the north — safely Rent a canoe & go. Book now Book now', [12, 12]], 'the exact bytes back, and the caches let go');
+  const undone = out.undone as [boolean, string, number[]];
+  assert.deepEqual([undone[0], undone[2]], [true, [12, 12]], 'the tree’s exact bytes back, through Elementor’s own save each time, its caches let go');
+  assert.ok(undone[1].includes('Paddle the north — safely'), 'Elementor wrote its plain-text copy from the old tree');
   assert.equal((out.twice as A)[0].reason, 'twice');
   assert.equal((out.named as A)[0].ok, true);
   assert.deepEqual(out.namedTree, ['Book now', 'Book a canoe'], 'the button the page named, not the other');
   assert.match((out.autosave as A)[0].error ?? '', /changes in Elementor’s editor that are not saved yet/);
   assert.match((out.unloadable as A)[0].error ?? '', /cannot load every element of this now .* would drop them/);
-  assert.deepEqual(out.saves, [12, 12, 12], 'neither refusal reached Elementor’s save');
+  assert.deepEqual(out.saves, [12, 12, 12, 12, 12], 'two saves, two undos and the named button: neither refusal reached Elementor’s save');
   const [template] = out.template as A;
   assert.equal(template.where, 'the Elementor template “Site header” (its heading widget)');
   assert.equal(template.ask, 'These words are kept in the Elementor template “Site header” (its heading widget), which every page that prints it shows, not this page alone.');
   assert.deepEqual([(out.templateUnasked as A)[1], (out.templateAsked as A)[0].ok, out.templateData], [409, true, 'Call Acme']);
 });
 
-test('without Elementor loaded, its data, its plain-text copy and its cache are three places: refused, which is why the adapter reads its tree', (t) => {
+test('without Elementor loaded, the page shows its stored content, and Elementor’s own data and cache are left out', (t) => {
   const out = runWords(t, String.raw`
     $raw = wl_elementor_page($tree);
     Wl_Elementor_Plugin::$instance = null;
     $out['find'] = wl_ask('find', 'Paddle the north — safely', 'Paddle on');
   `, WORDPRESS_STAND_IN, ELEMENTOR);
   if (!out) return;
-  const [find, status] = out.find as [{ reason: string; error: string }, number];
-  assert.deepEqual([status, find.reason], [409, 'twice']);
-  assert.match(find.error, /this page’s stored content, this page’s custom field “_elementor_data” \(in its JSON\) and this page’s custom field “_elementor_element_cache”/);
+  const [find, status] = out.find as [{ ok: boolean; where: string }, number];
+  assert.deepEqual([status, find.ok, find.where], [200, true, 'this page’s stored content'], 'not _elementor_data, not its element cache');
 });
 
 const ACF = String.raw`
@@ -272,11 +273,34 @@ test('known copies: a Beaver Builder layout is refused with where, its stored-co
     wl_page(array('post_content' => '<p>Day trips</p>'));
     add_meta_row(12, '_aioseo_title', 'Northwind trips for everyone');
     $out['aioseo'] = wl_ask('find', 'Northwind trips for everyone', 'Northwind trips');
+    // The fields the trace offers to type into: a builder's data and a structure in a string are not offered.
+    $out['metaWhy'] = array(
+      Wanigan_Live_Stored::meta_why('_elementor_data', array('type' => 'string'), '[]'),
+      Wanigan_Live_Stored::meta_why('_bricks_page_content_2', array('type' => 'array'), array()),
+      Wanigan_Live_Stored::meta_why('acme_layout', array('type' => 'string'), '{"title":"Paddle on"}'),
+      Wanigan_Live_Stored::meta_why('acme_list', array('type' => 'string'), serialize(array('a' => 'b'))),
+      Wanigan_Live_Stored::meta_why('acme_subtitle', array('type' => 'string'), 'Paddle on'),
+    );
   `);
   if (!out) return;
   type A = [{ ok: boolean; error?: string; reason?: string; where?: string }, number];
-  assert.equal((out.beaver as A)[0].error, 'These words are kept in Beaver Builder’s layout for this page, but Wanigan does not save into Beaver Builder’s layout yet (its published and draft layouts and its asset cache move together): change them in Beaver Builder. Nothing is saved.');
-  assert.equal((out.siteorigin as A)[0].where, 'this page’s custom field “panels_data” (in its saved list)', 'the stored content is SiteOrigin’s copy: not a second place');
+  assert.equal((out.beaver as A)[0].error, 'These words are kept in this page’s custom field “_fl_builder_data” (in its saved list), but it is Beaver Builder’s layout, which Wanigan does not save into yet (its published and draft layouts and its asset cache move together): change it in Beaver Builder. Nothing is saved.',
+    'found in its layout, read only; its stored-content copy is not a second place');
+  assert.equal((out.siteorigin as A)[0].error, 'These words are kept in this page’s custom field “panels_data” (in its saved list), but it is SiteOrigin Page Builder’s layout, which Wanigan does not save into yet: change it in SiteOrigin Page Builder. Nothing is saved.',
+    'the stored content is SiteOrigin’s copy: not a second place');
   assert.equal((out.sowb as A)[0].where, 'this page’s stored content, in the settings of its “sowb/headline” block', 'widgetData, not the rendered widgetMarkup');
   assert.match((out.aioseo as A)[0].error ?? '', /a copy All in One SEO keeps of its own table, which is what the page shows/);
+  const why = out.metaWhy as (string | null)[];
+  assert.match(why[0] ?? '', /^it is Elementor’s own data for the page/);
+  assert.match(why[1] ?? '', /^it is Bricks’ own data/);
+  assert.match(why[2] ?? '', /holds a structure \(JSON or a saved list\)/);
+  assert.match(why[3] ?? '', /holds a structure/);
+  assert.equal(why[4], null, 'a plain field of words is offered as it always was');
+});
+
+test('for the live view’s own requests only, Elementor’s element cache and The Events Calendar’s HTML cache are switched off', async () => {
+  const { WORDPRESS_ELEMENTOR_SOURCE } = await import('./live-helper-wordpress-elementor.ts');
+  const { WORDPRESS_COPIES_SOURCE } = await import('./live-helper-wordpress-copies.ts');
+  assert.match(WORDPRESS_ELEMENTOR_SOURCE, /if \(wanigan_live_on\(\)\) \{\n\tadd_filter\('pre_option_elementor_element_cache_ttl', function \(\) \{ return 'disable'; \}\);\n\}/);
+  assert.match(WORDPRESS_COPIES_SOURCE, /if \(wanigan_live_on\(\)\) \{\n\tadd_filter\('tribe_events_views_v2_should_cache_html', '__return_false'\);\n\}/);
 });
