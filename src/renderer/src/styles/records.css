@@ -166,7 +166,9 @@ button.record,
 
 .record-time {
   flex: none;
-  width: var(--space-12);
+  /* Room for the widest time of day ("12:59 PM"), on one line, so the words line up under one another. */
+  min-width: calc(var(--space-12) + var(--space-4));
+  white-space: nowrap;
   color: var(--faint);
   font-size: var(--text-xs);
   font-variant-numeric: tabular-nums;
