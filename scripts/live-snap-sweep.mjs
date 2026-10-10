@@ -198,6 +198,8 @@ try {
     await queuedNow('snap: sending did not go to the agent');
     // The status line says only the latest outcome: what it said is kept by the stand-in (ui-live-stub.mjs).
     await page.waitForFunction(() => (window.__wgLive.said ?? []).some((x) => x.includes('Sent to')), null, { timeout: 6000 }).catch(() => fail(t('snap: sending did not say so')));
+    // The session it went to is a click away, to watch it take the note.
+    await page.waitForSelector('.status-line button:has-text("Open the session")', { timeout: 3000 }).catch(() => fail(t('snap: the sent message does not offer to open the session')));
     const snapSent = await sent();
     const pic = snapSent.filter((s) => s.method === 'attachments.save');
     const queued = snapSent.find((s) => s.method === 'sessions.queue');

@@ -98,6 +98,10 @@ function startFor(project: ProjectSummary, provider: Provider): { model: string 
   }
 }
 
+/** The status line's way to the session that was just handed something, to watch it take it. */
+const openSession = (project: ProjectSummary, session: Session): { label: string; run: () => void } =>
+  ({ label: 'Open the session', run: () => navigate({ name: 'session', projectKey: project.key, sessionId: session.id }) });
+
 /**
  * Start an agent in the project and hand it notes: the session started, the pictures saved to it and the words queued,
  * as a send to a running session does; then said in the status line, with the session a click away. A note it could not
@@ -116,7 +120,7 @@ export function useStartAgent(project: ProjectSummary, components: Map<string, L
       await new Promise((done) => window.setTimeout(done, 750));
       return true;
     };
-    const open = { label: 'Open the session', run: () => navigate({ name: 'session', projectKey: project.key, sessionId: session.id }) };
+    const open = openSession(project, session);
     const sent = await send(notes, session, components, ready).catch((e: Error) => e);
     if (sent instanceof Error) {
       for (const n of notes) if (!n.id) addNote(project.id, n);
@@ -204,7 +208,7 @@ export function NoteComposer({ project, draft, components, prefer, compact = fal
     const ok = await attempt(() => send([n], target, components), (m) => toast(m, 'error'));
     if (ok === undefined) return;
     setText('');
-    toast(`Sent to ${target.cardKey ?? target.title}. It arrives when the agent is next idle.`);
+    toast(`Sent to ${target.cardKey ?? target.title}. It arrives when the agent is next idle.`, 'info', { action: openSession(project, target) });
     onDone?.();
   };
   // With no agent running (or a new one wanted), one press starts it on this note: never by itself.
@@ -333,7 +337,7 @@ export function useNotesSender(project: ProjectSummary, components: Map<string, 
     const ok = await attempt(() => send(notes, target, components), (m) => toast(m, 'error'));
     if (ok === undefined) return;
     clearNotes(project.id);
-    toast(`Sent ${notes.length === 1 ? 'the note' : `${notes.length} notes`} to ${target.cardKey ?? target.title}. They arrive when the agent is next idle.`);
+    toast(`Sent ${notes.length === 1 ? 'the note' : `${notes.length} notes`} to ${target.cardKey ?? target.title}. They arrive when the agent is next idle.`, 'info', { action: openSession(project, target) });
   };
   return { notes, agents, agentsKnown, target, setTo, sendAll, starter, starting, startWith };
 }
