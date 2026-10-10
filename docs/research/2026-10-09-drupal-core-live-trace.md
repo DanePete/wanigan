@@ -1,4 +1,4 @@
-# How the Drupal helper hooks Drupal core (11.4)
+# How the Drupal helper hooks Drupal core (10.3 to 11.4)
 
 The live view's Drupal helper (`wanigan_live`, written by
 `src/core/live-helper-drupal*.ts`) traces what made every part of a page,
@@ -11,8 +11,10 @@ entity, field and form APIs and config entities shows up, and is editable,
 because it goes through them.
 
 This note is the map: every interception point, the core code path it hooks
-(file and function, read in Drupal 11.4.7), what it costs in ordering and
-caching, and how each edge case is handled or reported. Contracts:
+(file and function, read in Drupal 11.4.7, and for each earlier release in its
+own tarball: [Every supported release](#every-supported-release)), what it
+costs in ordering and caching, and how each edge case is handled or reported.
+Contracts:
 `src/shared/live-trace.ts` (the trace, edits, collections, the routes) and
 `src/shared/live-find.ts` (Go to).
 
@@ -33,22 +35,111 @@ subclasses of their own classes; the output of a request without the token
 is byte for byte what core produces. `WaniganLiveServiceProvider::alter()`
 swaps a class only when the service still has core's class and every method
 the subclass extends has exactly the signature it was written against
-(reflection: parameter types, by-reference flags, return type). When a later
-core changes one, that service keeps core's class: the trace loses that piece,
-and the site never loads a class that no longer fits.
+(reflection: parameter types, by-reference flags, return type). Core's classes
+changed shape between 10.3 and 11.4, so each service has one class per shape
+and the provider picks the one that fits the running core (below). When none
+fits (a release the helper does not know), that service keeps core's class:
+the site never loads a class that does not fit, and the trace says what it
+lacks.
+
+## Every supported release
+
+The helper declares `core_version_requirement: ^10.3 || ^11`. A stress test on
+a real local Drupal 10.6 site (PHP 8.2) found the helper installed and its
+trace route answering, but every page's trace had no parts: the provider was
+written against 11.4's signatures only, so on 10.x it swapped nothing. The
+signatures of every class the trace extends were then read by reflection from
+the release tarball of the latest patch of each minor release (10.3.14,
+10.4.10, 10.5.12, 10.6.18, 11.0.13, 11.1.10, 11.2.14, 11.3.18, 11.4.9) and
+kept as a test fixture (`src/core/fixtures/drupal-core-trace-signatures.json`:
+every method's signature and declaration, every property, and the Twig
+engine's functions). What changed, and the class written for each shape:
+
+| Service | Shape (releases) | The trace's class | How core lists or runs it there |
+|---|---|---|---|
+| `module_handler` | 10.3 to 11.0 (one file, unchanged) | `TraceModuleHandler103` | Procedural hooks only: `getImplementationInfo()` by module; `alter()` builds its function list into `$alterFunctions` itself; `invokeAllWith()` hands out `Closure::fromCallable()` closures |
+| | 11.1 | `TraceModuleHandler111` | `#[Hook]` arrives: `getHookListeners()` by module; `alter()` builds `$alterEventListeners` itself (`reOrderModulesForAlter()`) |
+| | 11.2 | `TraceModuleHandler112` | `getHookListeners()`; alters from `getCombinedListeners()` with ordering rules |
+| | 11.3, 11.4 | `TraceModuleHandler` | `getHookImplementationList()` (`ImplementationList`); alters from `getCombinedListeners()` |
+| `theme.manager` | 10.3 to 11.2 | `TraceThemeManager103` | Themes' hooks are functions named for the theme; `render()` renders the template with `twig_render_template()` (no engine service), so this class also marks each template's output |
+| | 11.3, 11.4 | `TraceThemeManager` | Themes' implementation lists (`getImplementationsForTheme()`, `getThemeChain()`, `invoke()`); templates rendered by the engine service |
+| `theme.registry` | 10.3 to 11.1 | `TraceRegistry103` | `render()` calls each `preprocess functions` entry as it is: no initial preprocess, no invoke map |
+| | 11.2 | `TraceRegistry112` | `initial preprocess`, then entries through `preprocess invokes` (modules' and themes' alike through `ModuleHandler::invoke()`); `ThemeRegistry::getPreprocessInvokes()` has no return type |
+| | 11.3, 11.4 | `TraceRegistry` | As 11.2, themes' through `ThemeManager::invoke()`, and global preprocess (`getGlobalPreprocess()`) |
+| `renderer` | 10.3 to 11.1 | `TraceRenderer103` | `doRender(&$elements, $is_root_call = FALSE)`; the render cache is asked before an element would be placeholdered |
+| | 11.2 to 11.4 | `TraceRenderer` | `doRender(array &$elements, RenderContext $context): string\|MarkupInterface` |
+| Twig engine | 11.3, 11.4 | `TraceThemeEngine` | Theme engines are services (`TwigThemeEngine::renderTemplate()`); before 11.3 there is no such service |
+
+The recording is the same in every shape: the classes of one service share it
+through a trait (`TimesModuleHooks`, `TimesThemeHooks`, `TracesElements`), and
+each class says only how its core lists hooks (`alterListeners()`,
+`listenerFor()`, `themeAlterListeners()`). Where core builds an alter's list
+inside `alter()` itself (10.3 to 11.1), the class builds it the same way from
+core's own protected methods and keeps it where core keeps it, so the list is
+core's whether core or the class built it. `TraceRegistry103` and
+`TraceRegistry112` only say how `render()` runs preprocess callbacks
+(`TracedRuntime::FUNCTIONS`, `INVOKES`, `GLOBALS`): before 11.2 the frame opens
+with a callback of the trace's own before the first entry, and a module's or
+theme's preprocess function is named for its owner by the name core's registry
+gives it (`owner_preprocess_hook`), and its turn is noted as the module handler
+notes it on later releases. Before 11.3, the last preprocess callback hands
+`TraceThemeManager103::render()` the template's file and a reference to core's
+own variables (core adds `theme_hook_suggestions` and attributes after
+preprocess), and `render()` marks the template's output as `TraceThemeEngine`
+does, outside Twig's debug comments.
+
+**How the provider chooses.** For each service it lists the families newest
+first. A family names every core method its class overrides or calls with the
+exact signature it was written against, the methods it relies on core not
+having (`NULL`: an older family must not match a newer core), the properties
+it reads, and the class's own methods and properties, which core's must not
+already have (a core that added one would make the class fail to load). The
+first family whose every entry holds is put in place; checking reads
+signatures only, and no class of the trace is loaded to decide. The fixture
+test checks every release: exactly one family of each service fits, the class
+chosen loads against that release's declarations, and no other is loaded.
+
+**The theme side is one piece.** A template's frame is opened by the runtime
+registry and its output marked by the engine (11.3 and later) or the theme
+manager (before). If either does not fit, the theme registry, the engine and
+the renderer keep core's classes, and the page's parts are found through hooks
+instead (`PartsByHooks`); the module handler and theme manager may still be
+swapped, to time hooks. The provider records which it chose in the container
+parameter `wanigan_live.trace` (`parts`: `swaps` or `hooks`).
+
+**Through hooks, on a core none fits.** Every supported release has these:
+`hook_theme_registry_alter()` puts the helper's own preprocess first and last
+for every template (the frame opens; after every preprocess of the site, the
+helper's marks are added and the template's file and variables kept);
+`hook_element_info_alter()` gives `html` and `page` a `#pre_render` that opens
+an element's frame, hands the same callback to the element's children (loading
+a typed child's element defaults first, as `Renderer::doRender()` does, so
+its own `#pre_render` is not lost), takes off its render cache keys, and adds a
+`#post_render` that puts the part of the element's own template, or of its
+outermost wrapper, around its markup; `hook_block_view_alter()` and
+`hook_entity_build_defaults_alter()` reach blocks and entities built by lazy
+builders, which may carry no other property. They act only for a traced
+request, and the registry and element info are altered only on such a core.
+What that loses, the trace says in its log (`notice` entries,
+`Recorder::sense()`): a template and its wrappers are one part, the preprocess
+steps that shaped a template are not listed, a part's cache metadata is its
+own (not what its contents added), something rendered outside the page's
+render arrays (a string a preprocess renders) is not a part, and hooks are not
+timed when the module handler or theme manager is not one the helper knows.
+A render cache hit is not traced (the cache is read before `#pre_render`).
 
 ## Interception points
 
-| What | Core code it hooks (11.4) | How |
+| What | Core code it hooks (11.4; earlier releases above) | How |
 |---|---|---|
-| Every template's output becomes a part | `TwigThemeEngine::renderTemplate()` (core/lib/Drupal/Core/Template/TwigThemeEngine.php; a service since 11.3, `ThemeManager::getThemeEngine()`) | `TraceThemeEngine` subclass: the one place a template's final variables, its file and its output meet. Wraps non-empty output in `<!-- wl:part id="pN" -->` … `<!-- /wl:part id="pN" -->`, outside core's own Twig debug comments, so those stay as they are. The document (`html`) is not a part. |
+| Every template's output becomes a part | `TwigThemeEngine::renderTemplate()` (core/lib/Drupal/Core/Template/TwigThemeEngine.php; a service since 11.3, `ThemeManager::getThemeEngine()`); before 11.3, `ThemeManager::render()` around `twig_render_template()` | `TraceThemeEngine` subclass (before 11.3, `TraceThemeManager103::render()`, given the file and core's own variables by the last preprocess callback): the one place a template's final variables, its file and its output meet. Wraps non-empty output in `<!-- wl:part id="pN" -->` … `<!-- /wl:part id="pN" -->`, outside core's own Twig debug comments, so those stay as they are. The document (`html`) is not a part. |
 | What shaped a template, in order | `ThemeManager::render()` (core/lib/Drupal/Core/Theme/ThemeManager.php) reads every definition from `Registry::getRuntime()` | `TraceRegistry` returns `TracedRuntime` around core's runtime registry for a traced request. Its copies of each definition replace `initial preprocess` (which `render()` calls first) with a closure that opens the template's frame and then runs the original, and replace `preprocess functions` with closures that run each entry exactly as `render()` would (through the `preprocess invokes` map: `ModuleHandler::invoke()` for modules, `ThemeManager::invoke()` for themes, `call_user_func_array()` otherwise), timing each and diffing the variables before and after. Core calls the global preprocess callbacks just before the first entry that is not a `template_` function, or after the loop when there is none; the wrapped list folds them in at that same place, and `getGlobalPreprocess()` answers none, so nothing runs twice or out of order. Core's runtime registry, which is cached, never holds a closure. |
 | Suggestions and suggestion alters | `ThemeManager::buildThemeHookSuggestions()`: `hook_theme_suggestions_HOOK` (invokeAll), then `hook_theme_suggestions_alter` and `_HOOK_alter` (modules), then themes | Recorded by the module handler and theme manager (below) into the current Fiber's pending list, which the next template frame takes as its first chain steps: suggestions are built immediately before that template's initial preprocess, in the same Fiber. An alter's `changed` lists the suggestions it added. |
 | Every hook implementation, timed | `ModuleHandler::invokeAllWith()`, `::invoke()`, `::alter()` (core/lib/Drupal/Core/Extension/ModuleHandler.php) | `TraceModuleHandler`. Which implementations run and in what order stays core's: OOP `#[Hook]` and procedural alike come from `getHookImplementationList()`, alters from `getCombinedListeners()` with its ordering rules. `invokeAllWith()` times the callback core hands each implementation to (nearly every caller calls the implementation there once; a caller that only lists implementors, as `Registry::collectModulePreprocess()` does, shows as a turn of almost no time). `alter()` builds core's own listener list fresh and calls each in turn, so each is timed; the module of each listener is matched from the per-hook implementation lists. Wrapping the listeners themselves was rejected: a closure cannot mirror a listener's by-reference parameters, and `getCombinedListeners()` keys listeners by name. |
 | Themes' hook implementations | `ThemeManager::invokeAllWith()`, `::invoke()`, `::alterForTheme()`, with `getImplementationsForTheme()` and `getThemeChain()` | `TraceThemeManager`, the same way: core's chain (base themes first) and order. |
 | Cost, cache metadata, assets per element | `Renderer::doRender()` (core/lib/Drupal/Core/Render/Renderer.php) | `TraceRenderer` opens a frame per element. After core renders it, the element carries its bubbled `#cache` and `#attached` (`RenderContext::update()`), which is what each part reports. An entity shown by an entity type with no theme hook of its own (`EntityViewBuilder::getBuildDefaults()` sets `#theme` only when the registry has one) becomes a part here. |
 | Render cache | `Renderer::doRender()` reads `RenderCache::get()` for keyed elements and writes after rendering | A traced render reads and writes no render cache: a hit would skip everything that made the part (preprocess, template), and a write would store this request's marks for others. The keys are taken off after asking the render cache whether a normal request would be served this element (`hit` or `miss`), with `required_cache_contexts` merged as core merges them. |
-| Fibers | `Renderer::executeInRenderContext()` runs each isolated render in a new Fiber; `::replacePlaceholders()` renders placeholders in Fibers that may suspend and interleave | Frames are kept per Fiber (a `WeakMap`). `executeInRenderContext()` hands the new Fiber the frame it started from; `doRenderPlaceholder()` hands a placeholder's Fiber the frame it was cut out of (by its lazy builder). |
+| Fibers | `Renderer::executeInRenderContext()` runs each isolated render in a new Fiber (11.3 and later; before, in the Fiber already running); `::replacePlaceholders()` renders placeholders in Fibers that may suspend and interleave | Frames are kept per Fiber (a `WeakMap`). `executeInRenderContext()` hands the subtree the frame it started from, and puts the Fiber's own back after; `doRenderPlaceholder()` hands a placeholder's Fiber the frame it was cut out of (by its lazy builder). |
 | Placeholders and BigPipe | `ChainedPlaceholderStrategy` asks strategies by priority; BigPipe streams its placeholders after the response is sent | `TracePlaceholderStrategy`, tagged above every strategy, keeps every placeholder of a traced request (as the single-flush strategy would), so `HtmlResponseAttachmentsProcessor::renderPlaceholders()` renders them into the page before it leaves, and nothing streams after the trace is stored. Other requests: it keeps none. Parts rendered from a placeholder say `status: 'placeholder'`. |
 | Single-directory components | Component templates, found as `ComponentNodeVisitor` finds them (template name is a component id `plugin.manager.sdc` knows) | A Twig extension (`TraceTwigExtension`, tagged `twig.extension` like core's `ComponentsTwigExtension`) whose node visitor runs after core's (priority 260 > 250) and adds an open call at `display_start` and a close call at `display_end` of every component template. They print nothing unless traced. This covers a component from a render element (`ComponentElement` embeds it in an inline template) and from Twig code (`include`, `embed`) alike. Twig keys compiled templates by its extension set, so they are compiled afresh when the helper comes or goes. |
 | Queries | `StatementBase::dispatchStatementExecutionStartEvent()` / `EndEvent` (core/lib/Drupal/Core/Database/Statement/StatementBase.php), only when enabled on the connection | `Connection::enableEvents()` for the traced request's connection only (the way `Database::startLog()` does), switched off again at the end; a subscriber to `StatementExecutionEndEvent` keeps the SQL (never its arguments), time, `caller` (core's `findCallerFromDebugBacktrace()`), and the frame open when it ran. A part's count includes everything that ran inside it. |
@@ -217,9 +308,26 @@ items shown get their local tasks and entity operations
 - Inserting a new referenced item (a new piece of content of another kind)
   into a reference field.
 - Render-cache-hit tracing: a hit has no preprocess or template to trace.
-- Theme hooks without a theme engine service (before 11.3): no parts.
 
 ## Verified
+
+Every supported release, against stand-ins (`src/core/live-helper-drupal-stand-in.ts`):
+for each of the nine releases, a core declared exactly as the fixture records
+it, on which the provider picks the class above and it loads (PHP 8.5, and
+PHP 8.1, 10.3's minimum); and a small working core of each shape (10.6, 11.0,
+11.1, 11.2, 11.4: a module handler, theme manager, theme registry, renderer and
+Twig engine running that release's code paths in its order, each method
+declared as the release declares it) through which a page renders with the
+classes the provider chose. The page traces alike on each (the same parts,
+labels, nesting, template files, identities, chains of the site's own hooks
+and request-wide hook timings), and the identity tests pass on each. Before
+this change the 10.6, 11.0, 11.1 and 11.2 pages had no parts at all; 11.4's
+traced as now. On a core none of the classes fits (11.4 with each extended
+method declared differently) the parts are found through hooks, named and
+nested as on 11.4, with the notes in the trace's log. Every PHP file of the
+helper parses under PHP 8.1 (`php -l` in the official `php:8.1-cli-alpine`
+image). Not yet seen on a real 10.x or 11.0 to 11.3 site.
+
 
 On a real Drupal 11.4.7 site (ddev, the owner's own; nothing of it is written
 here): every swap in place; pages traced anonymously and as an administrator
