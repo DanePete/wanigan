@@ -143,16 +143,28 @@ export function Commits({ project, where, status, list: listOpen, onList }: {
 }
 
 const LAYOUT_KEY = 'wanigan.diff.layout';
+/** Narrower than this, side by side is too cramped to read (the same width Changes uses). */
+const SPLIT_MIN_WIDTH = 760;
 
 function CommitView({ project, where, commit, onSelect }: { project: ProjectSummary; where: Where; commit: CommitDetail; onSelect: (hash: string) => void }) {
   const toast = useToast();
-  const [layout] = useState<DiffLayout>(() => { try { return localStorage.getItem(LAYOUT_KEY) === 'split' ? 'split' : 'unified'; } catch { return 'unified'; } });
+  const [preferred] = useState<DiffLayout>(() => { try { return localStorage.getItem(LAYOUT_KEY) === 'split' ? 'split' : 'unified'; } catch { return 'unified'; } });
+  // Side by side only where there is room for it, as in Changes: the history beside it can leave the reader narrow.
+  const [box, setBox] = useState<HTMLElement | null>(null);
+  const [wide, setWide] = useState(true);
+  useEffect(() => {
+    if (!box) return undefined;
+    const watch = new ResizeObserver(([entry]) => setWide((entry?.contentRect.width ?? 0) >= SPLIT_MIN_WIDTH));
+    watch.observe(box);
+    return () => watch.disconnect();
+  }, [box]);
+  const layout: DiffLayout = preferred === 'split' && wide ? 'split' : 'unified';
   const copy = (): void => {
     void navigator.clipboard.writeText(commit.hash).then(() => toast('Copied the commit’s full hash.', 'done'), () => toast('The clipboard is not available here.', 'error'));
   };
   const initials = commit.author.split(/\s+/).map((w) => w[0] ?? '').join('').slice(0, 2).toUpperCase();
   return (
-    <article className="commit-view" aria-label={`Commit ${commit.short}`}>
+    <article className="commit-view" aria-label={`Commit ${commit.short}`} ref={setBox}>
       <header className="commit-view-head">
         <div className="commit-view-title">
           {commit.cardKey ? <CardBadge cardKey={commit.cardKey} /> : null}
