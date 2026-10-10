@@ -13,8 +13,9 @@
 // - A native form opens in a small view of its own in the same session, laid
 //   over the sheet the window draws beside the part. When the site redirects
 //   it to /_wanigan/edit/done, it closes and the page reloads with the change.
-// - A schema save is checked here against the schema the trace gave before it
-//   is posted; the helper checks it again and is the authority.
+// - A schema save (live-edit-save.ts; the design layer's implement saves words
+//   through the same one) is checked against the schema the trace gave before
+//   it is posted; the helper checks it again and is the authority.
 // - Moving parts by hand (live-arrange.ts): the page script shows handles and
 //   where a drag would land, and answers a drop; a move or an insert is checked
 //   against the trace here, posted to the helper, and its undo token kept, so
@@ -26,15 +27,13 @@ import { sameSite } from '../shared/live.ts';
 import { boxOf, paintItems, type LiveEditSaved, type LiveEdited, type LiveTraceAnswer } from '../shared/live-lens.ts';
 import { arrangeDrop, arrangeSpec, checkInsert, checkMove, checkRemove, undoToken, type ArrangeDrop, type LiveMoveSaved } from '../shared/live-arrange.ts';
 import { parseSaveAi, type LiveSiteAiAnswer } from '../shared/live-ai.ts';
-import { checkValue } from '../shared/live-schema.ts';
 import { askSiteAi } from './live-site-ai.ts';
+import { MAX_ANSWER_BYTES, TooLarge, readBounded, saveSchemaEdit } from './live-edit-save.ts';
 import { TRACE_ID, parseTrace, type EditTarget, type LiveTrace } from '../shared/live-trace.ts';
 import type { LiveCurrent, LiveViewHooks } from './live-view.ts';
 
-/** Past these, an answer is not read: a trace is bounded by the helper, and a save's answer is a line. */
+/** Past this, a trace is not read: the helper bounds it (a save's answer is bounded in live-edit-save.ts). */
 const MAX_TRACE_BYTES = 16 * 1024 * 1024;
-const MAX_ANSWER_BYTES = 64 * 1024;
-const MAX_VALUE_BYTES = 64 * 1024;
 const FETCH_MS = 15_000;
 
 type Rect = { x: number; y: number; width: number; height: number };
@@ -52,26 +51,6 @@ function header(headers: Record<string, string[]> | undefined, name: string): st
   if (!headers) return null;
   for (const [k, v] of Object.entries(headers)) if (k.toLowerCase() === name) return v[0]?.trim() ?? null;
   return null;
-}
-
-class TooLarge extends Error {}
-
-/** A response's body as text, refused past `max` bytes rather than read whole. */
-async function readBounded(res: Response, max: number): Promise<string> {
-  const declared = Number(res.headers.get('content-length') ?? 0);
-  if (declared > max) throw new TooLarge();
-  const reader = res.body?.getReader();
-  if (!reader) return '';
-  const chunks: Uint8Array[] = [];
-  let total = 0;
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    total += value.byteLength;
-    if (total > max) { await reader.cancel().catch(() => {}); throw new TooLarge(); }
-    chunks.push(value);
-  }
-  return Buffer.concat(chunks).toString('utf8');
 }
 
 /** What can fetch on a view's session: Electron's session.fetch, or a stand-in in tests. */
@@ -121,7 +100,11 @@ export function wireLiveInspect(options: {
   current: () => LiveCurrent | null;
   /** Run code in the page script's isolated world (live-view.ts). */
   run: <T>(code: string, fallback: T) => Promise<T>;
-}): { hooks: LiveViewHooks; trace(): Promise<LiveTraceAnswer> } {
+}): {
+  hooks: LiveViewHooks;
+  trace(): Promise<LiveTraceAnswer>;
+  schemaSave(target: unknown, value: unknown, options: unknown, traced?: string): Promise<LiveEditSaved>;
+} {
   /** The view's last page as the site sent it: where from, and its trace id (null when it sent none). */
   /** The view's last page load: its trace id, and whether a helper said it answers to another Wanigan. */
   let latest: { webContentsId: number; url: string; id: string | null; other: boolean } | null = null;
@@ -396,36 +379,27 @@ export function wireLiveInspect(options: {
   // The sheet closed from the window: as Escape in the form, so a save the form made without leaving the page is still seen.
   ipcMain.handle('live:editClose', (event) => { if (!options.trusted(event)) return; if (editing?.finish) editing.finish(false); else closeEdit(); });
 
-  ipcMain.handle('live:editSave', async (event, rawTarget: unknown, rawValue: unknown, rawOptions: unknown): Promise<LiveEditSaved> => {
-    if (!ok(event)) return { ok: false, error: 'The live view is off.', revision: null };
+  /**
+   * Save a `via: 'schema'` target of the trace the view holds, as the view's user (live-edit-save.ts): the window's
+   * live:editSave and the design layer's implement both save through this. `traced`, when given, is the id of the
+   * trace the caller chose the target from; the view holding another one means the page changed since, and nothing
+   * is saved.
+   */
+  const schemaSave = async (rawTarget: unknown, rawValue: unknown, rawOptions: unknown, traced?: string): Promise<LiveEditSaved> => {
     const found = target(rawTarget, 'schema');
     if (typeof found === 'string') return { ok: false, error: found, revision: null };
     const { cur, origin, trace, target: t } = found;
-    let body: string;
-    try { body = JSON.stringify({ trace: trace.id, value: rawValue ?? null, ...noSiteAi(rawOptions) }); } catch { return { ok: false, error: 'That value cannot be sent.', revision: null }; }
-    if (body.length > MAX_VALUE_BYTES) return { ok: false, error: 'That value is too large to save here.', revision: null };
-    const wrong = checkValue(t.schema, rawValue);
-    if (wrong.length) return { ok: false, error: wrong.join(' '), revision: null };
-    type Answer = { ok?: unknown; error?: unknown; revision?: unknown; ai?: unknown };
-    let answer: Answer | null = null;
-    let status = 0;
-    try {
-      const res = await ask(cur, origin, `/_wanigan/edit/${encodeURIComponent(t.id)}`, { method: 'POST', body });
-      status = res.status;
-      answer = JSON.parse(await readBounded(res, MAX_ANSWER_BYTES)) as Answer | null;
-    } catch (error) {
-      if (!status) return { ok: false, error: `The site did not answer: ${(error as Error).message || 'no answer'}.`, revision: null };
-    }
-    const said: Answer | null = answer && typeof answer === 'object' ? answer : null;
-    if (said?.ok === true) {
-      if (!cur.webContents.isDestroyed()) cur.webContents.reloadIgnoringCache();
-      return { ok: true, error: null, revision: typeof said.revision === 'string' ? said.revision.slice(0, 100) : null, ai: parseSaveAi(said.ai) };
-    }
-    const why = typeof said?.error === 'string' ? said.error.slice(0, 500)
-      : status === 403 ? 'The site refused: the user logged in in the live view may not edit this.'
-        : status === 404 ? 'The site no longer offers this edit. Reload the page, then try again.'
-          : `The site did not save it (it answered ${status}).`;
-    return { ok: false, error: why, revision: null, ai: parseSaveAi(said?.ai) };
+    if (traced !== undefined && traced !== trace.id) return { ok: false, error: 'This page changed since Wanigan read its trace. Reload it, then try again.', revision: null };
+    return saveSchemaEdit({
+      trace: trace.id, target: t,
+      post: (path, body) => ask(cur, origin, path, { method: 'POST', body }),
+      reload: () => { if (!cur.webContents.isDestroyed()) cur.webContents.reloadIgnoringCache(); },
+    }, rawValue, noSiteAi(rawOptions));
+  };
+
+  ipcMain.handle('live:editSave', async (event, rawTarget: unknown, rawValue: unknown, rawOptions: unknown): Promise<LiveEditSaved> => {
+    if (!ok(event)) return { ok: false, error: 'The live view is off.', revision: null };
+    return schemaSave(rawTarget, rawValue, rawOptions);
   });
 
   // Arranging: the page shows handles and where a drag would land; this answers when something is dropped.
@@ -489,5 +463,5 @@ export function wireLiveInspect(options: {
     return result.ok || !result.conflict ? result : { ...result, error: 'It changed on the site since, so it was not put back. The page now shows it as it is.' };
   });
 
-  return { hooks, trace };
+  return { hooks, trace, schemaSave };
 }

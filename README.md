@@ -171,14 +171,18 @@ WordPress and other sites can each be on or off.
   instance of its kind (how many, said before you choose it); a custom
   property can change for the whole site. Edits lists every edit by page, with
   before → after, what it reaches, its state, and why when it no longer finds
-  its element. Make it real saves words to a plain text field through the site
-  helper, or to your own template when they are written there exactly once
-  (with a revert); then Verify renders the page with and without the layer and
-  says what differs, with pictures. A style goes to an agent as intent, never
-  written into the stylesheets by hand. Undo, redo, discard, and the page
-  shown without the layer to compare. The window has been checked against the
-  UI sweep's stand-in; making words real and verifying them from it on a real
-  site has not been seen yet.
+  its element. Make it real saves words through the site itself to the one
+  thing that holds exactly those words: a plain text field on Drupal; on
+  WordPress a title, an excerpt, a string meta, the site's title or tagline, or
+  a menu link's text, each through core's REST API with a revision where
+  WordPress keeps one; or to your own template when they are written there
+  exactly once (with a revert). Formatted text (a block's, a post's content)
+  goes to an agent, as does a style: never written into the stylesheets by
+  hand. Then Verify renders the page with and without the layer and says what
+  differs, with pictures. Undo, redo, discard, and the page shown without the
+  layer to compare. The window has been checked against the UI sweep's
+  stand-in; on the Northstar demo, a script driving the real app made words
+  real and verified them. On WordPress that has been tested with stand-ins only.
 - **Go to**, in the address field (click it, or Shift+Space in the live view,
   ⌘⇧Space anywhere in a project): an address, or any page of the site by
   typing a few letters of its title, an admin or structure page, a path or an id, ranked as you type and by what you choose
@@ -664,7 +668,9 @@ verification results and the behavior that remains unverified.
   serves), a component's props form, saving WordPress content by hand, and
   Canvas pieces by their own ids. The Drupal helper's Layout Builder moves, and
   reordering a field with several items, have not been run against a real
-  site. Agents' looks at it
+  site. Retyped words saved on WordPress (a title, a menu link's text) are
+  tested with stand-in pages, traces and a stand-in site, not yet seen against
+  a running WordPress. Agents' looks at it
   (`wanigan mcp`): tested with a real core and a stand-in app; each CLI seen
   connecting and listing the tools, as above, not yet seen calling one in a
   real turn.

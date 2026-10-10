@@ -17,8 +17,13 @@
 //   An edit of this page that no longer resolves, or resolves to other words, is orphaned and the core is
 //   told; it is a draft again once it resolves. Without a trace nothing is resolved by identity, and nothing is
 //   called orphaned for it. Edits for a named breakpoint are left out: phase 1 does not read the theme's breakpoints.
-// - Implementing: only words in a plain text field the helper can save (`POST /_wanigan/save`, the window's own
-//   helperSave path, as the logged-in user). Styles and tokens go to an agent as a brief; anything else says why.
+// - Implementing: only words, saved where they are kept, as the user logged in in the view. Where the helper marks a
+//   plain text field around them (Drupal's `data-wl-field`), through `POST /_wanigan/save`, the window's own
+//   helperSave path. Otherwise through the one edit target of the page's trace that holds exactly those words
+//   (wordsTarget(): a title, an excerpt, a string meta, a setting, a menu link's text), saved by the window's own
+//   schema save (`POST /_wanigan/edit/<id>`, live-edit-save.ts): how WordPress's helper saves a field. Formatted text
+//   (a block's, a post's content, a value with markup) goes to an agent as a brief, as do styles and tokens; anything
+//   else says why.
 // - Verifying ("Stage 3: verify", steps 1–3): the design (the page with the layer) and the result (the page without
 //   it) rendered in hidden windows in the view's session at each width (live-capture.ts), each twice for the noise
 //   floor, and every width judged against the one floor the verdict states (the largest over both and every width); the comparisons are src/shared/layer-verify.ts's. Pictures are kept in the data folder under
@@ -39,8 +44,8 @@ import {
   MAX_DIFFERENCES, compareElements, comparePixels, diffBitmaps, diffPicture, editsAt, judge, noiseFloor, verdictNoise, verifyWidths, widestNoise, zonesOf,
   type Bitmap, type ElementSnap, type WidthFindings, type Zone,
 } from '../shared/layer-verify.ts';
-import type { LiveTraceAnswer } from '../shared/live-lens.ts';
-import { TRACE_ID, identityKey, kindKey, type LiveTrace, type PartIdentity, type TracePart } from '../shared/live-trace.ts';
+import type { LiveEditSaved, LiveTraceAnswer } from '../shared/live-lens.ts';
+import { TRACE_ID, identityKey, kindKey, type EditTarget, type LiveTrace, type PartIdentity, type TracePart } from '../shared/live-trace.ts';
 import { sameSite, type LiveSite } from '../shared/live.ts';
 import type { Method } from '../shared/protocol.ts';
 import { folderOf, inHiddenWindow } from './live-capture.ts';
@@ -230,6 +235,162 @@ export function kindWords(part: TracePart, key: string, inner: string | null): s
   return inner ? `the ${inner.toLowerCase()} in ${base}` : base;
 }
 
+/* ── which edit target holds an element's words ─────────────────────────── */
+
+/** The edit target to save new words to, and where in its value they go (a property of an object, or the value); or why there is none. */
+export type WordsTarget =
+  | { ok: true; target: EditTarget; key: string | null }
+  | { ok: false; route: 'agent' | 'none'; why: string };
+
+const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
+/** A schema's one type; a nullable `["string", "null"]` counts as its real one (as live-schema.ts reads it). */
+function typeOf(s: Record<string, unknown>): string | null {
+  if (typeof s.type === 'string') return s.type;
+  const real = Array.isArray(s.type) ? s.type.filter((t) => t !== 'null') : [];
+  return real.length === 1 && typeof real[0] === 'string' ? real[0] : null;
+}
+
+/** A tag, or a comment: a value holding one is formatted text, and its words are only part of what it keeps. */
+const TAG = /<\/?[a-z][a-z0-9-]*(?:\s[^>]*)?\/?>|<!--[\s\S]*?-->/i;
+const TAGS = new RegExp(TAG.source, 'gi');
+/** The character references a title or a setting is commonly kept with (WordPress keeps `&` in a title as `&amp;`). */
+const REFS: Record<string, string> = { amp: '&', lt: '<', gt: '>', quot: '"', apos: '\'', nbsp: ' ' };
+/** A kept value as the page shows it: its tags taken out, its character references read. */
+const shownOf = (value: string): string => value.replace(TAGS, '').replace(/&(?:#(\d{1,7})|#x([\da-f]{1,6})|([a-z]{2,8}));/gi, (ref, dec?: string, hex?: string, name?: string) => {
+  const code = dec ? Number(dec) : hex ? Number.parseInt(hex, 16) : null;
+  if (code !== null) return code > 0 && code <= 0x10ffff ? String.fromCodePoint(code) : ref;
+  return REFS[(name ?? '').toLowerCase()] ?? ref;
+});
+/**
+ * Words compared as words: whitespace folded as the page script folds it, and the typography a site prints a value
+ * with read as what it was typed as (WordPress's wptexturize curls a title's quotes and turns `--` and `...` into a
+ * dash and an ellipsis).
+ */
+const asWords = (s: string): string => s
+  .replace(/[‘’‚‛′]/g, '\'').replace(/[“”„‟″]/g, '"')
+  .replace(/…/g, '...').replace(/---|--|[–—]/g, '-')
+  .replace(/\s+/g, ' ').trim();
+
+/** Where in one target words are, and whether they are kept as formatted text. */
+interface Holding { target: EditTarget; key: string | null; formatted: boolean }
+
+/**
+ * Where a schema target holds exactly these words: its value (a string schema), or a string property of its value (an
+ * object schema: a menu link's text, a widget's title). Only words count: a slug or a status (`property`), a template's
+ * name, a choice, an address or a date (a `format`), a read-only value are never words to save into. A block's text
+ * (`block-attributes`) is rich text in its saved markup, and a value holding a tag is formatted text: those are
+ * found too, as formatted, so the refusal can say so.
+ */
+function holdings(t: EditTarget, want: string): Holding[] {
+  if (t.via !== 'schema' || t.kind === 'property' || t.kind === 'template-override') return [];
+  const rich = t.kind === 'block-attributes';
+  const one = (schema: unknown, value: unknown, key: string | null): Holding[] => {
+    if (typeof value !== 'string' || !isObj(schema)) return [];
+    const type = typeOf(schema);
+    if (rich || type === 'rich-text' || TAG.test(value)) return asWords(shownOf(value)) === want ? [{ target: t, key, formatted: true }] : [];
+    const words = type === 'string' && schema.readOnly !== true && schema.enum === undefined && schema.oneOf === undefined && schema.const === undefined
+      && (schema.format === undefined || schema.format === 'textarea');
+    return words && asWords(shownOf(value)) === want ? [{ target: t, key, formatted: false }] : [];
+  };
+  if (isObj(t.schema) && isObj(t.schema.properties)) {
+    const value = t.value;
+    return isObj(value) ? Object.entries(t.schema.properties).slice(0, 200).flatMap(([k, s]) => one(s, value[k], k)) : [];
+  }
+  return one(t.schema, t.value, null);
+}
+
+/** A post's content (WordPress): words inside it are kept in its formatted markup, never as a field of their own. */
+const isContent = (p: TracePart): boolean => p.identity?.kind === 'entity' && p.identity.type === 'post' && p.identity.field === 'post_content';
+/** The post a part shows through WordPress's block context: the `context.postId` the helper lists among a block's variables. */
+function contextPost(p: TracePart): string | null {
+  const v = p.variables?.find((x) => x.name === 'context.postId');
+  return v && /^\d{1,20}$/.test(v.preview) ? v.preview : null;
+}
+
+/** Labels said as a list: "A and B", "A, B and C", and how many more past four. */
+function listed(labels: string[]): string {
+  const shown = labels.slice(0, 4);
+  const more = labels.length - shown.length;
+  if (more) return `${shown.join(', ')} and ${more} more`;
+  return shown.length > 1 ? `${shown.slice(0, -1).join(', ')} and ${shown.at(-1)}` : shown[0] ?? '';
+}
+
+/**
+ * The one edit target of a trace that holds exactly an element's words, as the site rendered them, for saving new
+ * words to: looked for in the parts the edit's identity names (as resolveLayer matches them), then outward a level at a
+ * time, and the nearest level with any finding decides. Outward is each part's parent, and the post a block shows
+ * through its context: a post-title block shows its post's title, inside the post or wherever the template put it,
+ * and that post's parts carry the title's target. A post's content reached only as what the element sits in means
+ * the words are content. One plain finding is the answer; none, several, formatted text or a target the site says
+ * cannot be changed here is refused with why.
+ */
+export function wordsTarget(trace: LiveTrace, identity: PartIdentity, words: string): WordsTarget {
+  const want = asWords(words);
+  if (!want) return { ok: false, route: 'none', why: 'Its element shows no words to find.' };
+  const targets = new Map(trace.edits.map((e) => [e.id, e]));
+  const byId = new Map(trace.parts.map((p) => [p.id, p]));
+  const key = identityKey(identity);
+  let level = trace.parts.filter((p) => p.identity && identityKey(p.identity) === key);
+  if (!level.length) return { ok: false, route: 'none', why: 'This page’s trace no longer has the part this edit was made on: the page changed since. Reload it, then try again.' };
+  const seen = new Set(level.map((p) => p.id));
+  /** Parts of the post a block at the level before shows through its context. */
+  let shows = new Set<string>();
+  for (let depth = 0; level.length && depth < 64; depth++) {
+    const content = level.find((p) => isContent(p) && !shows.has(p.id));
+    if (content) {
+      return { ok: false, route: 'agent', why: `These words are in a post’s content (${content.label}), which the site keeps as formatted text: Wanigan does not save it from here. An agent can make the change from a brief.` };
+    }
+    const found = new Map<string, Holding>();
+    for (const p of level) {
+      for (const id of p.edits ?? []) {
+        const t = targets.get(id);
+        if (t) for (const h of holdings(t, want)) found.set(`${t.id}\n${h.key ?? ''}`, h);
+      }
+    }
+    const all = [...found.values()];
+    if (all.length > 1) {
+      return { ok: false, route: 'none', why: `More than one thing here holds exactly these words (${listed([...new Set(all.map((h) => h.target.label))])}), so Wanigan cannot tell which to save them to.` };
+    }
+    const [h] = all;
+    if (h?.formatted) {
+      return { ok: false, route: 'agent', why: `These words are formatted text (${h.target.label}): the site keeps them with their markup, which Wanigan does not save from here. An agent can make the change from a brief.` };
+    }
+    if (h) return h.target.why ? { ok: false, route: 'none', why: h.target.why } : { ok: true, target: h.target, key: h.key };
+    const next: TracePart[] = [];
+    const nextShows = new Set<string>();
+    for (const p of level) {
+      const post = contextPost(p);
+      if (post) {
+        for (const q of trace.parts) {
+          if (q.identity?.kind !== 'entity' || q.identity.type !== 'post' || q.identity.id !== post) continue;
+          nextShows.add(q.id);
+          if (!seen.has(q.id)) { seen.add(q.id); next.push(q); }
+        }
+      }
+      const up = p.parent ? byId.get(p.parent) : undefined;
+      if (up && !seen.has(up.id)) { seen.add(up.id); next.push(up); }
+    }
+    level = next;
+    shows = nextShows;
+  }
+  return {
+    ok: false, route: 'none',
+    why: 'Nothing this page offers to edit holds exactly these words, so there is nothing here to save them to: they come from a template, from formatted text, or from something the site helper does not offer on this page.',
+  };
+}
+
+/** Why there is no trace to find what holds an element's words in. */
+function untraced(answer: Exclude<LiveTraceAnswer, { state: 'ok' }>): string {
+  if (answer.state === 'none') return 'The live view shows no page of this site now.';
+  if (answer.state === 'no-helper') return 'The live view has no helper for this site.';
+  const lead = 'Wanigan finds what holds these words in the page’s trace, and has none for this page';
+  if (answer.state === 'other') return `${lead}: the site’s helper answers to another Wanigan. Set the helper up again from this one.`;
+  if (answer.state === 'refused') return `${lead}: the helper refused it (it answered ${answer.status}). Log in as a user who may administer the site in the live view, then reload.`;
+  const why = answer.state === 'missing' ? 'the page came without one' : answer.state === 'expired' ? 'the helper keeps one for ten minutes'
+    : answer.state === 'down' ? 'the site did not answer' : 'the helper’s answer could not be read';
+  return `${lead}: ${why}. Reload it, then try again.`;
+}
+
 /* ── rendering for a verification ───────────────────────────────────────── */
 
 export interface LayerRenderRequest {
@@ -337,6 +498,11 @@ export interface LiveLayerOptions {
   trace: () => Promise<LiveTraceAnswer>;
   /** The helper's save of words to a plain text field, as the view's user (live-view.ts). */
   helperSave: (field: string, before: string, after: string) => Promise<HelperSaved | null>;
+  /**
+   * The window's save of a `via: 'schema'` edit target, as the view's user (live-inspect.ts schemaSave): the target by
+   * its id in the trace the view holds, refused unless that is still the trace `trace` names.
+   */
+  schemaSave: (target: string, value: unknown, trace: string) => Promise<LiveEditSaved>;
   /** The partition a render of a project's page runs in, prepared with its trust and the helper's token (live-view.ts). */
   partition: (projectId: string, url: string, token: string | null) => string;
   /** A project's view session, for asking a hidden render's trace (live-view.ts). */
@@ -512,14 +678,30 @@ export function wireLiveLayer(options: LiveLayerOptions): { hooks: LiveViewHooks
     if (!at || at.count === 0) return none('Its element is not tagged on this page. Reload the page, then try again.');
     if (at.count !== 1) return none(`It reaches ${String(at.count)} elements here; words are saved one element at a time.`);
     if (at.plain !== true || typeof at.words !== 'string') return none('Its element holds more than plain words, so they are not saved from here.');
-    if (typeof at.field !== 'string') return none('These words are not in a plain text field the site helper marks: they come from a template, a setting or formatted text. An agent can make the change from a brief.');
     if (at.words.length > SAVE_MAX || value.length > SAVE_MAX) return none(`Words longer than ${SAVE_MAX.toLocaleString('en')} characters are saved in the site’s own form.`);
-    const saved = await options.helperSave(at.field, at.words, value);
-    if (!saved) return none('The live view has no helper for this site.');
+    if (typeof at.field === 'string') {
+      // A plain text field the helper marked around the words (Drupal): its own save, with the words it had.
+      const saved = await options.helperSave(at.field, at.words, value);
+      if (!saved) return none('The live view has no helper for this site.');
+      if (!saved.ok) return none(saved.error ?? 'The site did not save it.');
+      await core('live.layerMark', { projectId: cur.projectId, id, state: 'implemented' });
+      // The site now has the words: the page shows them as it renders them, and the layer applies again after the load.
+      if (!here.cur.webContents.isDestroyed()) here.cur.webContents.reloadIgnoringCache();
+      return { ok: true, id, state: 'implemented', revision: saved.revision ?? null };
+    }
+    // No field marked around them (WordPress's helper marks none): the edit target in the page's trace that holds
+    // exactly these words, saved as the window saves one.
+    if (!edit.target.part) return none('Its element is in markup no part of the page’s trace names, so Wanigan cannot tell what holds these words.');
+    const answer = await options.trace();
+    if (answer.state !== 'ok') return none(untraced(answer));
+    const found = wordsTarget(answer.trace, edit.target.part, at.words);
+    if (!found.ok) return { ok: false, id, route: found.route, why: found.why };
+    // An object's other properties go back as the trace gave them (a menu link's address with its new text).
+    const next = found.key === null ? value : { ...(found.target.value as Record<string, unknown>), [found.key]: value };
+    // The save reloads the page once the site has the words; the layer applies again after the load.
+    const saved = await options.schemaSave(found.target.id, next, answer.trace.id);
     if (!saved.ok) return none(saved.error ?? 'The site did not save it.');
     await core('live.layerMark', { projectId: cur.projectId, id, state: 'implemented' });
-    // The site now has the words: the page shows them as it renders them, and the layer applies again after the load.
-    if (!here.cur.webContents.isDestroyed()) here.cur.webContents.reloadIgnoringCache();
     return { ok: true, id, state: 'implemented', revision: saved.revision ?? null };
   };
 
