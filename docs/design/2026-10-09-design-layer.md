@@ -326,7 +326,10 @@ or the project.
    a revision where the site keeps them), to exactly the content, translation
    and item its target's identity names (its UUID, langcode and item, never
    the default language or the first item holding the same words; a target
-   that names no field is refused), and marks it `implemented`. Anything
+   that names no field is refused), only over the version the page showed
+   (content saved since, a newer draft, an inline Layout Builder block and
+   any validation violation, the workflow's included, are refused, saying
+   why), and marks it `implemented`. Anything
    else answers `route: 'agent'` (styles, until phase 3) or `route: 'none'`,
    with why.
 4. `layerVerify(id)` renders the page with the layer (the design) and without
