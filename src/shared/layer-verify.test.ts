@@ -3,8 +3,8 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import {
-  compareElements, comparePixels, diffBitmaps, diffPicture, editsAt, judge, noiseFloor, parseVerdict, verdictNoise, verifyWidths,
-  withinNoise, zonesOf, type Bitmap, type ElementSnap, type PixelArea, type WidthFindings,
+  against, applyMask, compareElements, comparePixels, diffBitmaps, diffPicture, editsAt, judge, noiseFloor, parseVerdict,
+  unionDiff, verdictNoise, verifyWidths, withinNoise, zonesOf, type Bitmap, type ElementSnap, type PixelArea, type WidthFindings,
 } from './layer-verify.ts';
 
 /** A page of one colour, as a capture gives it. */
@@ -153,4 +153,60 @@ test('a verdict from outside is checked: consistent, bounded, with well-formed d
   assert.equal(parseVerdict({ ...good, differences: [{ kind: 'style', edit: 'E 1', width: 390, element: 'h2', property: 'color', design: 'a', result: 'b' }] }), null);
   assert.equal(parseVerdict({ ...good, differences: Array.from({ length: 301 }, () => good.differences[0]) }), null);
   assert.equal(parseVerdict({ ...good, pictures: [{ width: 390, design: 'x'.repeat(2001), result: 'y', diff: null }] }), null);
+});
+
+test('a verdict’s later fields are read when well formed, refused when not, and a verdict kept before them still reads', () => {
+  const old = {
+    at: 5, ok: true, failed: null, widths: [390, 1440], noise: { maxDiff: 0, pixels: 0 }, differences: [],
+    pictures: [{ width: 390, design: '/data/live-layer/p/e1/390-design.png', result: '/data/live-layer/p/e1/390-result.png', diff: null }],
+  };
+  assert.deepEqual(parseVerdict(old), old, 'none of them: as it was kept');
+  // One kept on the base before the cut had a field of its own: its statement was a difference, and still reads as one.
+  const cutAsDifference = { ...old, differences: [{ kind: 'style', edit: 'e1', width: 1440, element: 'The page', property: 'compared', design: 'down to 6,000 px', result: 'not below that: …' }] };
+  assert.deepEqual(parseVerdict(cutAsDifference), cutAsDifference);
+  const full = {
+    ...old, ok: false, failed: 'rest',
+    differences: [{ kind: 'leak', width: 390, rect: { x: 0, y: 150, width: 64, height: 20 }, pixels: 1280, maxDiff: 90, against: { edit: 'e1', at: 1_700_000_000_000 } }],
+    pictures: [{ ...old.pictures[0], before: '/data/live-layer/p/e1/before/390-page.png' }],
+    masked: [{ label: 'Who’s online (block)', why: 'made for each user', widths: [390], nearEdit: false }],
+    before: { ran: true, at: 1_700_000_000_000, widths: [390] }, held: { at: 1_700_000_000 }, cut: [{ width: 1440, to: 6_000, full: 9_412 }],
+  };
+  assert.deepEqual(parseVerdict(full), full);
+  assert.deepEqual(parseVerdict({ ...full, before: { ran: false, why: 'No page from before was kept for it.' }, held: null }), { ...full, before: { ran: false, why: 'No page from before was kept for it.' }, held: null });
+  const refused: [string, unknown][] = [
+    ['a leak against an edit that is not one', { differences: [{ ...full.differences[0], against: { edit: 'E 1', at: 1 } }] }],
+    ['a leak against nothing said', { differences: [{ ...full.differences[0], against: null }] }],
+    ['a mask with no name', { masked: [{ label: '', why: 'x', widths: [390], nearEdit: false }] }],
+    ['a mask at no width', { masked: [{ label: 'x', why: 'x', widths: [], nearEdit: false }] }],
+    ['a mask not saying whether it was near an edit', { masked: [{ label: 'x', why: 'x', widths: [390] }] }],
+    ['too many masks', { masked: Array.from({ length: 101 }, () => full.masked[0]) }],
+    ['a step 3 that ran at no width', { before: { ran: true, at: 1, widths: [] } }],
+    ['a step 3 that did not run, without why', { before: { ran: false, why: '' } }],
+    ['a step 3 that is neither', { before: { ran: 'yes' } }],
+    ['a hold at no time', { held: { at: -1 } }],
+    ['a cut below the page', { cut: [{ width: 1440, to: 6_000, full: 5_000 }] }],
+    ['a cut that is not one', { cut: { width: 1440 } }],
+    ['a picture of the page before that is not a path', { pictures: [{ ...full.pictures[0], before: 7 }] }],
+  ];
+  for (const [what, over] of refused) assert.equal(parseVerdict({ ...full, ...(over as object) }), null, what);
+});
+
+test('step 3 against the page from before fails the rest of the page, and its leaks go back to that edit', () => {
+  const quiet: PixelArea = { maxDiff: 0, pixels: 0, differences: [] };
+  const leak: PixelArea = { maxDiff: 90, pixels: 40, differences: [{ kind: 'leak', width: 390, rect: { x: 0, y: 150, width: 64, height: 20 }, pixels: 40, maxDiff: 90 }] };
+  const w = (before: PixelArea[]): WidthFindings => ({ width: 390, noise: { maxDiff: 0, pixels: 0 }, elements: [], pixels: { near: quiet, rest: quiet }, before });
+  assert.deepEqual(judge([w([quiet])]), { ok: true, failed: null, differences: [] });
+  const failed = judge([w([quiet, against(leak, 'e2', 1_700_000_000_000)])]);
+  assert.equal(failed.failed, 'rest');
+  assert.deepEqual(failed.differences, [{ ...leak.differences[0], against: { edit: 'e2', at: 1_700_000_000_000 } }]);
+  assert.deepEqual(editsAt({ ok: false, differences: failed.differences }, ['e1', 'e2']), ['e2'], 'only the edit whose page from before it was');
+  assert.equal(judge([w([{ ...leak, maxDiff: 1, pixels: 1 }])]).ok, false, 'held to the same floor as the rest');
+});
+
+test('two comparisons pictured as one: the larger difference per pixel, masked only where both left it out', () => {
+  const a = applyMask(diffBitmaps(paint(page(4, 2), { x: 0, y: 0, width: 1, height: 1 }, [0, 0, 0]), page(4, 2)), [{ x: 0, y: 1, width: 4, height: 1 }]);
+  const b = applyMask(diffBitmaps(paint(page(4, 2), { x: 3, y: 0, width: 1, height: 1 }, [200, 200, 200]), page(4, 2)), [{ x: 2, y: 1, width: 2, height: 1 }]);
+  const u = unionDiff(a, b);
+  assert.deepEqual([u.pixels, u.maxDiff, [...u.diff]], [2, 255, [255, 0, 0, 55, 0, 0, 0, 0]]);
+  assert.deepEqual([...(u.masked ?? [])], [0, 0, 0, 0, 0, 0, 1, 1]);
 });

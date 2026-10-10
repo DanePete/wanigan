@@ -168,6 +168,8 @@ export interface HiddenPage {
    * frames run in order), images and fonts again, then every animation finished or cancelled and two frames drawn.
    */
   freeze(): Promise<void>;
+  /** After the caller changed a frozen page (the design layer put on it): every animation finished or cancelled again, and two frames drawn. The clock does not move. */
+  still(): Promise<void>;
   /**
    * The viewport grown to the page (up to `max` CSS pixels), again while the page grows with it: the height shown,
    * whether the page was cut there, and how tall the page is.
@@ -197,6 +199,8 @@ export interface HiddenOptions {
   network?: boolean;
   /** Run the page on the injected clock (CLOCK), for freeze(). */
   freeze?: boolean;
+  /** Headers sent with the page's own request, besides the view's: a verification's hold (X-Wanigan-Steady). Names and values are plain. */
+  headers?: Record<string, string>;
   /** How what is rendered is named in what goes wrong: "The piece", "The page". */
   what: string;
   /** What is said when it throws: "The piece could not be pictured". */
@@ -274,7 +278,8 @@ export async function inHiddenWindow<T>(o: HiddenOptions, during: (page: HiddenP
       await command('Network.enable');
     }
     // Never the browser's cached copy: the page is drawn as the site's files are now.
-    const fresh = { extraHeaders: 'Cache-Control: no-cache\nPragma: no-cache\n' };
+    const extra = Object.entries(o.headers ?? {}).filter(([k, v]) => /^X-[A-Za-z-]{1,40}$/.test(k) && /^[\x20-\x7e]{1,200}$/.test(v)).map(([k, v]) => `${k}: ${v}\n`).join('');
+    const fresh = { extraHeaders: `Cache-Control: no-cache\nPragma: no-cache\n${extra}` };
     const loaded = await deadline(wc.loadURL(o.url, fresh).then(() => true, () => false), LOAD_MS, () => false);
     if (left) return { error: `${o.what} sent the browser off the site, to ${originOf(left)}; Wanigan does not follow it.` };
     if (!loaded) return { error: `${o.what} did not load within ${LOAD_MS / 1000} seconds.` };
@@ -299,6 +304,10 @@ export async function inHiddenWindow<T>(o: HiddenOptions, during: (page: HiddenP
         await within('its clock was advanced', () => wc.executeJavaScript('window.__wlClock ? window.__wlClock.tick(3000) : 0').catch(() => 0));
         await read(SETTLE, false, 4_244);
         await within('its motion was quieted', () => wc.insertCSS(QUIET_CSS));
+        await read(FINISH, 0, 4_244);
+        await read(FRAMES, true, 4_244);
+      },
+      async still() {
         await read(FINISH, 0, 4_244);
         await read(FRAMES, true, 4_244);
       },
