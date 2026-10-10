@@ -126,6 +126,10 @@ final class Targets {
     elseif ($p['kind'] === 'menu' && !empty($meta['menu']['name'])) {
       $out[] = $this->config('menu', $meta['menu']['name'], 'Menu');
     }
+    elseif ($p['kind'] === 'form' && isset($meta['webform'])) {
+      // A webform's words, through its adapter.
+      array_push($out, ...\Drupal\wanigan_live\Adapter\Webform::targets($this->builder, $meta['webform']));
+    }
     elseif ($p['kind'] === 'component' && isset($meta['component'])) {
       $host = $this->hostField($p['frame'] ?? NULL);
       if ($meta['component']['fromElement'] && $host) {
@@ -832,6 +836,12 @@ final class EditController extends ControllerBase {
     }
     if ($info['kind'] === 'template-override') {
       return $this->copyTemplate($info, $body['value'] ?? NULL);
+    }
+    if ($info['kind'] === 'words' && ($info['what'] ?? NULL) === 'webform') {
+      // A webform's words, through its adapter; a save reaching every form is
+      // made only when sent again with the token its first answer gave.
+      [$status, $answer] = \Drupal\wanigan_live\Adapter\Webform::save($info, $body['value'] ?? NULL, is_string($body['confirm'] ?? NULL) ? $body['confirm'] : NULL);
+      return self::json($answer, $status);
     }
     if ($info['kind'] === 'words') {
       [$status, $answer] = ConfigWords::save($info, $body['value'] ?? NULL);

@@ -300,7 +300,11 @@ final class Recorder {
       return $markup;
     }
     $entity = Describe::entityOf($elements);
-    if (!$frame->children && $entity === NULL) {
+    // What the Webform adapter marked (a webform, one of its elements, its
+    // buttons, its confirmation message): the property is only ever there on
+    // a site with Webform, and only on the live view's requests.
+    $webform = isset($elements['#wanigan_live_webform']) ? $elements['#wanigan_live_webform'] : NULL;
+    if (!$frame->children && $entity === NULL && $webform === NULL) {
       $frame->steps = [];
       return $markup;
     }
@@ -310,6 +314,18 @@ final class Recorder {
       'maxAge' => $elements['#cache']['max-age'] ?? -1,
     ];
     $frame->info['libraries'] = array_values(array_unique((array) ($elements['#attached']['library'] ?? [])));
+    // A part of its own around all the element renders (its wrapper, label,
+    // description and input), named by the adapter.
+    if ($webform !== NULL && trim($text) !== '' && ($described = \Drupal\wanigan_live\Adapter\Webform::part($elements)) !== NULL) {
+      $id = $this->newPart();
+      if ($id !== NULL) {
+        $frame->part ??= $id;
+        $frame->children[] = $id;
+        $this->parts[$id] = ['id' => $id, 'frame' => $frame] + $described;
+        $elements['#markup'] = Markup::create(self::open($id) . $text . self::close($id));
+        return $elements['#markup'];
+      }
+    }
     if ($entity !== NULL && $frame->part === NULL && trim($text) !== '') {
       $id = $this->newPart();
       if ($id !== NULL) {
