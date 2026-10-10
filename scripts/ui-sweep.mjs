@@ -914,6 +914,11 @@ try {
         const cards = await window.wanigan.call('cards.list', { projectId: id });
         return { ready: cards.filter((c) => c.status === 'ready').sort((a, b) => a.rank - b.rank).map((c) => c.key), status: Object.fromEntries(cards.map((c) => [c.key, c.status])) };
       }, ns);
+      /** The board as drawn: the keys in Ready, top to bottom, and the Inbox's. */
+      const drawn = () => page.evaluate(() => ({
+        ready: [...document.querySelectorAll('.column-ready .card[data-key]')].map((c) => c.dataset.key),
+        inbox: [...document.querySelectorAll('.column-inbox .card[data-key]')].map((c) => c.dataset.key),
+      }));
       /** Read the core until what it says passes, or four seconds pass. */
       const until = async (check) => { for (let i = 0; i < 40; i++) { if (check(await ready())) return true; await page.waitForTimeout(100); } return false; };
       try {
@@ -923,6 +928,8 @@ try {
         await page.focus(`.column-ready .card[data-key="${first}"]`);
         await page.keyboard.press('Meta+ArrowDown');
         if (!(await until((b) => b.ready[0] === second && b.ready[1] === first))) fail(`⌘↓ did not move ${first} below ${second}`);
+        const shownAfter = (await drawn()).ready.slice(0, 2).join();
+        if (shownAfter !== `${second},${first}`) fail(`after ⌘↓ the board draws Ready as ${shownAfter}…`);
         await page.waitForFunction((k) => document.activeElement?.getAttribute('data-key') === k, first, { timeout: 2000 }).catch(() => fail('the moved card lost the keys'));
         await page.keyboard.press('Meta+ArrowUp');
         if (!(await until((b) => b.ready[0] === first))) fail(`⌘↑ did not put ${first} back on top`);

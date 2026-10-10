@@ -290,14 +290,14 @@ export function Board({ project, setDialog }: { project: ProjectSummary; setDial
       toast('Review needs evidence. Add a file, a link or a note to the card first.');
       return;
     }
+    // Shown where it was put until the core's next answer replaces the cards this placement was made on (the board
+    // event follows the move), so it never flickers back meanwhile; a refused move puts it back at once.
     setOptimistic({ id: card.id, column, index, data: cards.data });
-    if (column === 'done' && card.status === 'review') {
-      const approved = await attempt(() => call('cards.approve', { id: card.id }), (m) => toast(m, 'error'));
-      if (approved !== undefined) { toast(`${card.key} approved.`, 'done'); orbPlay(document.querySelector('.rail-orb'), 'burst'); }
-    } else {
-      await attempt(() => call('cards.move', { id: card.id, status: column, before, after }), (m) => toast(m, 'error'));
-    }
-    setOptimistic(null);
+    const done = column === 'done' && card.status === 'review'
+      ? await attempt(() => call('cards.approve', { id: card.id }), (m) => toast(m, 'error'))
+      : await attempt(() => call('cards.move', { id: card.id, status: column, before, after }), (m) => toast(m, 'error'));
+    if (done === undefined) { setOptimistic(null); return; }
+    if (column === 'done' && card.status === 'review') { toast(`${card.key} approved.`, 'done'); orbPlay(document.querySelector('.rail-orb'), 'burst'); }
   }
 
   function onDragStart(e: DragEvent, card: CardSummary): void {
