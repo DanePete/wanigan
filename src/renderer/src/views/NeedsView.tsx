@@ -1,6 +1,9 @@
+// Needs you: Wanigan's home. What needs the owner across every project, most
+// urgent first, as the hero: each row with its one action in place. When
+// nothing does, Wanigan himself, and three quiet lines on whether all is ready.
 import { NEED_GROUP } from '../lib/needs';
 import { useEffect, useId, useMemo, useRef, useState, type ReactElement } from 'react';
-import { LIVE_STATES, NEED_KINDS, type Need, type ProjectSummary, type Session } from '@shared/model';
+import { LIVE_STATES, NEED_KINDS, type Need, type NeedKind, type ProjectSummary, type Session } from '@shared/model';
 import { replyRoute } from '@shared/attention';
 import { attempt, bridge, call, useQuery } from '../lib/api';
 import { href, navigate, openCard } from '../lib/router';
@@ -9,7 +12,9 @@ import { signalFor } from '../components/Orb';
 import { PlayableOrb } from '../components/PlayableOrb';
 import type { OrbMood } from '../orb/mood';
 import { Icon } from '../components/icons';
-import { Button, NotAnswering, ProjectMark, useToast } from '../components/ui';
+import { Button, Dot, NotAnswering, ProjectMark, tipProps, useToast } from '../components/ui';
+import { HowArrow, HowBox, HowButton, HowDialog, HowLane, HowNote, howNum } from '../components/How';
+import { useHow } from '../lib/how';
 import { ContinueOn } from '../components/ContinueOn';
 import { InstallHint } from '../components/Install';
 import { Ask, RevealedLine } from '../components/Ask';
@@ -32,6 +37,7 @@ export function NeedsView({ needs, projects, loading, error, onRetry, onAddProje
   const sessions = useMemo(() => new Map((live.data ?? []).map((s) => [s.id, s])), [live.data]);
   const projectsWith = new Set(needs?.map((n) => n.projectId)).size;
   const mood = useNeedsMood(needs);
+  const how = useHow('needs');
   if (error) {
     return (
       <section className="view needs" aria-label="Needs you">
@@ -43,50 +49,67 @@ export function NeedsView({ needs, projects, loading, error, onRetry, onAddProje
   const sub = loading ? '' : count === 0
     ? running ? `${plural(running, 'session')} running. Wanigan will say when one needs you.` : projects?.length ? 'Nothing is running.' : 'Open a project to begin.'
     : `In ${plural(projectsWith, 'project')}.${running ? ` ${plural(running, 'session')} running.` : ''}`;
+  let first = true;
 
   return (
-    <section className="view needs" aria-labelledby="needs-title">
-      {/* When something needs you, the list is the hero: the orb and headline step back. */}
-      <header className={`needs-hero${count ? ' busy' : ''}`}>
-        <PlayableOrb size={count ? 140 : 200} signal={signalFor(needs, running)} mood={mood} className="needs-orb" />
-        <div className="needs-words">
-          <h1 id="needs-title" className="needs-headline">{headline}</h1>
-          <p className="needs-sub">{sub}</p>
-          {!loading && projects && !projects.length ? <Button tone="primary" icon="folder" onClick={onAddProject}>Open a project</Button> : null}
-        </div>
-      </header>
+    <section className={`view needs${count ? ' busy' : ' calm'}`} aria-labelledby="needs-title">
+      <div className="view-body">
+        {/* When something needs you, the queue is the hero: Wanigan and the count are its heading. */}
+        <header className="needs-head">
+          <PlayableOrb size={count ? 56 : 168} signal={signalFor(needs, running)} mood={mood} className="needs-orb" />
+          <div className="needs-words">
+            <h1 id="needs-title" className="needs-headline">{headline}</h1>
+            <p className="needs-sub">{sub}</p>
+            {!loading && projects && !projects.length ? <Button tone="primary" icon="folder" onClick={onAddProject}>Open a project</Button> : null}
+          </div>
+          <div className="needs-tools"><HowButton onClick={how.show} /></div>
+        </header>
 
-      {!loading && count === 0 ? <Readiness projects={projects} onAddProject={onAddProject} /> : null}
+        {!loading && count === 0 ? <Readiness projects={projects} onAddProject={onAddProject} /> : null}
 
-      {count ? (
-        <div className="needs-groups">
-          {NEED_KINDS.map((kind) => {
-            const items = needs?.filter((n) => n.kind === kind) ?? [];
-            if (!items.length) return null;
-            return (
-              <section key={kind} className={`need-group need-${kind}`} aria-labelledby={`need-${kind}`}>
-                <header>
-                  <h2 id={`need-${kind}`}>{NEED_GROUP[kind].title} <span className="faint">{items.length}</span></h2>
-                  <p className="faint">{NEED_GROUP[kind].hint}</p>
-                </header>
-                <ol>
-                  {items.map((n) => (
-                    <NeedRow key={`${n.kind}-${n.sessionId ?? ''}-${n.cardId ?? ''}-${n.since}`} need={n} session={n.sessionId ? sessions.get(n.sessionId) ?? null : null} />
-                  ))}
-                </ol>
-              </section>
-            );
-          })}
-        </div>
-      ) : null}
+        {count ? (
+          <div className="needs-groups" data-tour="needs-queue">
+            {NEED_KINDS.map((kind) => {
+              const items = needs?.filter((n) => n.kind === kind) ?? [];
+              if (!items.length) return null;
+              return (
+                <section key={kind} className={`need-group need-${kind}`} aria-labelledby={`need-${kind}`}>
+                  <header className="need-group-head">
+                    <h2 id={`need-${kind}`}>
+                      <Dot tone={TONE[kind]} />
+                      {NEED_GROUP[kind].title}
+                      <span className="need-group-n">{items.length}</span>
+                    </h2>
+                    <p>{NEED_GROUP[kind].hint}</p>
+                  </header>
+                  <ol className="need-list">
+                    {items.map((n) => {
+                      const tour = first;
+                      first = false;
+                      return <NeedRow key={`${n.kind}-${n.sessionId ?? ''}-${n.cardId ?? ''}-${n.since}`} need={n} session={n.sessionId ? sessions.get(n.sessionId) ?? null : null} tour={tour} />;
+                    })}
+                  </ol>
+                </section>
+              );
+            })}
+          </div>
+        ) : null}
+      </div>
+      {how.open ? <NeedsHow needs={needs ?? null} onClose={how.hide} /> : null}
     </section>
   );
 }
 
+/** The dot beside each group: amber for what has an agent waiting on you, water for review, red for what failed, quiet for the rest. */
+const TONE: Record<NeedKind, 'amber' | 'water' | 'red' | 'muted'> = {
+  permission: 'amber', starting: 'amber', overlap: 'amber', limit: 'amber', question: 'amber',
+  review: 'water', failed: 'red', interrupted: 'red', quiet: 'muted', waiting: 'muted',
+};
+
 /** What a reply is called, to the agent it goes to. */
 const AGENT_NAME: Record<string, string> = { claude: 'Claude', codex: 'Codex' };
 
-function NeedRow({ need, session }: { need: Need; session: Session | null }) {
+function NeedRow({ need, session, tour }: { need: Need; session: Session | null; tour: boolean }) {
   const toast = useToast();
   const projectKey = need.projectKey;
   const sessionHref = need.sessionId ? href({ name: 'session', projectKey, sessionId: need.sessionId }) : null;
@@ -125,18 +148,18 @@ function NeedRow({ need, session }: { need: Need; session: Session | null }) {
 
   let primary: ReactElement | null = null;
   if (need.kind === 'review' || need.kind === 'question') {
-    primary = <Button tone={need.kind === 'review' ? 'primary' : 'attention'} onClick={() => need.cardKey && openCard(need.cardKey)}>{need.kind === 'review' ? 'Review' : 'Answer'}</Button>;
+    primary = <Button size="s" tone={need.kind === 'review' ? 'primary' : 'attention'} onClick={() => need.cardKey && openCard(need.cardKey)}>{need.kind === 'review' ? 'Review' : 'Answer'}</Button>;
   } else if (need.kind === 'limit' && need.sessionId && (need.provider === 'claude' || need.provider === 'codex')) {
     primary = <ContinueOn sessionId={need.sessionId} accountId={need.accountId ?? null} projectKey={projectKey} provider={need.provider} />;
   } else if (need.kind === 'limit' && sessionHref) {
     // Gemini CLI has one sign-in and nowhere else to carry the conversation;
     // its own dialog asks whether to keep trying, switch model or stop.
-    primary = <a className="btn btn-m btn-attention" href={sessionHref}><span>Answer in terminal</span></a>;
+    primary = <a className="btn btn-s btn-attention" href={sessionHref}><span>Answer in terminal</span></a>;
   } else if (need.kind === 'interrupted' && need.sessionId && need.resumable) {
     const resume = (): Promise<void> => attempt(() => call('sessions.resume', { id: need.sessionId as string }), (m) => toast(m, 'error', { action: { label: 'Retry', run: () => void resume() } }))
       .then((s) => { if (s) navigate({ name: 'session', projectKey, sessionId: s.id }); });
     primary = (
-      <Button tone="primary" icon="resume" onClick={resume}>
+      <Button size="s" icon="resume" onClick={resume}>
         Resume
       </Button>
     );
@@ -144,7 +167,7 @@ function NeedRow({ need, session }: { need: Need; session: Session | null }) {
     // A permission prompt, or a question before the agent has started, is answered
     // in the terminal, which takes the keyboard when the session opens.
     const inTerminal = need.kind === 'permission' || need.kind === 'starting';
-    primary = <a className={`btn btn-m ${inTerminal ? 'btn-attention' : 'btn-plain'}`} href={sessionHref}><span>{inTerminal ? 'Answer in terminal' : 'Open'}</span></a>;
+    primary = <a className={`btn btn-s ${inTerminal ? 'btn-attention' : 'btn-plain'}`} href={sessionHref}><span>{inTerminal ? 'Answer in terminal' : 'Open'}</span></a>;
   }
   const asks = need.kind === 'permission' ? need.asks ?? [] : [];
 
@@ -161,16 +184,16 @@ function NeedRow({ need, session }: { need: Need; session: Session | null }) {
         {route && !route.ok ? <p className="need-detail need-why">{route.why}</p> : null}
         {sent ? <p className="need-sent" role="status"><Icon name="check" size={14} /> {sent}</p> : null}
       </div>
-      <span className="need-since faint" title={new Date(need.since).toLocaleString()}>{ago(need.since)}</span>
-      <div className="need-actions">
+      <span className="need-since" {...tipProps(new Date(need.since).toLocaleString())}>{ago(need.since)}</span>
+      <div className="need-actions" data-tour={tour ? 'needs-action' : undefined}>
         {route?.ok && !replying ? (
-          <Button className="need-reply-open" tone={need.kind === 'question' ? 'attention' : 'primary'} icon="reply" onClick={() => { setReplying(true); setSent(null); }}>
+          <Button size="s" className="need-reply-open" tone={need.kind === 'question' ? 'attention' : 'plain'} icon="reply" onClick={() => { setReplying(true); setSent(null); }}>
             Reply
           </Button>
         ) : null}
         {primary && !(route?.ok && need.kind === 'question') ? primary : null}
-        {route?.ok && need.kind === 'question' && need.cardKey ? <Button tone="quiet" onClick={() => openCard(need.cardKey)}>Open card</Button> : null}
-        {dismiss ? <Button tone="quiet" onClick={dismiss}>Dismiss</Button> : null}
+        {route?.ok && need.kind === 'question' && need.cardKey ? <Button size="s" tone="quiet" onClick={() => openCard(need.cardKey)}>Open card</Button> : null}
+        {dismiss ? <Button size="s" tone="quiet" onClick={dismiss}>Dismiss</Button> : null}
       </div>
       {asks.length ? (
         <div className="need-asks">
@@ -293,7 +316,7 @@ function Readiness({ projects, onAddProject }: { projects: ProjectSummary[] | un
   };
   const rows = [line('Claude Code', 'claude'), line('Codex', 'codex')];
   return (
-    <ul className="readiness" aria-label="Ready to work">
+    <ul className="readiness" aria-label="Ready to work" data-tour="needs-ready">
       {rows.map((r) => (
         <li key={r.text} className={r.ok ? 'ok' : ''}>
           <span className="readiness-dot" aria-hidden="true" />
@@ -314,5 +337,71 @@ function Readiness({ projects, onAddProject }: { projects: ProjectSummary[] | un
         </li>
       ) : null}
     </ul>
+  );
+}
+
+/** How Needs you works, as a picture: every sentence is a rule the core's needs (core/needs.ts) and notifications enforce. */
+function NeedsHow({ needs, onClose }: { needs: Need[] | null; onClose: () => void }) {
+  const of = (...kinds: NeedKind[]): number | null => (needs ? needs.filter((n) => kinds.includes(n.kind)).length : null);
+  return (
+    <HowDialog place="needs" title="How Needs you works" onClose={onClose}
+      intro={<><strong>Everything that needs you, from every project, most urgent first.</strong> Each row is worked out from what Wanigan recorded: a hook, a session’s state, a card. Nothing here is a guess.</>}
+      side={(
+        <>
+          <HowNote title="Leaving the list" tone="quiet">
+            <ul>
+              <li>A row goes when what it is about moves on: the agent answers, the card is reviewed.</li>
+              <li>Dismiss puts away a finished turn, a failure or a quiet session until something new happens.</li>
+              <li>A failure older than three days stops asking.</li>
+            </ul>
+          </HowNote>
+          <HowNote title="Elsewhere">
+            <ul>
+              <li>The rail’s count is this list’s length.</li>
+              <li>While Wanigan is in front, an alert offers what needs you somewhere you are not looking; in the background, a banner, as Settings › General says.</li>
+            </ul>
+          </HowNote>
+        </>
+      )}>
+      <HowLane n={1} title="An agent is stopped" actor="needs">
+        <HowBox actor="needs" title="Asking permission" num={howNum(of('permission'), 'now')}>
+          A prompt in its terminal: the exact command or file is shown, and Answer in terminal gives the terminal the keys.
+        </HowBox>
+        <HowArrow />
+        <HowBox actor="needs" title="Has not started" num={howNum(of('starting'), 'now')}>
+          Ten seconds without reporting in: it is often asking whether to trust a new folder.
+        </HowBox>
+        <HowArrow />
+        <HowBox actor="needs" title="Two sessions, one file" num={howNum(of('overlap'), 'now')}>
+          Live sessions in one folder edited the same file within the hour.
+        </HowBox>
+        <HowArrow />
+        <HowBox actor="needs" title="Hit a usage limit" num={howNum(of('limit'), 'now')}>
+          Carry it on under another account with room, or wait for the reset.
+        </HowBox>
+      </HowLane>
+      <HowLane n={2} title="Your call" actor="you">
+        <HowBox actor="you" title="Ready for review" num={howNum(of('review'), 'now')}>
+          Submitted with evidence. Only you approve it, or send it back.
+        </HowBox>
+        <HowArrow />
+        <HowBox actor="you" title="Failed or interrupted" num={howNum(of('failed', 'interrupted'), 'now')}>
+          Its process ended badly. Resume carries the conversation on when its agent can.
+        </HowBox>
+        <HowArrow />
+        <HowBox actor="you" title="A question" num={howNum(of('question'), 'now')}>
+          Asked on its card. Your answer goes on the card and to the agent.
+        </HowBox>
+      </HowLane>
+      <HowLane n={3} title="Worth a look" actor="agents">
+        <HowBox actor="agents" title="Gone quiet" num={howNum(of('quiet'), 'now')}>
+          A Claude Code session working with nothing reported for twenty minutes: a long command, or stuck.
+        </HowBox>
+        <HowArrow />
+        <HowBox actor="agents" title="Finished a turn" num={howNum(of('waiting'), 'now')}>
+          Waiting at its prompt. Reply here and it goes to the agent, or waits until it is idle.
+        </HowBox>
+      </HowLane>
+    </HowDialog>
   );
 }
