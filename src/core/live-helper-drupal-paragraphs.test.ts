@@ -327,7 +327,7 @@ const SCENARIOS = String.raw`
   // A field in a paragraph: saved through its node, as a new revision of the node with its log, user and changed time;
   // the node's new revision pins a new revision of the paragraph holding the words, and the old ones are kept.
   World::reset();
-  $out['through'] = [$save($words('5', 50, 'Paddle north', 'Paddle south')), Store::$log, Store::$at['node']['1'], Store::pins('node', 1001, 'field_paragraphs'), Store::words('paragraph', 1000), Store::words('paragraph', 50), Store::pins('node', 10, 'field_paragraphs'), array_intersect_key(Store::$rev['node'][1001], array_flip(['log', 'user', 'changed', 'affected']))];
+  $out['through'] = [$save($words('5', 50, 'Paddle north', 'Paddle south')), Store::$log, Store::$at['node']['1'], Store::pins('node', 1001, 'field_paragraphs'), Store::words('paragraph', 1000), Store::words('paragraph', 50), Store::pins('node', 10, 'field_paragraphs'), array_intersect_key(Store::$rev['node'][1001] ?? [], array_flip(['log', 'user', 'changed', 'affected']))];
   // A nested paragraph: its parent paragraph is saved with it, each a new revision the one above pins.
   World::reset();
   $out['nested'] = [$save($words('7', 70, 'Canoe', 'Kayak'))[0], Store::$log, Store::pins('node', 1002, 'field_paragraphs'), Store::pins('paragraph', 1001, 'field_items'), Store::words('paragraph', 1000), Store::words('paragraph', 70)];
@@ -419,7 +419,8 @@ function run(t: { skip(why: string): void }, scenarios: string, env: Record<stri
       writeFileSync(join(folder, file), DRUPAL_HELPER_FILES[file] ?? '');
     }
     writeFileSync(join(folder, 'check.php'), `${PRELUDE}${scenarios}\n  echo json_encode($out);\n}\n`);
-    return JSON.parse(execFileSync(bin, [join(folder, 'check.php')], { encoding: 'utf8', env: { PATH: process.env.PATH ?? '', WL_HELPER: folder, ...env } })) as Record<string, unknown>;
+    // A warning goes to stderr, where it is seen, and never into the answer read as JSON.
+    return JSON.parse(execFileSync(bin, ['-d', 'display_errors=stderr', join(folder, 'check.php')], { encoding: 'utf8', env: { PATH: process.env.PATH ?? '', WL_HELPER: folder, ...env } })) as Record<string, unknown>;
   } finally { rmSync(folder, { recursive: true, force: true }); }
 }
 
