@@ -185,7 +185,7 @@ export function Inspector({ project, platform, selection, regions, components, d
     for (const e of targets.filter((t) => t.kind !== 'template-override')) {
       editItems.push({
         id: `target-${e.id}`, group: inSite, icon: 'pencil', label: e.label, disabled: !!e.why,
-        detail: e.why ?? `${EDIT_KIND[e.kind]}${e.via === 'native-form' ? ', in the site’s own form beside it' : ', beside it'}${e.revisions ? ' · a new revision' : ''}`,
+        detail: e.why ?? `${EDIT_KIND[e.kind]}${e.via === 'native-form' ? ', in the site’s own form beside it' : ', beside it'}${e.revisions ? ' · a new revision' : ''}${e.shows ? ' · shows beyond this page' : ''}`,
         run: () => edit(e),
       });
     }

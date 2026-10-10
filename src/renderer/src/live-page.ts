@@ -1469,6 +1469,49 @@ export function livePage(): void {
   }
 
   /**
+   * For step 3 against the page as it was: every element of the page (at most `max`, in document order, the page
+   * script's own overlay and what is never shown left out), each by its path from <body> (`tag:nth-of-type(n)` steps,
+   * so the same element is found in another render however the layout moved), what the tray calls it, its box in
+   * document pixels, its own words (its text nodes', not its children's), its computed values for `props` (each an
+   * index into one table of values, so a page of thousands of elements stays small), and whether it is an edited
+   * element or inside one.
+   */
+  function layerPage(props: string[], max: number): unknown {
+    const keys = (Array.isArray(props) ? props : []).filter((p) => typeof p === 'string' && /^[a-z-]{1,40}$/.test(p)).slice(0, 60);
+    const limit = Number.isInteger(max) && max > 0 ? Math.min(max, 20_000) : 8_000;
+    const table: string[] = [];
+    const index = new Map<string, number>();
+    const intern = (v: string): number => {
+      let i = index.get(v);
+      if (i === undefined) { i = table.length; table.push(v.slice(0, 500)); index.set(v, i); }
+      return i;
+    };
+    const elements: unknown[] = [];
+    let cut = false;
+    const walk = (parent: Element, path: string): void => {
+      const seen = new Map<string, number>();
+      for (const el of Array.from(parent.children)) {
+        if (elements.length >= limit) { cut = true; return; }
+        if (!STEP_NAME.test(el.localName)) continue;
+        const n = (seen.get(el.localName) ?? 0) + 1;
+        seen.set(el.localName, n);
+        if (NOT_SHOWN.test(el.localName) || el.id === HOST_ID) continue;
+        const at = `${path} > ${el.localName}:nth-of-type(${n})`;
+        const s = getComputedStyle(el);
+        const b = el.getBoundingClientRect();
+        const own = words(ownTexts(el).map((t) => t.nodeValue ?? '').join(' '));
+        elements.push({
+          p: at, n: elementName(el), b: [b.left + scrollX, b.top + scrollY, b.width, b.height].map((v) => Math.round(v * 100) / 100),
+          t: own ? own.slice(0, 2_000) : null, v: keys.map((k) => intern(s.getPropertyValue(k))), e: !!el.closest('[data-wl-edit]'),
+        });
+        walk(el, at);
+      }
+    };
+    if (document.body) walk(document.body, 'body');
+    return { keys, table, elements, cut };
+  }
+
+  /**
    * For making a text edit real: how many elements it tags, the field the helper marked around the first, and its words
    * as the site has them; and whether every one it tags is plain words, the same words, in the same field mark (`same`):
    * one stored thing shown more than once, which the main process saves once.
@@ -1686,7 +1729,7 @@ export function livePage(): void {
 
   w.__wl = {
     scan, outline, clear, pick, cancelPick, choose, css, problems, texts, fingerprints, styleOf, paint, where, arrange, disarm, preview, unpreview,
-    layerFind, layerSet, layerPick, layerSnap, layerOf, layerAreas, layerType, layerTry, retypeAt,
+    layerFind, layerSet, layerPick, layerSnap, layerOf, layerAreas, layerPage, layerType, layerTry, retypeAt,
     /** End typing on the page from the window: keep the words typed so far, or put back what was there. */
     layerTypeEnd: (keep: unknown) => endTyping(keep === true),
     /** Picking, or typing on the page: the page's keys are its, not the live view's (live-page-goto.ts asks). */
