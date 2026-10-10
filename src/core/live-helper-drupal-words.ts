@@ -197,10 +197,10 @@ final class Words {
    * checks (LiveController::saveWords()): the first 16 hex of a sha256 of
    * every item's stored value, and a formatted text's format and summary,
    * for the field types these saves handle; '' for any other. The same
-   * stamp later means the field holds what the page rendered, which is
-   * what content that keeps neither revisions nor a changed time (a site's
-   * settings entity) has nothing else to prove. Only the hash leaves the
-   * site, never the words.
+   * stamp later means the field holds what the page rendered: for content
+   * that keeps neither revisions nor a changed time (a site's settings
+   * entity), the only proof there is. Only the hash leaves the site, never
+   * the words.
    */
   public static function stamp(mixed $items): string {
     try {
