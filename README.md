@@ -207,12 +207,18 @@ WordPress and other sites can each be on or off.
   that page, so the page is saved as a new version with its workflow, log and
   checks; a newer draft, an open Layout Paragraphs builder or a paragraph not
   translated into the page's language is refused, and a Paragraphs Library
-  item says how many pages use it first); configuration says the next config
+  item says how many pages use it first); and, where Webform is installed, a
+  form's own words through Webform's own API: an element's title, description,
+  help, placeholder, prefix, suffix or option labels, its buttons and its
+  confirmation message, in the form's language or its translation. A button
+  showing the site's default gets words of its own on that form only; the
+  default for every form, and options several forms share, say how many forms
+  they reach and save only when you confirm. Configuration says the next config
   import puts back what is exported. A save that gives a page a new address (a
   new title, with Pathauto) takes the view there. On WordPress a title, an
-  excerpt, a string meta, the site's title or tagline, a menu link's text, or a block's words (a
-  paragraph, a heading, a navigation label), each through core's REST API with
-  a revision where WordPress keeps one. A block's words are sent as the HTML
+  excerpt, a string meta, the site's title or tagline, a menu link's text, or a
+  block's words (a paragraph, a heading, a navigation label), each through
+  core's REST API with a revision where WordPress keeps one. A block's words are sent as the HTML
   they are kept as: typed words escaped, so a typed `<` stays a character, and
   words between a link's or bold's tags changed only where the change falls
   inside one run of them, every tag kept. Words kept in something shown beyond
@@ -244,8 +250,9 @@ WordPress and other sites can each be on or off.
   never stores, and a builder's own cache, are beyond it.
   What it cannot save says why, and which kind of why: Drupal keeps no such
   thing (words written in a Twig template, a menu link written in code, a base
-  field's label), or Wanigan does not do it yet (an interface translation, a
-  caption, words across formatting). A WordPress change across formatting,
+  field's label, words a Webform token or computed element makes), or Wanigan
+  does not do it yet (an interface translation, a caption, words across
+  formatting). A WordPress change across formatting,
   words in a classic post's content, and words a Drupal template writes go to
   an agent, as does a style: never written into the stylesheets by hand.
   Where the site cannot say what writes words nothing stores (a WordPress

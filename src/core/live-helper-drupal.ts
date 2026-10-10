@@ -26,6 +26,7 @@ import { DRUPAL_WORDS_FILES } from './live-helper-drupal-words.ts';
 import { DRUPAL_STORED_FILES } from './live-helper-drupal-stored.ts';
 import { DRUPAL_ADAPTER_FILES } from './live-helper-drupal-adapters.ts';
 import { DRUPAL_PARAGRAPHS_FILES } from './live-helper-drupal-paragraphs.ts';
+import { DRUPAL_WEBFORM_FILES, DRUPAL_WEBFORM_MODULE } from './live-helper-drupal-webform.ts';
 
 export const DRUPAL_HELPER_VERSION = 4;
 export const DRUPAL_HELPER_MODULE = 'wanigan_live';
@@ -904,7 +905,7 @@ export const DRUPAL_HELPER_FILES: Readonly<Record<string, string>> = {
   'wanigan_live.info.yml': INFO,
   'wanigan_live.services.yml': SERVICES + DRUPAL_VERIFY_SERVICES,
   'wanigan_live.routing.yml': ROUTING,
-  'wanigan_live.module': MODULE + DRUPAL_TRACE_MODULE + DRUPAL_VERIFY_MODULE,
+  'wanigan_live.module': MODULE + DRUPAL_TRACE_MODULE + DRUPAL_WEBFORM_MODULE + DRUPAL_VERIFY_MODULE,
   'src/Token.php': TOKEN,
   'src/PageCache/DenyWanigan.php': DENY,
   'src/Controller/LiveController.php': CONTROLLER,
@@ -923,4 +924,5 @@ export const DRUPAL_HELPER_FILES: Readonly<Record<string, string>> = {
   ...DRUPAL_STORED_FILES,
   ...DRUPAL_ADAPTER_FILES,
   ...DRUPAL_PARAGRAPHS_FILES,
+  ...DRUPAL_WEBFORM_FILES,
 };

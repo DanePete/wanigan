@@ -237,7 +237,12 @@ export type PartKind = (typeof PART_KINDS)[number];
  *   (`layout_builder_component`, `<entity type>:<entity UUID>/<component
  *   UUID>`, with its block `plugin`), a menu (`menu`, its machine name), a
  *   menu link (`menu_link`, its plugin id), a view display (`view`,
- *   `id:display`); a WordPress widget
+ *   `id:display`); a webform (`webform`, its id), one of its elements
+ *   (`webform_element`, `<webform id>/<element key>`, with its element type
+ *   as `plugin`; a form's own buttons are `actions`, the key Webform gives
+ *   the element that replaces them) and a setting a page shows of it
+ *   (`webform_setting`, `<webform id>/<setting>`), as the Drupal helper's
+ *   Webform adapter names them; a WordPress widget
  *   (`widget`), menu item (`menu_item`), template (`wp_template`) or template
  *   part (`wp_template_part`, its `theme//slug` id).
  * - `block`: a WordPress block in stored markup: where (`post:12`,
