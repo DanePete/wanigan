@@ -142,8 +142,22 @@ try {
     await page.mouse.move(from.x, from.y);
     await page.mouse.down();
     await page.mouse.move(to.x, to.y, { steps: 6 });
+    // The marking canvas has the picture on it from its first frame: read as it is put in the page (before any paint).
+    await page.evaluate(() => {
+      window.__markFirst = null;
+      const seen = new MutationObserver(() => {
+        const c = document.querySelector('.live-snap-mark canvas');
+        if (!c) return;
+        seen.disconnect();
+        const g = c.getContext('2d', { willReadFrequently: true });
+        window.__markFirst = g ? g.getImageData(Math.floor(c.width / 2), Math.floor(c.height / 2), 1, 1).data[3] : -1;
+      });
+      seen.observe(document.body, { childList: true, subtree: true });
+    });
     await page.mouse.up();
     await phase('mark', 'snap: dragging over the picture did not choose that area');
+    const first = await page.evaluate(() => window.__markFirst);
+    if (!(first > 0)) fail(t(`snap: the marking canvas was empty as it appeared (alpha ${first}): one dark frame`));
 
     // Markup: a box, an arrow, a blur over the search's name, a label; undo one, redo it.
     const canvas = page.locator('.live-snap-mark canvas');

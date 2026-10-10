@@ -17,7 +17,7 @@
 //    session and sending are the composer's; Save to Notes keeps it unsent.
 // Nothing is kept or sent before the owner sends it or saves it to Notes.
 // Design: docs/design/2026-10-08-live-view.md, "Snap and Record".
-import { useCallback, useEffect, useId, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
+import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import type { LiveSnapShot } from '@shared/bridge';
 import type { LiveComponent, LiveRegion } from '@shared/live';
 import { clampRect, partLine, partsInArea, rectFrom, snapContext, type Rect, type SnapMark, type SnapTool } from '@shared/live-snap';
@@ -349,7 +349,9 @@ function MarkCanvas({ image, crop, marks, tool, scale, onMark }: {
   const drawing: SnapMark | null = !from || !to ? null : tool === 'arrow' ? { tool, x1: from.x, y1: from.y, x2: to.x, y2: to.y }
     : tool === 'text' ? null : { tool, ...rectFrom(from, to) };
 
-  useEffect(() => {
+  // Drawn before the frame is painted: drawn after (an effect), the canvas showed one empty, dark frame as the chosen
+  // area opened for marking (take snap-s1, 7.63 s).
+  useLayoutEffect(() => {
     const c = canvas.current;
     const g = c?.getContext('2d', { willReadFrequently: true });
     if (!c || !g) return;

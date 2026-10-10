@@ -2402,6 +2402,14 @@ ${words}${words}</body></html>`);
   });
   if (!handle) fail('page script: no drag handle on the hovered part');
   else {
+    // The pointer gone from the page (out of the view) leaves no handle behind: kept, it was drawn over the page while
+    // the pointer was in Wanigan's panels (take editor-e12, 50 s). Back over the part, it comes back.
+    await page.evaluate(() => document.querySelector('aside').dispatchEvent(new MouseEvent('mouseout', { bubbles: true, relatedTarget: null })));
+    const handles = () => page.evaluate(() => new Promise((done) => requestAnimationFrame(() => done(
+      [...document.getElementById('__wanigan_live_overlay').shadowRoot.querySelectorAll('div')].some((d) => d.textContent === '⋮⋮')))));
+    if (await handles()) fail('page script: the drag handle stayed after the pointer left the page');
+    await page.mouse.move(hours.x + 100, hours.y + 32);
+    if (!(await handles())) fail('page script: back over the part, no drag handle');
     await page.mouse.move(handle.x, handle.y);
     await page.mouse.down();
     const search = await page.locator('text=Search').boundingBox();

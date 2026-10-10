@@ -880,9 +880,13 @@ export function livePage(): void {
         draw();
       };
       const leave = (): void => { if (dragging?.from.kind === 'entry') { dragging.landing = null; draw(); } };
+      // The pointer gone from the page (out of the view): no part keeps its handle. Kept, it stayed on the last part
+      // the pointer passed, drawn over the page while the pointer was in Wanigan's panels (take editor-e12, 50 s).
+      const out = (e: MouseEvent): void => { if (e.relatedTarget || dragging || grab === null) return; grab = null; draw(); };
       const events: [string, EventListener][] = [
         ['pointermove', move as EventListener], ['pointerup', up as EventListener], ['keydown', key as EventListener],
         ['dragover', move as EventListener], ['drop', up as EventListener], ['dragleave', leave as EventListener],
+        ['mouseout', out as EventListener],
       ];
       if (spec.placing) events.push(['click', ((e: MouseEvent) => { e.preventDefault(); e.stopPropagation(); }) as EventListener]);
       for (const [name, fn] of events) addEventListener(name, fn, true);
