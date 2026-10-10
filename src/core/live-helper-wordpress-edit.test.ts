@@ -911,6 +911,32 @@ describe('what a WordPress page offers to change, and what saving it writes, und
     assert.match(fromPattern.why ?? '', /^WordPress keeps no such thing: /);
   });
 
+  test('a navigation link’s label saves in its wp_navigation post through /wp/v2/navigation, said to show wherever that menu shows; a fallback navigation says why it cannot', () => {
+    const menu = '<!-- wp:navigation-link {"label":"Menu","url":"/menu","kind":"custom"} /-->\n\n<!-- wp:navigation-submenu {"label":"About","url":"/about"} -->\n<!-- wp:navigation-link {"label":"Team","url":"/team","kind":"custom"} /-->\n<!-- /wp:navigation-submenu -->';
+    const site = (saves: Scenario['saves']): Scenario => page('<!-- wp:navigation {"ref":30} /-->\n\n<!-- wp:navigation /-->', {
+      posts: { 7: { post_type: 'page', post_title: 'Welcome', post_content: '<!-- wp:navigation {"ref":30} /-->\n\n<!-- wp:navigation /-->' }, 30: { post_type: 'wp_navigation', post_title: 'Main', post_content: menu } },
+      saves,
+    });
+    const top = run(site([{ find: 'Custom Link block in navigation menu “Main”', value: { label: 'Our <em>menu</em>' } }]));
+    const link = target(top, 'Custom Link block in navigation menu “Main”');
+    assert.match(link.label, /shows wherever this menu shows/);
+    assert.equal(link.why, undefined);
+    assert.equal(link.revisions, true, 'wp_navigation keeps revisions');
+    assert.equal((link.value as Record<string, unknown>).label, 'Menu');
+    assert.ok(top.answers[0]?.data.ok, top.answers[0]?.data.error);
+    assert.deepEqual(top.rest.map(([m, route]) => `${m} ${route}`), ['POST /wp/v2/navigation/30']);
+    assert.equal(top.posts[30], menu.replace('{"label":"Menu"', '{"label":"Our \\u003cem\\u003emenu\\u003c/em\\u003e"'), 'only that link’s delimiter changed');
+    assert.equal(top.posts[7], '<!-- wp:navigation {"ref":30} /-->\n\n<!-- wp:navigation /-->', 'the page itself is untouched');
+
+    const nested = run(site([{ find: 'Custom Link block in navigation menu “Main”', nth: 1, value: { label: 'Our team' } }]));
+    assert.equal((target(nested, 'Submenu block in navigation menu “Main”').value as Record<string, unknown>).label, 'About');
+    assert.ok(nested.answers[0]?.data.ok, nested.answers[0]?.data.error);
+    assert.equal(nested.posts[30], menu.replace('{"label":"Team"', '{"label":"Our team"'), 'a link inside a submenu, found in the menu’s tree');
+
+    const fallback = target(top, 'words in a Navigation block with no menu chosen');
+    assert.match(fallback.why ?? '', /^WordPress keeps no such thing: /);
+  });
+
   test('a static block’s own settings stay read-only, saying WordPress keeps no PHP save() to write them', () => {
     const r = run(page('<!-- wp:heading {"level":3} -->\n<h3 class="wp-block-heading">Hours</h3>\n<!-- /wp:heading -->'));
     const e = target(r, 'Heading block');

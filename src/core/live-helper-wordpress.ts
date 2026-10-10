@@ -957,6 +957,18 @@ final class Wanigan_Live {
 		if (!empty($parent['host'])) self::$stack[$f]['host'] = $parent['host'];
 		if ($block->name === 'core/pattern' && !empty($block->attributes['slug'])) self::$stack[$f]['pattern'] = (string) $block->attributes['slug'];
 		elseif (!empty($parent['pattern'])) self::$stack[$f]['pattern'] = $parent['pattern'];
+		if (isset($parent['nav'])) self::$meta[$id]['nav'] = $parent['nav'];
+		if ($block->name === 'core/navigation') {
+			// blocks/navigation.php renders a published wp_navigation post's blocks (the ref, or the older navigationMenuId),
+			// each directly; with none, a fallback it builds each time.
+			$ref = isset($block->attributes['ref']) ? (int) $block->attributes['ref'] : (isset($block->attributes['navigationMenuId']) ? (int) $block->attributes['navigationMenuId'] : 0);
+			$menu = $ref ? get_post($ref) : null;
+			$ref = $menu instanceof WP_Post && $menu->post_type === 'wp_navigation' && $menu->post_status === 'publish' ? $ref : 0;
+			self::$stack[$f]['nav'] = $ref;
+			self::$stack[$f]['smap'] = $ref ? array('store' => 'post:' . $ref, 'path' => array()) : null;
+		} elseif (isset($parent['nav'])) {
+			self::$stack[$f]['nav'] = $parent['nav'];
+		}
 	}
 
 	/** "render_block_{$name}"'s last callback: the block's output, final. */
@@ -1910,6 +1922,8 @@ final class Wanigan_Live {
 			if ($e) $edits[] = $e;
 		} elseif (!empty($m['pattern']) && self::has_words($type)) {
 			$edits[] = self::pattern_words($name, (string) $m['pattern']);
+		} elseif (isset($m['nav']) && $m['nav'] === 0 && self::has_words($type)) {
+			$edits[] = self::fallback_words($name);
 		}
 		if (!empty($m['host'])) {
 			$e = self::placement_edit($name, $type, $m, $attrs);
@@ -2167,6 +2181,20 @@ final class Wanigan_Live {
 		$id = 'from-pattern-' . self::short($slug . '|' . $name);
 		if (!isset(self::$edits[$id])) {
 			self::$edits[$id] = array('id' => $id, 'kind' => 'block-attributes', 'label' => self::block_label($name) . ' words from the theme’s pattern “' . $slug . '”', 'via' => 'schema', 'revisions' => false, 'why' => self::NO_SUCH . 'these words come from the pattern ' . self::pattern_label($slug) . ', which WordPress renders from the theme’s file each time; no template or post stores them. Change them in that file (Code), or in the Site Editor, which can turn the pattern into the template’s own blocks.');
+		}
+		return $id;
+	}
+
+	/**
+	 * Words in a Navigation block that names no menu: blocks/navigation.php builds its links as a fallback on every
+	 * render (block_core_navigation_get_fallback_blocks(): the newest menu's blocks, or the page list), so no stored menu
+	 * belongs to the block. Making one (WP_REST_Navigation_Fallback_Controller) is a change to the site the owner has to
+	 * choose.
+	 */
+	private static function fallback_words(string $name): string {
+		$id = 'nav-fallback-' . self::short($name);
+		if (!isset(self::$edits[$id])) {
+			self::$edits[$id] = array('id' => $id, 'kind' => 'menu-link', 'label' => self::block_label($name) . ' words in a Navigation block with no menu chosen', 'via' => 'schema', 'revisions' => false, 'why' => self::NO_SUCH . 'this Navigation block names no menu, so WordPress builds its links as a fallback each time it renders (the newest menu, or the list of pages), and no stored menu belongs to it. Choose a menu for the block in the Site Editor; then its labels change here.');
 		}
 		return $id;
 	}
@@ -2993,6 +3021,8 @@ final class Wanigan_Live {
 					$info['shared'] = true;
 					$info['reach'] = 'changes every page that uses this synced pattern';
 				}
+				// A navigation menu (wp_navigation) shows wherever a Navigation block names it.
+				if ($post->post_type === 'wp_navigation') $info['reach'] = 'shows wherever this menu shows';
 			}
 		} elseif (preg_match('/^(tp|tpl):(.+)$/', $store, $m)) {
 			$kind = $m[1] === 'tp' ? 'wp_template_part' : 'wp_template';
