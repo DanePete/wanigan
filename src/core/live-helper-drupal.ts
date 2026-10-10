@@ -20,6 +20,7 @@ import { DRUPAL_EDIT_FILES } from './live-helper-drupal-edit.ts';
 import { DRUPAL_FIND_FILES } from './live-helper-drupal-find.ts';
 import { DRUPAL_AI_FILES } from './live-helper-drupal-ai.ts';
 import { DRUPAL_LIBRARY_FILES } from './live-helper-drupal-library.ts';
+import { DRUPAL_WORDS_FILES } from './live-helper-drupal-words.ts';
 
 export const DRUPAL_HELPER_VERSION = 4;
 export const DRUPAL_HELPER_MODULE = 'wanigan_live';
@@ -269,7 +270,9 @@ function wanigan_live_preprocess_field(array &$variables) {
   }
   // Then what a save of these words checks against (LiveController::save()):
   // the translation the page rendered, the revision it showed, and, for
-  // content that keeps no revisions, when that translation last changed.
+  // content that keeps no revisions, when that translation last changed; and
+  // the formatter it was shown with (FormatterBase::view() puts it there),
+  // which says what of a formatted text the page showed, whole or trimmed.
   $variables['attributes']['data-wl-field'] = implode(':', [
     $entity->getEntityTypeId(),
     (string) $entity->id(),
@@ -278,6 +281,7 @@ function wanigan_live_preprocess_field(array &$variables) {
     $entity->language()->getId(),
     $entity->getEntityType()->isRevisionable() ? (string) $entity->getRevisionId() : '',
     method_exists($entity, 'getChangedTime') ? (string) $entity->getChangedTime() : '',
+    (string) ($element['#formatter'] ?? ''),
   ]);
 }
 
@@ -371,12 +375,11 @@ use Drupal\\Core\\Access\\AccessResult;
 use Drupal\\Core\\Access\\AccessResultInterface;
 use Drupal\\Core\\Controller\\ControllerBase;
 use Drupal\\Core\\Entity\\ContentEntityInterface;
-use Drupal\\Core\\Entity\\EntityInterface;
 use Drupal\\Core\\Entity\\RevisionLogInterface;
-use Drupal\\Core\\Field\\FieldItemInterface;
 use Drupal\\Core\\Render\\Markup;
 use Drupal\\wanigan_live\\Find\\Finder;
 use Drupal\\wanigan_live\\Library\\Library;
+use Drupal\\wanigan_live\\Save\\Words;
 use Drupal\\wanigan_live\\Trace\\SaveCode;
 use Symfony\\Component\\HttpFoundation\\JsonResponse;
 use Symfony\\Component\\HttpFoundation\\Request;
@@ -445,42 +448,50 @@ final class LiveController extends ControllerBase {
   }
 
   /**
-   * Saves new words to one item of a plain text field, in one translation,
-   * as the logged-in user.
-   *
-   * The field is named as the page marked it (data-wl-field: entity type,
-   * id, field name, field type, the language the page rendered, the
-   * revision it showed and when that translation last changed). The design
-   * layer names its edit's target too: the content's UUID, its language,
-   * and the item (a value's delta:<n>, a reference's ref:<type>:<uuid>).
-   * The words go to that translation, never another, and to that item only,
-   * which must hold the words before. Without an item, the one item holding
-   * the words before is saved; two that hold them are refused, never
-   * guessed between.
-   *
-   * It saves only over what the page showed: content saved again since, a
-   * newer draft than the version visitors see (content moderation edits the
-   * latest revision; a save from the default one would leave the draft
-   * behind), or an inline Layout Builder block (the layout shows the
-   * revision it pinned, so a new one would change nothing on the page) is
-   * refused. Any violation Drupal's validation finds refuses it, saying
-   * which, the workflow's transition check included: a save keeps the
-   * content's state, so where the user may not publish it nothing is saved,
-   * and nothing is made a draft instead. A refusal saves nothing.
+   * POST /_wanigan/save: new words, saved where they are kept (saveWords()).
    */
   public function save(Request $request): JsonResponse {
     $body = json_decode((string) $request->getContent(), TRUE);
     if (!is_array($body)) {
       return $this->refuse('The request was not JSON.', 400);
     }
-    $mark = array_pad(explode(':', (string) ($body['field'] ?? '')), 7, '');
-    [$type, $id, $name, , $marked, $shown, $shownChanged] = $mark;
+    return $this->saveWords($body);
+  }
+
+  /**
+   * Saves new words to one item of a text field, in one translation, as the
+   * logged-in user: a plain text field's value, or one run of words inside
+   * a formatted text, its markup untouched (Words::apply()).
+   *
+   * The field is named as the page marked it (data-wl-field: entity type,
+   * id, field name, field type, the language the page rendered, the
+   * revision it showed, when that translation last changed, and the
+   * formatter that showed it). The design layer names its edit's target too:
+   * the content's UUID, its language, and the item (a value's delta:<n>, a
+   * reference's ref:<type>:<uuid>). The words go to that translation, never
+   * another, and to that item only, which must hold the words before.
+   * Without an item, the one item holding the words before is saved; two
+   * that hold them are refused, never guessed between.
+   *
+   * It saves only over what the page showed: content saved again since, or
+   * a newer draft than the version visitors see (content moderation edits
+   * the latest revision; a save from the default one would leave the draft
+   * behind), is refused. An inline Layout Builder block is refused (the
+   * layout shows the revision it pinned, so a new one would change nothing
+   * on the page). Any violation Drupal's validation finds refuses it, saying
+   * which, the workflow's transition check included: a save keeps the
+   * content's state, so where the user may not publish it nothing is saved,
+   * and nothing is made a draft instead. A refusal saves nothing.
+   */
+  public function saveWords(array $body): JsonResponse {
+    $mark = array_pad(explode(':', (string) ($body['field'] ?? '')), 8, '');
+    [$type, $id, $name, , $marked, $shown, $shownChanged, $formatter] = $mark;
     $before = $this->words((string) ($body['before'] ?? ''));
     $after = trim((string) ($body['after'] ?? ''));
     if ($type === '' || $id === '' || $name === '' || $after === '') {
       return $this->refuse('Which field, and what words?', 400);
     }
-    if (!preg_match('/^\\d{0,20}$/', $shown) || !preg_match('/^\\d{0,20}$/', $shownChanged)) {
+    if (!preg_match('/^\\d{0,20}$/', $shown) || !preg_match('/^\\d{0,20}$/', $shownChanged) || !preg_match('/^[A-Za-z0-9_.-]{0,128}$/', $formatter)) {
       return $this->refuse('Which version of the content did the page show?', 400);
     }
     $given = static fn (string $key): ?string => is_string($body[$key] ?? NULL) && $body[$key] !== '' ? $body[$key] : NULL;
@@ -539,30 +550,11 @@ final class LiveController extends ControllerBase {
     if (!$entity->access('update') || !$entity->get($name)->access('edit')) {
       return $this->refuse('The user you are logged in as in the live view may not change this. Log in there as someone who may.', 403);
     }
-    $field = $entity->get($name);
-    if (!in_array($field->getFieldDefinition()->getType(), ['string', 'string_long'], TRUE)) {
-      return $this->refuse('This field holds formatted text or another kind of value, so new words typed on the page could lose its formatting. Change it in Drupal, or ask an agent.', 409);
+    // The words, in the one item that holds them: a plain value, or one run
+    // inside formatted text checked through its own format.
+    if ($refused = Words::apply($entity, $name, $item, $before, $after, $formatter)) {
+      return $this->refuse($refused[1], $refused[0]);
     }
-    $deltas = [];
-    foreach ($field as $i => $value) {
-      if ($item !== NULL ? $this->names($value, (int) $i, $item) : $this->words((string) $value->value) === $before) {
-        $deltas[] = (int) $i;
-      }
-    }
-    if ($item !== NULL && count($deltas) !== 1) {
-      return $this->refuse('The item this edit was made on is not in the field any more: it changed since the page loaded. Reload, and try again.', 409);
-    }
-    if ($item !== NULL && $this->words((string) $field->get($deltas[0])->value) !== $before) {
-      return $this->refuse('That item of the field no longer holds those words: it changed since the page loaded. Reload, and try again.', 409);
-    }
-    if (!$deltas) {
-      return $this->refuse('The field no longer holds those words: it changed since the page loaded. Reload, and try again.', 409);
-    }
-    if (count($deltas) > 1) {
-      return $this->refuse('More than one item of this field holds those words, and the page did not say which one it showed, so none is changed. Change it in Drupal.', 409);
-    }
-    $delta = $deltas[0];
-    $field->get($delta)->value = $after;
     if ($entity->getEntityType()->isRevisionable()) {
       $entity->setNewRevision(TRUE);
       if ($entity instanceof RevisionLogInterface) {
@@ -594,21 +586,6 @@ final class LiveController extends ControllerBase {
       'ok' => TRUE, 'value' => $after, 'label' => (string) $entity->label(),
       'revision' => $revision !== NULL ? (string) $revision : NULL, 'state' => is_string($state) ? $state : NULL,
     ]);
-  }
-
-  /**
-   * Whether a field item is the one an identity names: a value by its delta,
-   * a reference by the entity it refers to.
-   */
-  private function names(FieldItemInterface $value, int $delta, string $item): bool {
-    if (preg_match('/^delta:(\\d{1,6})$/', $item, $m)) {
-      return $delta === (int) $m[1];
-    }
-    if (preg_match('/^ref:([^:]+):(.+)$/', $item, $m)) {
-      $target = $value->entity ?? NULL;
-      return $target instanceof EntityInterface && $target->getEntityTypeId() === $m[1] && $target->uuid() === $m[2];
-    }
-    return FALSE;
   }
 
   /**
@@ -811,4 +788,5 @@ export const DRUPAL_HELPER_FILES: Readonly<Record<string, string>> = {
   ...DRUPAL_FIND_FILES,
   ...DRUPAL_AI_FILES,
   ...DRUPAL_LIBRARY_FILES,
+  ...DRUPAL_WORDS_FILES,
 };

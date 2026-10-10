@@ -21,7 +21,8 @@
 //   (not tagged, their words not patched): phase 1 does not read the theme's breakpoints, and a verification fails
 //   them as not verifiable yet.
 // - Implementing: only words, saved where they are kept, as the user logged in in the view. Where the helper marks a
-//   plain text field around them (Drupal's `data-wl-field`), through `POST /_wanigan/save`, the window's own
+//   text field around them (Drupal's `data-wl-field`: a plain value, or one run of words inside formatted text, which
+//   the helper splices and checks through the text's own format), through `POST /_wanigan/save`, the window's own
 //   helperSave path, to exactly the content, translation and item the edit's target names (saveTarget): never the
 //   default language, never the first item that holds the same words. Otherwise through the one edit target of the
 //   page's trace that holds exactly those words (wordsTarget(): a title, an excerpt, a string meta, a setting, a menu
@@ -195,7 +196,7 @@ export function effective(edits: readonly LayerEdit[], res: Pick<Resolution, 'or
 /**
  * Where a text edit's words are saved: the content, translation and item its target names (a Drupal field part's
  * identity: the content's UUID, its langcode, and the item when the part is one), once the field the helper marked
- * around its element (`type:id:field:fieldtype[:langcode]`) is checked to be that field. Anything else is why not:
+ * around its element (`type:id:field:fieldtype[:langcode:revision:changed:formatter]`) is checked to be that field. Anything else is why not:
  * the words are never saved to a field, a translation or an item the target does not name.
  */
 export function saveTarget(part: PartIdentity | null, field: string): SaveAt | string {
@@ -780,8 +781,8 @@ export function wireLiveLayer(options: LiveLayerOptions): { hooks: LiveViewHooks
     if (at.plain !== true || typeof at.words !== 'string') return none('Its element holds more than plain words, so they are not saved from here.');
     if (at.words.length > SAVE_MAX || value.length > SAVE_MAX) return none(`Words longer than ${SAVE_MAX.toLocaleString('en')} characters are saved in the site’s own form.`);
     if (typeof at.field === 'string') {
-      // A plain text field the helper marked around the words (Drupal): exactly the field, translation and item the
-      // edit's target names, never the first item that happens to hold the same words, never the default language.
+      // A text field the helper marked around the words (Drupal): exactly the field, translation and item the edit's
+      // target names, never the first item that happens to hold the same words, never the default language.
       const where = saveTarget(edit.target.part, at.field);
       if (typeof where === 'string') return none(where);
       const saved = await options.helperSave(at.field, at.words, value, where);
