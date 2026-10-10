@@ -885,8 +885,8 @@ export function liveStub(f) {
       } else {
         if (!part) return none('Its element is in markup no part of the page’s trace names, so Wanigan cannot tell what holds these words.');
         // Nothing the trace offers holds them. On Drupal the helper says what writes them (main's writtenIn): a
-        // template is code, so words its template writes go to an agent; anything else is made by code. Elsewhere
-        // (a WordPress classic theme, whose template files are marked around what they print), main says only that
+        // template is code, so words its template writes go to an agent; anything else is made by code. Played here
+        // for WordPress: words in no template file its helper read and no plugin it names, where main says only that
         // nothing holds them.
         if ((w.answer?.trace?.platform ?? 'drupal') === 'drupal') {
           const file = layoutAt(bounds.width)[w.layer.region[e.id]]?.file;

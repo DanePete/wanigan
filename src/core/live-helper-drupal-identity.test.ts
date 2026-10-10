@@ -32,6 +32,7 @@ const UUID = {
   landing: '0a1b2c3d-0000-4000-8000-000000000014',
   notes: '0a1b2c3d-0000-4000-8000-000000000015',
   promo: '0a1b2c3d-0000-4000-8000-0000000000e5',
+  para: '0a1b2c3d-0000-4000-8000-0000000000f6',
 };
 
 /** Layout Builder's components on the made-up pages, by the UUIDs their section storage keeps. */
@@ -96,6 +97,21 @@ namespace {
     public function getEntityType() { return new class { public function isRevisionable() { return FALSE; } public function hasKey($k) { return TRUE; } public function getLabel() { return 'Content'; } }; }
     public function access($op, $account = NULL, $object = FALSE) { return new class { public function isAllowed() { return TRUE; } public function isForbidden() { return FALSE; } }; }
   }
+  // A paragraph: a composite, its type naming the field that points back at its parent; shown at the revision its host pins.
+  final class Para implements Drupal\Core\Entity\FieldableEntityInterface {
+    public function __construct(public string $id, public string $uuid, public int $revision) {}
+    public function getEntityTypeId() { return 'paragraph'; }
+    public function id() { return $this->id; }
+    public function uuid() { return $this->uuid; }
+    public function bundle() { return 'text'; }
+    public function label() { return 'About Acme > Paragraphs'; }
+    public function isNew() { return FALSE; }
+    public function getRevisionId() { return $this->revision; }
+    public function isDefaultRevision() { return TRUE; }
+    public function language() { return new class { public function getId() { return 'en'; } }; }
+    public function getEntityType() { return new class { public function isRevisionable() { return TRUE; } public function hasKey($k) { return TRUE; } public function getLabel() { return 'Paragraph'; } public function get($k) { return $k === 'entity_revision_parent_id_field' ? 'parent_id' : NULL; } }; }
+    public function access($op, $account = NULL, $object = FALSE) { return new class { public function isAllowed() { return TRUE; } public function isForbidden() { return FALSE; } }; }
+  }
   // A field item as core's is read: its values, and the target its formatter loaded (prepareView() sets _loaded).
   final class Item implements Drupal\Core\Field\FieldItemInterface {
     public $_loaded = NULL;
@@ -156,7 +172,7 @@ namespace {
     return $r->componentOpen($id, ['heading' => $inner]) . '<div class="' . str_replace(':', '-', $id) . '">' . $inner . '</div>' . $r->componentClose($id);
   }
 
-  function field(Recorder $r, Node $host, string $name, string $type, array $items, array $contents): string {
+  function field(Recorder $r, Drupal\Core\Entity\FieldableEntityInterface $host, string $name, string $type, array $items, array $contents): string {
     $variables = [
       'element' => ['#field_name' => $name, '#field_type' => $type, '#object' => $host, '#items' => new Items($items), '#title' => $name, '#view_mode' => 'full', '#formatter' => 'x'],
       'items' => array_map(fn ($c) => ['content' => $c], $contents),
@@ -233,6 +249,7 @@ namespace {
     $notes = new Node('node', '15', getenv('WL_NOTES'), 'article', 'Acme notes');
     $landing = new Node('node', '14', getenv('WL_LANDING'), 'landing_page', 'Northwind landing');
     $sample = new Node('node', '0', 'f00df00d-0000-4000-8000-000000000000', 'article', 'Sample', 'en', TRUE);
+    $para = new Para('5', getenv('WL_PARA'), 50);
     $r = new Recorder('/node/12');
     $r->sense();
     Recorder::$on = $r;
@@ -243,14 +260,16 @@ namespace {
       $related[] = new Item(['target_id' => $nodes[$key]->id], $key === 'gamma' ? NULL : $nodes[$key]);
       $contents[] = ['#markup' => $nodes[$key]->label];
     }
-    $html = themed($r, 'page', ['render element' => 'page', 'base hook' => 'page'], ['page' => [], 'theme_hook_original' => 'page'], 'core/modules/system/templates/page.html.twig', function () use ($r, $host, $nodes, $teaser, $notes, $landing, $rearranged, $sample, $related, $contents) {
-      $main = themed($r, 'region', ['render element' => 'elements', 'base hook' => 'region'], ['elements' => ['#region' => 'content'], 'theme_hook_original' => 'region__content'], 'core/modules/system/templates/region.html.twig', function () use ($r, $host, $nodes, $landing, $rearranged, $sample, $related, $contents) {
-        $out = block($r, ['#id' => 'acme_content', '#plugin_id' => 'system_main_block'], function () use ($r, $host, $nodes, $related, $contents) {
-          return themed($r, 'node', ['render element' => 'elements', 'base hook' => 'node'], ['elements' => ['#node' => $host, '#view_mode' => 'full'], 'theme_hook_original' => 'node__page__full'], 'web/themes/custom/acme/templates/node--page.html.twig', function () use ($r, $host, $nodes, $related, $contents) {
-            return field($r, $host, 'field_related', 'entity_reference', $related, $contents)
+    $html = themed($r, 'page', ['render element' => 'page', 'base hook' => 'page'], ['page' => [], 'theme_hook_original' => 'page'], 'core/modules/system/templates/page.html.twig', function () use ($r, $host, $nodes, $teaser, $notes, $landing, $rearranged, $sample, $related, $contents, $para) {
+      $main = themed($r, 'region', ['render element' => 'elements', 'base hook' => 'region'], ['elements' => ['#region' => 'content'], 'theme_hook_original' => 'region__content'], 'core/modules/system/templates/region.html.twig', function () use ($r, $host, $nodes, $landing, $rearranged, $sample, $related, $contents, $para) {
+        $out = block($r, ['#id' => 'acme_content', '#plugin_id' => 'system_main_block'], function () use ($r, $host, $nodes, $related, $contents, $para) {
+          return themed($r, 'node', ['render element' => 'elements', 'base hook' => 'node'], ['elements' => ['#node' => $host, '#view_mode' => 'full'], 'theme_hook_original' => 'node__page__full'], 'web/themes/custom/acme/templates/node--page.html.twig', function () use ($r, $host, $nodes, $related, $contents, $para) {
+            return field($r, $host, 'field_related', 'entity_reference', $related, $contents, $para)
               // An entity the item shows rendered: named from its build, with no _loaded flag to read.
               . field($r, $host, 'field_teasers', 'entity_reference', [new Item(['target_id' => '24'])], [['#node' => $nodes['delta'], '#view_mode' => 'teaser', '#markup' => 'Delta']])
               . field($r, $host, 'field_points', 'string', [new Item(['value' => 'Fast']), new Item(['value' => 'Kind'])], [['#markup' => 'Fast'], ['#markup' => 'Kind']])
+              // A paragraph, at the revision its host pins, with a field of its own.
+              . themed($r, 'paragraph', ['render element' => 'elements', 'base hook' => 'paragraph'], ['elements' => ['#paragraph' => $para, '#view_mode' => 'default'], 'theme_hook_original' => 'paragraph__text'], 'web/modules/contrib/paragraphs/templates/paragraph.html.twig', fn () => '<div class="paragraph">' . field($r, $para, 'field_text', 'string', [new Item(['value' => 'Paddle north'])], [['#markup' => 'Paddle north']]) . '</div>')
               // Two items that refer to the same thing cannot be told apart once reordered: neither is named.
               . field($r, $host, 'field_twice', 'entity_reference', [new Item(['target_id' => '21'], $nodes['alpha']), new Item(['target_id' => '21'], $nodes['alpha'])], [['#markup' => 'Alpha'], ['#markup' => 'Alpha']])
               . component($r, 'acme:card', 'One' . component($r, 'acme:badge', 'New'))
@@ -305,6 +324,7 @@ const SAMPLES: PartIdentity[] = [
   { kind: 'entity', type: 'node', id: UUID.page, bundle: 'page', langcode: 'en', field: 'field_related', item: `ref:node:${UUID.alpha}` },
   { kind: 'entity', type: 'node', id: UUID.page, bundle: 'page', field: 'field_points', item: 'delta:1' },
   { kind: 'entity', type: 'taxonomy_term', id: UUID.beta },
+  { kind: 'entity', type: 'paragraph', id: UUID.para, bundle: 'text', langcode: 'en', field: 'field_text', item: 'delta:0', revision: '50' },
   { kind: 'component', name: 'acme:card', within: `entity|node|${UUID.page}|en|||`, nth: 2 },
   { kind: 'component', name: 'acme:card', within: null, nth: 0 },
   { kind: 'config', type: 'block', id: 'acme_main_menu', plugin: 'system_menu_block:main' },
@@ -343,7 +363,7 @@ function run(version: string): Run {
       env: {
         PATH: process.env.PATH ?? '', WL_FOLDER: folder, WL_HELPER: helper, WL_ROOT: folder, WL_SAMPLES: JSON.stringify(SAMPLES), WL_LINK: LINK, WL_HOME: HOME,
         WL_PAGE: UUID.page, WL_ALPHA: UUID.alpha, WL_BETA: UUID.beta, WL_GAMMA: UUID.gamma, WL_DELTA: UUID.delta, WL_TEASER: UUID.teaser,
-        WL_NOTES: UUID.notes, WL_LANDING: UUID.landing, WL_PROMO: UUID.promo, WL_LB: JSON.stringify(LB),
+        WL_NOTES: UUID.notes, WL_LANDING: UUID.landing, WL_PROMO: UUID.promo, WL_LB: JSON.stringify(LB), WL_PARA: UUID.para,
       },
     })) as Run;
     runs.set(version, out);
@@ -390,6 +410,14 @@ for (const version of RELEASES) {
     assert.deepEqual(one(parts, 'field_teasers #1').identity, { ...page, field: 'field_teasers', item: `ref:node:${UUID.delta}` }, 'a target shown rendered is named from its own build');
     assert.deepEqual([one(parts, 'field_points #1').identity, one(parts, 'field_points #2').identity], [{ ...page, field: 'field_points', item: 'delta:0' }, { ...page, field: 'field_points', item: 'delta:1' }], 'a value item: its delta');
     assert.deepEqual([one(parts, 'field_twice #1').identity, one(parts, 'field_twice #2').identity], [undefined, undefined], 'two items naming the same thing are not told apart, so neither is named');
+
+    // A paragraph names itself, not the content and field holding it, and carries the revision the page showed (the
+    // one its host pins), on its own part and its fields'; the key leaves the revision out, so a save does not make it
+    // another.
+    const para = { kind: 'entity', type: 'paragraph', id: UUID.para, bundle: 'text', langcode: 'en', revision: '50' } as const;
+    assert.deepEqual(one(parts, 'text 5').identity, para, 'named "text 5", not by the label naming its host and field');
+    assert.deepEqual(one(parts, 'field_text #1').identity, { ...para, field: 'field_text', item: 'delta:0' });
+    assert.equal(identityKey(one(parts, 'text 5').identity!), `entity|paragraph|${UUID.para}|en||`);
 
     // Components: within the nearest identified part, counted by id there in page order.
     const [one1, two] = parts.get('acme:card')!;

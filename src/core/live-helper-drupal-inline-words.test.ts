@@ -93,6 +93,8 @@ namespace {
       return array_merge(World::$tripViolations, $changed ? World::$tripBrought : []);
     }
     public function hasField($f) { return in_array($f, ['uuid', 'layout_builder__layout'], TRUE); }
+    public function hasLinkTemplate($rel) { return $rel === 'canonical'; }
+    public function toUrl() { return new class { public function toString() { return '/trips/lake-loop'; } }; }
   }
   final class Display { public function id() { return 'node.trip.default'; } public function getTargetBundle() { return 'trip'; } public function getTargetEntityTypeId() { return 'node'; } }
   /** A component of a layout, with the inline block plugin's configuration. */
@@ -288,7 +290,7 @@ test('an inline block’s words are saved through its layout: the pinned version
   const out = run(t);
   if (!out) return;
   const [answer, revisions, pinned, saves, log] = out.override as [Answer, Record<string, string>, (number | null)[], string[], string];
-  assert.deepEqual(answer, [200, { ok: true, value: 'Plan your paddle', label: 'Lake loop', revision: '21', state: null }], 'the trip’s new revision');
+  assert.deepEqual(answer, [200, { ok: true, value: 'Plan your paddle', label: 'Lake loop', revision: '21', state: null, url: '/trips/lake-loop', was: '/trips/lake-loop' }], 'the trip’s new revision, and its address');
   assert.deepEqual(revisions, { 40: 'Plan a trip', 41: 'Plan your trip', 42: 'Plan your trip!', 43: 'Plan your paddle' }, 'a new block revision; the one pinned before is kept as it was');
   assert.deepEqual(pinned, [43, null], 'the layout pins the new one');
   assert.deepEqual(saves, ['new revision']);
@@ -338,7 +340,7 @@ test('a default layout’s words are saved only when asked again with the token 
   assert.equal(out.defaultsWrong, true, 'another token is answered as the first time');
   assert.equal(out.defaultsOther, false, 'other words need their own');
   const [again, revisions, pinned, tripSaves, saved] = out.defaultsAgain as [Answer, Record<string, string>, (number | null)[], string[], string[]];
-  assert.deepEqual(again, [200, { ok: true, value: 'Plan your paddle', label: 'The default layout for Trip content', revision: null, state: null }]);
+  assert.deepEqual(again, [200, { ok: true, value: 'Plan your paddle', label: 'The default layout for Trip content', revision: null, state: null, url: null, was: null }], 'a display has no address');
   assert.deepEqual([revisions[41], pinned, tripSaves, saved], ['Plan your paddle', [41, null], [], ['node.trip.default']],
     'a display keeps no revisions: core saves the pinned block in place, and no entity is saved');
   assert.equal(out.defaultsMay, 403, 'a default layout needs “configure any layout”');

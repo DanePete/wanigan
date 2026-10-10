@@ -22,8 +22,8 @@
 // - The Wanigan helpers' marks: `<!-- wl:begin file="..." -->` /
 //   `<!-- wl:end file="..." -->` (WordPress template files),
 //   `<!-- wl:begin entity="post:page:42:full" -->` (a post's content), and the
-//   attributes data-wl-entity, data-wl-block, data-wl-view, data-wl-piece and
-//   data-wl-field.
+//   attributes data-wl-entity, data-wl-block, data-wl-view, data-wl-piece,
+//   data-wl-field and data-wl-paragraph.
 // - Elementor's own data-element_type, data-widget_type and data-id.
 // - The helpers' trace marks: `<!-- wl:part id="p12" -->` … `<!-- /wl:part
 //   id="p12" -->` around each part the page's trace describes
@@ -113,7 +113,7 @@ export function livePage(): void {
   type Rect = { x: number; y: number; width: number; height: number };
   type Info = {
     file: string | null; entity: string | null; block: string | null; view: string | null; element: string | null;
-    hook: string | null; component: string | null; piece: string | null; field: string | null; suggestions: string[]; part: string | null;
+    hook: string | null; component: string | null; piece: string | null; field: string | null; paragraph: string | null; suggestions: string[]; part: string | null;
   };
   /** `at`: where its opening mark is among the page's marks, for pairing with the trace's parts. */
   type Region = Info & { index: number; range: Range | null; el: Element | null; parent: number | null; order: number; at: number };
@@ -239,7 +239,7 @@ export function livePage(): void {
   function info(r: Region): Info {
     return {
       file: r.file, entity: r.entity, block: r.block, view: r.view, element: r.element, hook: r.hook,
-      component: r.component, piece: r.piece, field: r.field, suggestions: r.suggestions, part: r.part,
+      component: r.component, piece: r.piece, field: r.field, paragraph: r.paragraph, suggestions: r.suggestions, part: r.part,
     };
   }
 
@@ -289,7 +289,7 @@ export function livePage(): void {
 
   function scan(): (Info & { index: number; rect: Rect; parent: number | null; order: number })[] {
     regions = [];
-    const blank: Info = { file: null, hook: null, entity: null, block: null, view: null, element: null, component: null, piece: null, field: null, suggestions: [], part: null };
+    const blank: Info = { file: null, hook: null, entity: null, block: null, view: null, element: null, component: null, piece: null, field: null, paragraph: null, suggestions: [], part: null };
     // What has begun and not yet ended, by what will end it: a template's file, a component's id, a trace part's id.
     const open: { key: string; info: Info; begin: Comment; at: number }[] = [];
     /** The trace's parts, as ranges, until they are paired with the regions they are. */
@@ -352,7 +352,7 @@ export function livePage(): void {
       if (e) close(`file ${unescape(e[1] as string)}`, comment);
     }
     const commented = regions.filter((r) => r.component);
-    const marked = document.querySelectorAll('[data-wl-entity], [data-wl-block], [data-wl-view], [data-wl-piece], [data-wl-field], [data-component-id], [data-element_type][data-id]');
+    const marked = document.querySelectorAll('[data-wl-entity], [data-wl-block], [data-wl-view], [data-wl-piece], [data-wl-field], [data-wl-paragraph], [data-component-id], [data-element_type][data-id]');
     for (const el of Array.from(marked)) {
       if (el.closest(`#${HOST_ID}`)) continue;
       const type = el.getAttribute('data-element_type');
@@ -367,9 +367,10 @@ export function livePage(): void {
         component: el.getAttribute('data-component-id'),
         piece: el.getAttribute('data-wl-piece'),
         field: el.getAttribute('data-wl-field'),
+        paragraph: el.getAttribute('data-wl-paragraph'),
       };
       // A component the debug comments already found is one region, not two.
-      const only = !region.entity && !region.block && !region.view && !region.element && !region.piece && !region.field;
+      const only = !region.entity && !region.block && !region.view && !region.element && !region.piece && !region.field && !region.paragraph;
       if (only && commented.some((r) => r.component === region.component && contains(r, el))) continue;
       regions.push(region);
     }
@@ -1516,17 +1517,21 @@ export function livePage(): void {
    * as the site has them; and whether every one it tags is plain words, the same words, in the same field mark (`same`):
    * one stored thing shown more than once, which the main process saves once.
    */
-  function layerOf(id: string): { count: number; field: string | null; words: string | null; plain: boolean; same: boolean } {
+  function layerOf(id: string): { count: number; field: string | null; words: string | null; plain: boolean; same: boolean; parts: string[] } {
     const els = taggedFor(id);
     const el = els[0];
-    if (!el) return { count: 0, field: null, words: null, plain: false, same: false };
+    if (!el) return { count: 0, field: null, words: null, plain: false, same: false, parts: [] };
     const fieldOf = (x: Element): string | null => x.closest('[data-wl-field]')?.getAttribute('data-wl-field') ?? null;
     const plainOf = (x: Element): boolean => x instanceof HTMLElement && !x.children.length;
     const field = fieldOf(el);
     const words = siteWords(el);
+    // The trace's parts around its first element, innermost first: where its words are looked up when no part with an
+    // identity names it (a template region whose path inside could not be written, a plugin's template).
+    if (!regions.length || mutations !== scannedAt) scan();
+    const parts = around(el).flatMap((r) => (r.part ? [r.part] : [])).slice(0, 64);
     return {
       count: els.length, field, words, plain: plainOf(el),
-      same: words !== null && els.every((x) => plainOf(x) && siteWords(x) === words && fieldOf(x) === field),
+      same: words !== null && els.every((x) => plainOf(x) && siteWords(x) === words && fieldOf(x) === field), parts,
     };
   }
 

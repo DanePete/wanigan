@@ -73,14 +73,26 @@
 // - `/_wanigan/piece/...` renders one library entry alone, at the path the
 //   library names for it, with example props; the rendered piece says it is
 //   `data-wanigan-piece="ready"` (or `"failed"`, with why) once it is drawn.
+// - Words a template writes, on the template's part, offered with why they are
+//   not saved here (`template-override`, read-only strings, a `why`; never
+//   saved): `words.tpl.<hash>` for the runs of words typed into it,
+//   `words.t.<hash>` for the strings it prints through a translation function
+//   (Drupal's t(); WordPress's gettext functions, one target per text
+//   domain). WordPress's say the line of each in its property's
+//   `description`, and its template parts say whether their file was read
+//   (a `template.words` variable: `read …`, or `not read: <why>`).
+// - A WordPress term's name where a page shows it (a menu item built from a
+//   term, an archive's heading, a list of categories): `term-<id>`, a string
+//   saved through wp_update_term(), its `shows` saying where else it shows.
 // - Added within version 4, so a page without it reads as before: a Drupal
 //   field's mark (`data-wl-field`, src/shared/live.ts LiveRegion.field, read
-//   by parseFieldMark()) ends in `vh`, the first 16 hex of a sha256 of the
-//   field's stored words as the page rendered them, for the field types the
-//   helper's word saves handle; never the words. Where the mark carries
-//   neither a revision nor a changed time (content that keeps neither),
-//   `POST /_wanigan/save` takes the field still hashing to it as proof the
-//   content is as the page rendered it, and refuses another hash with 409.
+//   by parseFieldMark()) ends in `vh`, after the page's content language: the
+//   first 16 hex of a sha256 of the field's stored words as the page rendered
+//   them, for the field types the helper's word saves handle; never the
+//   words. Where the mark carries neither a revision nor a changed time
+//   (content that keeps neither), `POST /_wanigan/save` takes the field still
+//   hashing to it as proof the content is as the page rendered it, and
+//   refuses another hash with 409.
 
 export const TRACE_VERSION = 1;
 
@@ -232,7 +244,10 @@ export type PartKind = (typeof PART_KINDS)[number];
  *   `post_title`, `post_content`, `post_excerpt` or a registered meta key) and
  *   to one `item` of it: a reference item by what it refers to
  *   (`ref:<entity type>:<uuid or ID>`), so a reorder does not move it; a value
- *   item by its delta (`delta:<n>`).
+ *   item by its delta (`delta:<n>`). A Drupal composite (a paragraph, which its
+ *   host pins by revision) adds the `revision` the page showed: what a save
+ *   through its host checks the page against. It is not part of the identity's
+ *   key or kind (a save makes a new revision of the same paragraph).
  * - `component`: a single-directory component (`acme:card`) or a block type
  *   (`core/paragraph`) rendered inside another identified part (`within`, that
  *   part's identityKey, or null at the page's top), and which of its kind it
@@ -252,12 +267,27 @@ export type PartKind = (typeof PART_KINDS)[number];
  *   part (`wp_template_part`, its `theme//slug` id).
  * - `block`: a WordPress block in stored markup: where (`post:12`,
  *   `tpl:<id>`, `tp:<id>`), its path among the blocks there, and its name.
+ * - `template`: a WordPress theme's PHP template file (header.php, a template
+ *   part, the page template a classic theme's hierarchy chose), by the theme's
+ *   folder name (its slug) and the file's path inside that theme, with which
+ *   theme it is (`role`): the active theme, which has no parent (`theme`); the
+ *   active theme, a child theme (`child`); or the parent of the active child
+ *   (`parent`), whose files an update of that theme overwrites. The role says
+ *   where a change belongs and is not part of the key: the same file is the
+ *   same part whichever theme is active. A file outside the active theme and
+ *   its parent (a plugin's, core's fallback) has no identity. Block themes'
+ *   templates and template parts are `config`, as before.
  */
 export type PartIdentity =
-  | { kind: 'entity'; type: string; id: string; bundle?: string; langcode?: string; field?: string; item?: string }
+  | { kind: 'entity'; type: string; id: string; bundle?: string; langcode?: string; field?: string; item?: string; revision?: string }
   | { kind: 'component'; name: string; within: string | null; nth: number }
   | { kind: 'config'; type: string; id: string; plugin?: string }
-  | { kind: 'block'; store: string; path: number[]; name: string };
+  | { kind: 'block'; store: string; path: number[]; name: string }
+  | { kind: 'template'; theme: string; path: string; role: TemplateRole };
+
+/** Which theme a template file is in: the active theme with no parent, the active child theme, or its parent. */
+export type TemplateRole = 'theme' | 'child' | 'parent';
+const TEMPLATE_ROLES: readonly TemplateRole[] = ['theme', 'child', 'parent'];
 
 /** A machine name, id, UUID or store as a helper reports it: plain, bounded, no spaces or control characters. */
 const IDENT = /^[A-Za-z0-9_.:/@+-]{1,200}$/;
@@ -279,7 +309,10 @@ export function parseIdentity(raw: unknown): PartIdentity | null {
     case 'entity': {
       const type = name(v.type), id = name(v.id);
       if (!type || !id) return null;
-      const out: PartIdentity = { kind: 'entity', type, id, ...opt('bundle', v.bundle), ...opt('langcode', v.langcode), ...opt('field', v.field), ...opt('item', v.item, /^(?:ref:[A-Za-z0-9_.:/@+-]{1,200}|delta:\d{1,6})$/) };
+      const out: PartIdentity = {
+        kind: 'entity', type, id, ...opt('bundle', v.bundle), ...opt('langcode', v.langcode), ...opt('field', v.field),
+        ...opt('item', v.item, /^(?:ref:[A-Za-z0-9_.:/@+-]{1,200}|delta:\d{1,6})$/), ...opt('revision', v.revision, /^\d{1,20}$/),
+      };
       return bad ? null : out;
     }
     case 'component': {
@@ -298,6 +331,13 @@ export function parseIdentity(raw: unknown): PartIdentity | null {
       const path = Array.isArray(v.path) && v.path.length > 0 && v.path.length <= 64 && v.path.every((x) => Number.isInteger(x) && x >= 0 && x < 10_000) ? v.path as number[] : null;
       return store && n && path ? { kind: 'block', store, path, name: n } : null;
     }
+    case 'template': {
+      // A path inside the theme, never out of it: an agent's brief names the file.
+      const theme = name(v.theme), path = name(v.path);
+      const role = TEMPLATE_ROLES.find((r) => r === v.role);
+      if (!theme || theme.includes('/') || !path || !role || path.startsWith('/') || path.split('/').some((s) => s === '' || s === '.' || s === '..')) return null;
+      return { kind: 'template', theme, path, role };
+    }
     default: return null;
   }
 }
@@ -309,13 +349,14 @@ export function identityKey(i: PartIdentity): string {
     case 'component': return ['component', i.name, i.within ?? '', String(i.nth)].join('|');
     case 'config': return ['config', i.type, i.id].join('|');
     case 'block': return ['block', i.store, i.path.join('.'), i.name].join('|');
+    case 'template': return ['template', i.theme, i.path].join('|');
   }
 }
 
 /**
  * What every instance of a part's kind shares, for an edit scoped to `kind`: the same field of the same bundle, the
  * same component or block type, the same block plugin. Null when a part has no kind beyond itself (a menu link, a
- * template).
+ * template, a theme's template file).
  */
 export function kindKey(i: PartIdentity): string | null {
   switch (i.kind) {
@@ -323,6 +364,7 @@ export function kindKey(i: PartIdentity): string | null {
     case 'component': return `component|${i.name}`;
     case 'block': return `component|${i.name}`;
     case 'config': return i.plugin ? `plugin|${i.type}|${i.plugin}` : null;
+    case 'template': return null;
   }
 }
 

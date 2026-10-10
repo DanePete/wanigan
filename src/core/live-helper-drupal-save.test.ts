@@ -6,7 +6,8 @@
 // the answer carries the new revision; it saves only over what the page showed: a violation Drupal's own form for that
 // field would flag (the field's, the content's as a whole), the workflow's, or one the change brings, wherever it is,
 // refuses it (a problem the content already had in a field the change does not touch is said, not refused), as do a
-// newer draft, a page from before another save, and an inline Layout Builder block; and
+// newer draft, a page from before another save, and an inline Layout Builder block; the answer carries the content's
+// address after the save and before it, which a new title can move; and
 // in formatted text one run of words is spliced where it is kept, every other byte kept, and saved only when the text's
 // own format shows nothing else changed (filter-made words, words across tags or twice, a trimmed cut are refused).
 // Words the page shows around a field's own (a template's) are the site's only where the field's mark proves the
@@ -73,6 +74,8 @@ namespace {
     public static function entityTypeManager() { return new class { public function getStorage($t) { return new class { public function load($id) { return Format::all()[$id] ?? NULL; } }; } }; }
     // The live view's token is carried: the helper's own marks are made (wanigan_live.module).
     public static function service($id) { return $id === 'wanigan_live.token' ? new class { public function carried() { return TRUE; } } : new Renderer(); }
+    // The language the page's content is rendered in, which the field's mark carries.
+    public static function languageManager() { return new class { public function getCurrentLanguage($type) { return new class { public function getId() { return 'en'; } }; } }; }
   }
   /**
    * Text formats as core's filters would treat them: basic_html shows its markup as kept; full_html too, but this user
@@ -141,6 +144,8 @@ namespace {
     public array $violations = [];
     public array $translations = [];
     public array $saved = [];
+    /** Its address: an alias made from its default translation's title when it is saved, as Pathauto's would be. */
+    public string $alias = '/paddling-101';
   }
   /** One translation of stored content: its fields, its translations, its validation and its save. */
   trait Stored {
@@ -168,7 +173,14 @@ namespace {
       $found = array_filter($this->content->violations, fn ($v) => !isset($v[2]) || $v[2]($this));
       return array_map(fn ($v) => new Violation($v[0], $v[1], isset($v[3]) ? new Drupal\Core\Entity\Plugin\Validation\Constraint\CompositeConstraintBase($v[3]) : NULL), array_values($found));
     }
-    public function save() { $this->content->rev++; $this->content->saved[] = $this->langcode; }
+    public function save() {
+      $this->content->rev++;
+      $this->content->saved[] = $this->langcode;
+      $first = reset($this->content->translations);
+      if (isset($first->fields['title'])) { $this->content->alias = '/' . trim(strtolower(preg_replace('/\W+/', '-', $first->fields['title']->items[0]->value)), '-'); }
+    }
+    public function hasLinkTemplate($rel) { return $rel === 'canonical'; }
+    public function toUrl() { return new class(($this->langcode !== 'en' ? '/' . $this->langcode : '') . $this->content->alias) { public function __construct(private string $p) {} public function toString() { return $this->p; } }; }
     public function label() { return 'Paddling'; }
     public function getRevisionId() { return $this->content->rev; }
   }
@@ -210,6 +222,7 @@ namespace {
     public static function words(string $l, string $f): array { return array_map(fn ($i) => $i->value, World::$content->translations[$l]->fields[$f]->items); }
   }
 
+  require getenv('WL_HELPER') . '/src/Trace/Identity.php';
   require getenv('WL_HELPER') . '/src/Save/Words.php';
   require getenv('WL_HELPER') . '/src/Save/ConfigWords.php';
   require getenv('WL_HELPER') . '/src/Controller/LiveController.php';
@@ -451,15 +464,16 @@ const STAMPED = String.raw`
     World::$content->type = 'acme_settings';
     World::$content->revisionable = FALSE;
   };
-  $notice = fn () => World::$content->translations['en']->get('field_notice');
+  $notice = fn (string $name = 'field_notice') => World::$content->translations['en']->get($name);
   // The field's mark as the helper's preprocess makes it while the page renders the field.
-  $marked = function (string $formatter = 'string') use ($notice) {
-    $variables = ['element' => ['#object' => World::$content->translations['en'], '#field_name' => 'field_notice', '#field_type' => $notice()->getFieldDefinition()->getType(), '#formatter' => $formatter, '#items' => $notice()], 'attributes' => []];
+  $marked = function (string $formatter = 'string', string $name = 'field_notice') use ($notice) {
+    $variables = ['element' => ['#object' => World::$content->translations['en'], '#field_name' => $name, '#field_type' => $notice($name)->getFieldDefinition()->getType(), '#formatter' => $formatter, '#items' => $notice($name)], 'attributes' => []];
     wanigan_live_preprocess_field($variables);
     return $variables['attributes']['data-wl-field'];
   };
   $words = fn (string $mark, string $before = '© 2026 Acme Outfitters', string $after = '© 2026 Northwind Outfitters', ?string $item = 'delta:0') => ['field' => $mark, 'before' => $before, 'after' => $after, 'uuid' => '${UUID}', 'langcode' => 'en'] + ($item ? ['item' => $item] : []);
-  $unstamped = fn (string $mark) => implode(':', array_slice(explode(':', $mark), 0, 8));
+  // The mark as a page from before a part was marked carries it: 8 parts before the page's language, 9 before the hash.
+  $older = fn (string $mark, int $parts) => implode(':', array_slice(explode(':', $mark), 0, $parts));
 
   // The theme adds "© 2026" before the field's words, and the field holds what the page rendered: the field's own new
   // words are saved.
@@ -482,12 +496,18 @@ const STAMPED = String.raw`
   $mark = $marked();
   $notice()->items[] = new Item('Northwind');
   $out['added'] = [$save($words($mark))[0], World::$content->saved];
-  // A page from before the mark carried the hash: as before, a template's words and a change since cannot be told apart.
+  // A page from before the mark carried the hash, with the page's language (9 parts) or from before that too (8): as
+  // before, a template's words and a change since cannot be told apart.
   $settings();
-  $out['unstamped'] = [$save($words($unstamped($marked()))), World::words('en', 'field_notice'), World::$content->saved];
-  // What is not a hash is refused before anything is loaded.
+  $out['unstamped'] = [$save($words($older($marked(), 9))), World::words('en', 'field_notice'), World::$content->saved];
   $settings();
-  $out['notAHash'] = $save($words($unstamped($marked()) . ':acme-outfitters'))[0];
+  $out['unlanguaged'] = [$save($words($older($marked(), 8))), World::words('en', 'field_notice'), World::$content->saved];
+  // Each part has its place: what is not a hash where the hash goes is refused before anything is loaded, and a hash
+  // where the page's language goes is read as that, never as the proof.
+  $settings();
+  $out['notAHash'] = $save($words($older($marked(), 9) . ':acme-outfitters'))[0];
+  $settings();
+  $out['hashForLanguage'] = [$save($words($older($marked(), 8) . ':' . explode(':', $marked())[9]))[0], World::words('en', 'field_notice')];
   // Formatted text kept as one run of words: mapped the same way. Its format is part of what is hashed: one changed
   // since is a change since.
   $settings([['value' => 'Acme Outfitters', 'format' => 'basic_html']], 'text_long');
@@ -499,6 +519,13 @@ const STAMPED = String.raw`
   // A field of a type the word saves do not model carries no hash.
   $settings(['4'], 'integer');
   $out['integer'] = $marked('number_integer');
+  // Content that keeps revisions: its revision proves it, whether the page's mark is from before the page's language
+  // (8 parts), from before the hash (9) or carries both (10).
+  $out['parts'] = [];
+  foreach ([8, 9, 10] as $parts) {
+    World::make(['en' => ['title' => ['Paddling 101']]]);
+    $out['parts'][$parts] = [$older($marked('string', 'title'), $parts), $save($words($older($marked('string', 'title'), $parts), 'Course: Paddling 101', 'Course: Paddling 102'))[0], World::words('en', 'title')];
+  }
 `;
 
 /** Runs scenarios under the stand-in Drupal with the helper's own controller and word saves; what they put in $out. */
@@ -507,7 +534,7 @@ function runSaves(t: { skip(why: string): void }, scenarios: string): Record<str
   if (!bin) { t.skip('PHP is not installed here'); return null; }
   const folder = mkdtempSync(join(tmpdir(), 'wanigan-drupal-save-'));
   try {
-    for (const file of ['src/Controller/LiveController.php', 'src/Save/Words.php', 'src/Save/ConfigWords.php', 'wanigan_live.module']) {
+    for (const file of ['src/Controller/LiveController.php', 'src/Trace/Identity.php', 'src/Save/Words.php', 'src/Save/ConfigWords.php', 'wanigan_live.module']) {
       mkdirSync(join(folder, file, '..'), { recursive: true });
       writeFileSync(join(folder, file), DRUPAL_HELPER_FILES[file] ?? '');
     }
@@ -520,12 +547,12 @@ test('words are saved to the translation and the item named, and to nothing else
   const out = runSaves(t, SAVES);
   if (!out) return;
 
-  assert.deepEqual(out.french, [[200, { ok: true, value: 'Pagayer 101', label: 'Paddling', revision: '8', state: null }], ['Paddling 101'], ['Pagayer 101'], ['fr']],
-    'the French translation, as a new revision; the English keeps its words');
+  assert.deepEqual(out.french, [[200, { ok: true, value: 'Pagayer 101', label: 'Paddling', revision: '8', state: null, url: '/fr/paddling-101', was: '/fr/paddling-101' }], ['Paddling 101'], ['Pagayer 101'], ['fr']],
+    'the French translation, as a new revision, at its own address; the English keeps its words');
   const [refused, english, saved] = out.noTranslation as [[number, { ok: boolean; error: string }], string[], string[]];
   assert.deepEqual([refused[0], refused[1].ok, english, saved], [409, false, ['Paddling 101'], []]);
   assert.match(refused[1].error, /no translation in that language/);
-  assert.deepEqual(out.secondItem, [[200, { ok: true, value: 'Raft', label: 'Paddling', revision: '8', state: null }], ['Canoe', 'Raft', 'Kayak']], 'only the item named');
+  assert.deepEqual(out.secondItem, [[200, { ok: true, value: 'Raft', label: 'Paddling', revision: '8', state: null, url: '/paddling-101', was: '/paddling-101' }], ['Canoe', 'Raft', 'Kayak']], 'only the item named');
   const [changed, after] = out.itemChanged as [[number, { error: string }], string[]];
   assert.deepEqual([changed[0], after], [409, ['Canoe', 'Raft', 'Kayak']]);
   assert.match(changed[1].error, /does not hold those words: it changed since the page loaded, or the site shows it other than as it keeps it/,
@@ -549,14 +576,16 @@ test('words are saved only over what the page showed: a violation of the field, 
   if (!out) return;
   type Answer = [number, { ok: boolean; error?: string }];
 
-  assert.deepEqual(out.shown, [[200, { ok: true, value: 'Paddling 102', label: 'Paddling', revision: '8', state: null }], ['en']], 'the version the page showed, saved as a new revision');
+  assert.deepEqual(out.shown, [[200, { ok: true, value: 'Paddling 102', label: 'Paddling', revision: '8', state: null, url: '/paddling-102', was: '/paddling-101' }], ['en']],
+    'the version the page showed, saved as a new revision; its address after the save and before, as the new title moved it');
   const [other, otherSaved] = out.brought as [Answer, string[]];
   assert.deepEqual([other[0], otherSaved], [422, []], 'a violation the change brings refuses it, on another field too');
   assert.equal(other[1].error, 'Drupal would not save it. field_summary: This value is too long. It should have 255 characters or less. field_tags.0.value: This value should not be null.');
-  const [already, alreadyWords, alreadySaved] = out.already as [[number, { ok: boolean; note?: string; error?: string }], string[], string[]];
+  const [already, alreadyWords, alreadySaved] = out.already as [[number, { ok: boolean; note?: string; error?: string; url?: string; was?: string }], string[], string[]];
   assert.deepEqual([already[0], already[1].ok, alreadyWords, alreadySaved], [200, true, ['Paddling 102'], ['en']],
     'a problem the content already had, in a field the change does not touch, does not stop the save');
   assert.equal(already[1].note, 'Saved. Note that this content already had a problem Drupal reports, in a field this change does not touch: uuid.0.value: This is not a valid UUID.');
+  assert.deepEqual([already[1].url, already[1].was], ['/paddling-102', '/paddling-101'], 'the address after the save and before it, in the same answer as the note');
   assert.equal(out.alreadyTwo, 'Saved. Note that this content already had problems Drupal reports, in fields this change does not touch: uuid.0.value: This is not a valid UUID. field_summary: This value is too long. It should have 255 characters or less.');
   const [both, bothSaved] = out.alreadyAndBrought as [Answer, string[]];
   assert.deepEqual([both[0], both[1].error, bothSaved], [422, 'Drupal would not save it. field_tags.0.value: This value should not be null.', []], 'refused for the one the change brings, and only that one is named');
@@ -667,7 +696,7 @@ test('words the page shows around a field’s own are the site’s where the con
   assert.deepEqual([moved[0], movedWords], [409, ['Paddling 101']], 'the same revision with a later changed time: not proven, not mapped');
   assert.match(moved[1].error ?? '', /cannot tell here whether the site’s templates or code add that or the field changed since/);
 
-  assert.deepEqual(out.formatted, [[200, { ok: true, value: 'Northwind & Co.', label: 'Paddling', revision: '8', state: null, note: 'Saved to the field’s own words, “Northwind & Co.”: the site’s templates or code add “© 2026” before them on the page.' }], ['Northwind &amp; Co.']],
+  assert.deepEqual(out.formatted, [[200, { ok: true, value: 'Northwind & Co.', label: 'Paddling', revision: '8', state: null, url: '/paddling-101', was: '/paddling-101', note: 'Saved to the field’s own words, “Northwind & Co.”: the site’s templates or code add “© 2026” before them on the page.' }], ['Northwind &amp; Co.']],
     'formatted text kept as one run: that run spliced, escaped as markup');
   const [across, acrossKept] = out.formattedAcross as [Answer, string[]];
   assert.deepEqual([across[0], acrossKept], [409, ['<strong>Acme</strong> Outfitters']]);
@@ -682,8 +711,8 @@ test('content that keeps neither revisions nor a changed time: the field’s mar
 
   const mark = out.mark as string;
   const kept = createHash('sha256').update(String.raw`a:1:{i:0;a:1:{i:0;s:15:"Acme Outfitters";}}`).digest('hex').slice(0, 16);
-  assert.equal(mark, `acme_settings:12:field_notice:string:en:::string:${kept}`,
-    'no revision and no changed time: the first 16 hex of a sha256 of the items’ stored words, as the page rendered them');
+  assert.equal(mark, `acme_settings:12:field_notice:string:en:::string:en:${kept}`,
+    'no revision and no changed time; the page’s language, then the first 16 hex of a sha256 of the items’ stored words, as the page rendered them');
   assert.doesNotMatch(mark, /Outfitters/, 'never the stored words themselves');
 
   const [stamped, stampedWords, stampedSaved] = out.stamped as [Answer, string[], string[]];
@@ -705,10 +734,20 @@ test('content that keeps neither revisions nor a changed time: the field’s mar
   assert.deepEqual([unstamped[0], unstampedWords, unstampedSaved], [409, ['Acme Outfitters'], []]);
   assert.equal(unstamped[1].error, 'The page shows “© 2026” before the words this field holds (“Acme Outfitters”), and Wanigan cannot tell here whether the site’s templates or code add that or the field changed since the page loaded, so nothing is saved. Reload, and try again, or change it in Drupal’s form.',
     'a mark without the hash proves nothing, as before');
+  const [unlanguaged, unlanguagedWords, unlanguagedSaved] = out.unlanguaged as [Answer, string[], string[]];
+  assert.deepEqual([unlanguaged[0], unlanguaged[1].error, unlanguagedWords, unlanguagedSaved], [409, unstamped[1].error, ['Acme Outfitters'], []],
+    'a page from before the language was marked too: refused as before');
   assert.equal(out.notAHash, 400);
+  assert.deepEqual(out.hashForLanguage, [409, ['Acme Outfitters']], 'a hash in the language’s place is no proof');
 
-  assert.deepEqual(out.formatted, [[200, { ok: true, value: 'Northwind & Co.', label: 'Paddling', revision: null, state: null, note: 'Saved to the field’s own words, “Northwind & Co.”: the site’s templates or code add “© 2026” before them on the page.' }], ['Northwind &amp; Co.']],
+  assert.deepEqual(out.formatted, [[200, { ok: true, value: 'Northwind & Co.', label: 'Paddling', revision: null, state: null, url: '/paddling-101', was: '/paddling-101', note: 'Saved to the field’s own words, “Northwind & Co.”: the site’s templates or code add “© 2026” before them on the page.' }], ['Northwind &amp; Co.']],
     'formatted text kept as one run: that run spliced, escaped as markup');
   assert.deepEqual(out.formatChanged, [409, []], 'a format changed since is a change since');
-  assert.equal(out.integer, 'acme_settings:12:field_notice:integer:en:::number_integer:', 'a field the word saves do not model: no hash');
+  assert.equal(out.integer, 'acme_settings:12:field_notice:integer:en:::number_integer:en:', 'a field the word saves do not model: no hash');
+  const title = createHash('sha256').update(String.raw`a:1:{i:0;a:1:{i:0;s:12:"Paddling 101";}}`).digest('hex').slice(0, 16);
+  assert.deepEqual(out.parts, {
+    8: ['node:12:title:string:en:7:1760000000:string', 200, ['Paddling 102']],
+    9: ['node:12:title:string:en:7:1760000000:string:en', 200, ['Paddling 102']],
+    10: [`node:12:title:string:en:7:1760000000:string:en:${title}`, 200, ['Paddling 102']],
+  }, 'each mark saves as it did: the revision is the proof, and the hash is not asked for');
 });

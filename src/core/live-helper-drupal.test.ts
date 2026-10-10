@@ -107,12 +107,19 @@ test('nothing in the helper acts unless a trace is on, or the token is carried',
   assert.match(token, /public function other\([^)]*\): bool \{[\s\S]*?!hash_equals\(\$token, \$given\)/, 'another key is told apart in constant time');
 });
 
-test('the helper names no contributed or custom module: everything goes through core', () => {
-  const all = Object.values(files).join('\n');
-  for (const [, ns] of all.matchAll(/\buse (Drupal\\(\w+)\\[\w\\]+);/g)) {
-    const owner = ns!.split('\\')[1];
-    assert.ok(['Core', 'Component', 'wanigan_live', 'views', 'layout_builder', 'block', 'user'].includes(owner!), `uses ${ns}`);
+test('the helper names no contributed or custom module outside its site adapters, and an adapter only what it declares', () => {
+  const core = ['Core', 'Component', 'wanigan_live', 'views', 'layout_builder', 'block', 'user'];
+  for (const [file, text] of php) {
+    const adapter = file.startsWith('src/Adapter/');
+    for (const [, ns] of text.matchAll(/\buse (Drupal\\(\w+)\\[\w\\]+);/g)) {
+      if (core.includes(ns!.split('\\')[1]!)) continue;
+      // A site adapter calls a module's own API, and declares each class it uses, so the compatibility watch reads it.
+      assert.ok(adapter, `${file} uses ${ns}`);
+      assert.ok(text.includes(`'class:\\${ns}'`), `${file} uses ${ns} without declaring it in requires()`);
+    }
   }
+  const all = Object.values(files).join('\n');
+  // Whether a module is there is the adapters' to say (Adapters::status()), never a check of its own.
   assert.doesNotMatch(all, /moduleExists\('(?!block|layout_builder|views)\w+'\)/);
 });
 

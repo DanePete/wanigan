@@ -190,6 +190,8 @@ function TrayEdit({ edit: e, here, ctx }: { edit: LayerEdit; here: boolean; ctx:
     layer: {
       label: e.label, reach, element: elementWords(e),
       noPicture: here ? null : `it was made on ${e.page}, and the live view shows ${ctx.page || 'another page'}`,
+      // What making it real found (the template and line that write its words, a string's text domain): the agent's start.
+      why: answer && !answer.ok ? answer.why : null,
     },
   };
 

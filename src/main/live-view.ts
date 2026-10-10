@@ -13,7 +13,7 @@ import { readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { BrowserWindow, WebContentsView, ipcMain, session, shell, type IpcMainInvokeEvent, type NativeImage, type Session, type WebContents } from 'electron';
-import { liveUrl, parseFieldMark, sameSite, type LivePick, type LiveProblem, type LiveRegion } from '../shared/live.ts';
+import { liveUrl, movedTo, parseFieldMark, sameSite, sitePath, type LivePick, type LiveProblem, type LiveRegion } from '../shared/live.ts';
 import { cleanRegions, regionById, type LiveCapture, type LiveViewNow, type TimedProblem } from '../shared/live-agent.ts';
 import { certificateOf, failureKind, principal, type LiveFailure, type LivePresented } from '../shared/live-site.ts';
 import { loopbackAddress } from '../shared/live-envs.ts';
@@ -118,9 +118,16 @@ export interface HelperSaved {
   ok: boolean; error: string | null; label: string | null; failure?: LiveFailure | null; revision?: string | null;
   /**
    * A refusal that a save asked again with this token would not be (the Drupal helper's, for words in a default layout
-   * every entity of a bundle shares: its error says how far the change reaches).
+   * every entity of a bundle shares, or in a Paragraphs library item every page using it shows: its error says how far
+   * the change reaches).
    */
   confirm?: string | null;
+  /**
+   * The saved content's own address (a path on the site's origin) after the save, and before it: a save can move its
+   * page (Pathauto writes a new alias inside the save). Null where it has none, or the helper did not say.
+   */
+  url?: string | null;
+  was?: string | null;
   /**
    * What a save wants said beside it (the Drupal helper's: words saved to a field's own words where the site adds more
    * around them on the page, or a problem the content already had in a field the change does not touch).
@@ -592,12 +599,13 @@ export function wireLiveView(options: {
           ...(at ? { uuid: at.uuid, langcode: at.langcode, ...(at.item ? { item: at.item } : {}), ...(at.confirm ? { confirm: at.confirm } : {}) } : {}),
         }),
       });
-      const data = await res.json().catch(() => null) as { ok?: boolean; error?: string; label?: string; revision?: unknown; confirm?: unknown; note?: unknown } | null;
+      const data = await res.json().catch(() => null) as { ok?: boolean; error?: string; label?: string; revision?: unknown; confirm?: unknown; note?: unknown; url?: unknown; was?: unknown } | null;
       return data && typeof data === 'object' ? {
         ok: data.ok === true, error: typeof data.error === 'string' ? data.error : null, label: typeof data.label === 'string' ? data.label : null,
         revision: typeof data.revision === 'string' || typeof data.revision === 'number' ? String(data.revision).slice(0, 100) : null,
         ...(typeof data.confirm === 'string' && /^[a-f0-9]{32}$/.test(data.confirm) ? { confirm: data.confirm } : {}),
         ...(data.ok === true && typeof data.note === 'string' && data.note ? { note: data.note.slice(0, 1_000) } : {}),
+        url: sitePath(data.url), was: sitePath(data.was),
       } : { ok: false, error: `The site answered ${res.status}.`, label: null };
     } catch (error) {
       // Why the site did not answer is said in the view's own words (the window asks the core whether it runs);
@@ -626,7 +634,10 @@ export function wireLiveView(options: {
       const saved = await helperSave(field, before, after);
       // The window's answer is as it always was: the revision is the design layer's to keep.
       if (!saved) return null;
-      const { revision: _revision, confirm: _confirm, ...answer } = saved;
+      // A save that moved the page shown (a new alias): the view goes to its new address.
+      const next = movedTo(saved, site.wc.getURL());
+      if (next && sameSite(base ?? '', next)) void site.wc.loadURL(next).catch(() => {});
+      const { revision: _revision, confirm: _confirm, url: _url, was: _was, ...answer } = saved;
       return answer;
     }
     return null;

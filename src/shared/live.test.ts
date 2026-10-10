@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { componentProps, ddevInfo, ddevPlatform, liveUrl, parseFieldMark, readDdevYaml, regionMadeBy, sameRegion, sameSite, type LiveRegion } from './live.ts';
+import { componentProps, ddevInfo, ddevPlatform, liveUrl, movedTo, parseFieldMark, readDdevYaml, regionMadeBy, sameRegion, sameSite, sitePath, type LiveRegion } from './live.ts';
 
 /** Shaped like real ddev configs, comments and nested blocks included. */
 const NORTHWIND = `# ddev config
@@ -69,6 +69,24 @@ test('an address: http(s), no credentials, no fragment; a bare host means https'
   assert.ok(!sameSite('http://localhost:3000/', 'http://localhost:5173/'), 'another port is another site');
 });
 
+test('a save that moved the page shown goes to its new address; anything else reloads where it is', () => {
+  const page = 'https://northwind.ddev.site/about-acme?tab=team#top';
+  // A new title gave the content a new alias inside the save (Pathauto): the old address now answers 404 or a redirect.
+  assert.equal(movedTo({ ok: true, url: '/about-northwind', was: '/about-acme' }, page), 'https://northwind.ddev.site/about-northwind?tab=team');
+  assert.equal(movedTo({ ok: true, url: '/fr/a-propos', was: '/fr/%C3%A0-propos' }, 'https://northwind.ddev.site/fr/%C3%A0-propos'), 'https://northwind.ddev.site/fr/a-propos', 'compared as decoded paths');
+  for (const [saved, why] of [
+    [{ ok: true, url: '/about-acme', was: '/about-acme' }, 'nothing moved'],
+    [{ ok: true, url: '/admin/content/paragraphs/1', was: '/admin/content/paragraphs/1' }, 'a library item saved from a page using it'],
+    [{ ok: true, url: '/node/12-new', was: '/node/12' }, 'the page shown is not the saved content’s own address'],
+    [{ ok: false, url: '/about-northwind', was: '/about-acme' }, 'nothing was saved'],
+    [{ ok: true, url: null, was: '/about-acme' }, 'no address after'],
+    [{ ok: true }, 'a helper that said neither'],
+  ] as const) assert.equal(movedTo(saved, page), null, why);
+  assert.equal(movedTo({ ok: true, url: 'https://evil.example/x', was: '/about-acme' }, page), null, 'never to another origin');
+  assert.equal(sitePath('/about-acme'), '/about-acme');
+  for (const bad of ['//evil.example/x', '/\\evil.example', 'https://northwind.ddev.site/x', 'about', '/a b', 42, null]) assert.equal(sitePath(bad), null, String(bad));
+});
+
 test('a region was made by an edited file when the absolute path ends with the site’s own path', () => {
   const edited = '/Users/someone/Sites/northwind/web/themes/custom/acme/templates/paragraph--hero.html.twig';
   assert.ok(regionMadeBy('themes/custom/acme/templates/paragraph--hero.html.twig', edited));
@@ -135,21 +153,27 @@ slots:
   assert.deepEqual(componentProps('name: No props\n'), []);
 });
 
-test('a field’s mark: every part the helper writes, its hash last; a page from before a part reads it as none; anything malformed is not read', () => {
-  // Made-up settings content that keeps neither revisions nor a changed time: its mark carries only the hash.
-  assert.deepEqual(parseFieldMark('acme_settings:12:field_notice:string:en:::string:ea1a4c24dba9e1b1'), {
-    type: 'acme_settings', id: '12', field: 'field_notice', fieldType: 'string', langcode: 'en', revision: '', changed: '', formatter: 'string', hash: 'ea1a4c24dba9e1b1',
+test('a field’s mark: every part the helper writes in its place, the page’s language then its hash last; a page from before a part reads it as none; anything malformed is not read', () => {
+  // Made-up settings content that keeps neither revisions nor a changed time: its mark carries the hash for proof.
+  assert.deepEqual(parseFieldMark('acme_settings:12:field_notice:string:en:::string:en:ea1a4c24dba9e1b1'), {
+    type: 'acme_settings', id: '12', field: 'field_notice', fieldType: 'string', langcode: 'en', revision: '', changed: '', formatter: 'string', page: 'en', hash: 'ea1a4c24dba9e1b1',
   });
-  assert.deepEqual(parseFieldMark('node:12:body:text_with_summary:fr:7:1760000000:text_default:'), {
-    type: 'node', id: '12', field: 'body', fieldType: 'text_with_summary', langcode: 'fr', revision: '7', changed: '1760000000', formatter: 'text_default', hash: '',
+  assert.deepEqual(parseFieldMark('node:12:body:text_with_summary:fr:7:1760000000:text_default:fr:'), {
+    type: 'node', id: '12', field: 'body', fieldType: 'text_with_summary', langcode: 'fr', revision: '7', changed: '1760000000', formatter: 'text_default', page: 'fr', hash: '',
   }, 'a field the word saves do not hash ends empty');
-  assert.equal(parseFieldMark('node:12:title:string:fr:7:1760000000:string')?.hash, '', 'a page from before the hash was marked');
-  assert.deepEqual(parseFieldMark('node:12:title'), { type: 'node', id: '12', field: 'title', fieldType: '', langcode: '', revision: '', changed: '', formatter: '', hash: '' });
+  // A paragraph with no French translation on a French page: the page's language is not the paragraph's.
+  const nine = parseFieldMark('paragraph:5:field_text:string:en:41::string:fr');
+  assert.deepEqual([nine?.page, nine?.hash], ['fr', ''], 'a page from before the hash was marked');
+  const eight = parseFieldMark('node:12:title:string:fr:7:1760000000:string');
+  assert.deepEqual([eight?.formatter, eight?.page, eight?.hash], ['string', '', ''], 'a page from before the page’s language was marked');
+  assert.deepEqual(parseFieldMark('node:12:title'), { type: 'node', id: '12', field: 'title', fieldType: '', langcode: '', revision: '', changed: '', formatter: '', page: '', hash: '' });
+  assert.equal(parseFieldMark('acme_settings:12:field_notice:string:en:::string:ea1a4c24dba9e1b1')?.hash, '', 'a hash in the language’s place is not read as the hash');
   for (const bad of [
-    'acme_settings:12:field_notice:string:en:::string:Acme Outfitters', // words, not a hash
-    'acme_settings:12:field_notice:string:en:::string:EA1A4C24DBA9E1B1', // not as the helper writes it
-    'acme_settings:12:field_notice:string:en:::string:ea1a4c24dba9e1b', // short
-    'acme_settings:12:field_notice:string:en:::string:ea1a4c24dba9e1b1:more', // more than the helper writes
+    'acme_settings:12:field_notice:string:en:::string:en:Acme Outfitters', // words, not a hash
+    'acme_settings:12:field_notice:string:en:::string:en:EA1A4C24DBA9E1B1', // not as the helper writes it
+    'acme_settings:12:field_notice:string:en:::string:en:ea1a4c24dba9e1b', // short
+    'acme_settings:12:field_notice:string:en:::string:en:ea1a4c24dba9e1b1:more', // more than the helper writes
+    'acme_settings:12:field_notice:string:en:::string:fr/../x:ea1a4c24dba9e1b1', // not a language
     'node:12:title:string:fr:seven:1760000000:string', // not a revision
     'node:12:title:string:fr/../x:7:1760000000:string', // not a language
     'node:12', 'node:12:Title', 'Node:12:title', 'node::title', '', 42, null,
