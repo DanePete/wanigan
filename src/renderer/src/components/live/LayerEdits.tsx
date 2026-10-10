@@ -15,7 +15,8 @@
 import { useCallback, useEffect, useId, useState, type FormEvent, type KeyboardEvent } from 'react';
 import { layerValue, type LayerPickTarget, type LayerProperty, type LayerScope } from '@shared/design-layer';
 import type { LivePick } from '@shared/live';
-import { changeLines, sendsTyped, type ChangeLine } from '../../lib/live-layer';
+import type { LiveTrace } from '@shared/live-trace';
+import { changeLines, placesOf, sendsTyped, thisReach, type ChangeLine } from '../../lib/live-layer';
 import { liveBridge } from '../../lib/live';
 import { Button, Disclosure, useSingleFlight, useToast } from '../ui';
 import type { LayerApi } from './use-layer';
@@ -55,8 +56,10 @@ function Fragile({ target }: { target: LayerPickTarget | null }) {
 }
 
 /** Retype the picked element's words: one element, shown on the page through the layer. */
-export function RetypeWords({ pick, layer, page, onAdded, onCancel }: {
+export function RetypeWords({ pick, layer, page, trace, onAdded, onCancel }: {
   pick: LivePick; layer: LayerApi; page: string;
+  /** The page's trace: how many places it shows the picked element's stored thing. */
+  trace: LiveTrace | null;
   onAdded: (added: LayerAdded) => void; onCancel: () => void;
 }) {
   const toast = useToast();
@@ -68,6 +71,8 @@ export function RetypeWords({ pick, layer, page, onAdded, onCancel }: {
   const { target } = useTarget(pick.selector);
   const words = value.replace(/\s+/g, ' ').trim();
   const changed = !!words && words !== pick.own;
+  // The same stored thing shown in more than one place: the words change in each, as saving them will.
+  const reach = thisReach(placesOf(target?.target.part ?? null, trace), !!target?.target.part);
   const submit = (e?: FormEvent): Promise<unknown> => { e?.preventDefault(); return once(add); };
   const add = async (): Promise<void> => {
     if (!changed || !live) return;
@@ -75,7 +80,7 @@ export function RetypeWords({ pick, layer, page, onAdded, onCancel }: {
     if (!t) { toast('Nothing is picked on the page any more: pick it again, then retype it.', 'error'); return; }
     const change = { type: 'text' as const, value: words };
     const done = await layer.add({ target: t.target, label: t.label, page, scope: 'this', breakpoint: 'all', change, before: t.before });
-    if (done) onAdded({ label: t.label, lines: changeLines({ change, before: t.before }), reach: 'this element' });
+    if (done) onAdded({ label: t.label, lines: changeLines({ change, before: t.before }), reach: thisReach(placesOf(t.target.part, trace), !!t.target.part) });
   };
   return (
     <form className="live-change live-layer-edit" onSubmit={(e) => void submit(e)} aria-label="Retype the words">
@@ -91,7 +96,7 @@ export function RetypeWords({ pick, layer, page, onAdded, onCancel }: {
         <Button size="s" tone="primary" icon="check" type="submit" disabled={!changed}>Show it on the page</Button>
         <Button size="s" tone="quiet" onClick={onCancel}>Cancel</Button>
       </div>
-      <p className="faint small">For this element. Shown on the page at once, in Wanigan’s layer; the site has it only once you make it real from Edits (⇧E).</p>
+      <p className="faint small">For {reach}. Shown on the page at once, in Wanigan’s layer; the site has it only once you make it real from Edits (⇧E).</p>
     </form>
   );
 }
@@ -138,8 +143,10 @@ const TOKEN = /^--[a-z0-9][a-z0-9-]{0,99}$/i;
  * Try a style on the picked element: the values the owner sets, for this element or every instance of its kind,
  * shown on the page through the layer when added. A custom property is changed for the whole site.
  */
-export function StyleEdit({ pick, layer, page, onAdded, onDone }: {
+export function StyleEdit({ pick, layer, page, trace, onAdded, onDone }: {
   pick: LivePick; layer: LayerApi; page: string;
+  /** The page's trace: how many places it shows the picked element's stored thing. */
+  trace: LiveTrace | null;
   onAdded: (added: LayerAdded) => void; onDone: () => void;
 }) {
   const toast = useToast();
@@ -154,7 +161,9 @@ export function StyleEdit({ pick, layer, page, onAdded, onDone }: {
   const base = useCallback((prop: LayerProperty): string => target?.before[prop] ?? pick.style[prop] ?? '', [target, pick.style]);
   const set = (prop: LayerProperty, value: string): void => setValues((was) => ({ ...was, [prop]: value }));
   const chosen = Object.entries(values).filter(([k, v]) => v !== '' && v !== base(k as LayerProperty)) as [LayerProperty, string][];
-  const reach = scope === 'kind' && target?.kindLabel ? `${target.kindLabel} (${many(target.kindCount, 'element')} on this page)` : 'this element';
+  // One element, or the one stored thing the page shows in more than one place.
+  const one = thisReach(placesOf(target?.target.part ?? null, trace), !!target?.target.part);
+  const reach = scope === 'kind' && target?.kindLabel ? `${target.kindLabel} (${many(target.kindCount, 'element')} on this page)` : one;
 
   const add = (e?: FormEvent): Promise<unknown> => { e?.preventDefault(); return once(addStyle); };
   const addStyle = async (): Promise<void> => {
@@ -224,7 +233,7 @@ export function StyleEdit({ pick, layer, page, onAdded, onDone }: {
         <label className="live-layer-scope-option">
           <input type="radio" name={scopeName} value="this" checked={scope === 'this'} onChange={() => setScope('this')} />
           <span>
-            <span className="small">This element</span>
+            <span className="small">{one.charAt(0).toUpperCase()}{one.slice(1)}</span>
             <span className="faint small">{target?.label ?? (asked ? 'The element picked' : 'Asking the page…')}</span>
           </span>
         </label>

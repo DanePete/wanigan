@@ -92,16 +92,33 @@ function kindPart(identity: PartIdentity, trace: LiveTrace | null): Pick<TracePa
 const many = (n: number, one: string, more = `${one}s`): string => `${n.toLocaleString('en')} ${n === 1 ? one : more}`;
 
 /**
+ * What one element's edit reaches, by how many places it shows on this page: one element, or (keyed to a part) the
+ * one stored thing the site shows there more than once, which a `this` edit reaches in every place, as saving it will.
+ */
+export function thisReach(places: number, keyed = true): string {
+  if (places <= 1) return 'this element';
+  if (!keyed) return `this element (${many(places, 'match', 'matches')} on this page)`;
+  return `this item, shown ${places === 2 ? 'twice' : `${places.toLocaleString('en')} times`} on this page`;
+}
+
+/** How many places the page shown renders a part's one stored thing: the trace's parts with its identity (at least one). */
+export function placesOf(part: PartIdentity | null, trace: LiveTrace | null): number {
+  if (!part || !trace) return 1;
+  const key = identityKey(part);
+  return Math.max(1, trace.parts.filter((p) => p.identity && identityKey(p.identity) === key).length);
+}
+
+/**
  * What an edit reaches, in words. A kind's count is how many elements the layer tagged for it on the page shown, as
- * the last apply said; none is said when it was not shown there.
+ * the last apply said; none is said when it was not shown there. One element's edit shown in more than one place says
+ * so ("this item, shown twice on this page").
  */
 export function reachWords(edit: LayerEdit, trace: LiveTrace | null, applied: LayerApplied | null): string {
   if (edit.scope === 'site') return 'the whole site';
-  if (edit.scope === 'this' || !edit.target.part) return 'this element';
-  const key = kindKey(edit.target.part);
-  if (!key) return 'this element';
-  const words = kindName(kindPart(edit.target.part, trace), key, null);
   const shown = applied && !applied.off ? applied.shown.find((s) => s.id === edit.id) : undefined;
+  const key = edit.scope === 'kind' && edit.target.part ? kindKey(edit.target.part) : null;
+  if (!key || !edit.target.part) return thisReach(shown?.elements ?? 1, !!edit.target.part);
+  const words = kindName(kindPart(edit.target.part, trace), key, null);
   return shown ? `${words} (${many(shown.elements, 'element')} on this page)` : words;
 }
 

@@ -957,6 +957,16 @@ try {
   await words.evaluate(() => window.__wl.layerSet({ tags: { e1: [0], e2: [0], e3: [0] }, texts: [], on: false, gate: null }));
   const putBack = await inner();
   if (putBack[0] !== title || putBack[1] !== tag) fail(`page script: words not put back exactly: ${JSON.stringify(putBack.slice(0, 2))}`);
+  // One stored thing shown twice (the same plain words in the same field mark) is said to be one, so the main process
+  // saves it once; elements showing different words are not.
+  const mark = 'node:12:title:string:en';
+  await words.setContent(`<!doctype html><html><body><div data-wl-field="${mark}"><h2 class="a">Paddling 101</h2></div><aside data-wl-field="${mark}"><h2 class="a">Paddling 101</h2></aside><h3 class="b">Paddling 101</h3><h3 class="b">Paddling…</h3></body></html>`);
+  await words.addScriptTag({ content: script });
+  await words.evaluate(() => window.__wl.layerFind([{ id: 'same', parts: null, inner: null, selector: 'h2.a' }, { id: 'apart', parts: null, inner: null, selector: 'h3.b' }], true));
+  await words.evaluate(() => window.__wl.layerSet({ tags: { same: [0, 1], apart: [0, 1] }, texts: [], on: true, gate: 'g1' }));
+  const same = await words.evaluate(() => [window.__wl.layerOf('same'), window.__wl.layerOf('apart')]);
+  if (same[0]?.count !== 2 || same[0]?.same !== true || same[0]?.field !== mark) fail(`page script: one stored thing shown twice was not said to be one: ${JSON.stringify(same[0])}`);
+  if (same[1]?.count !== 2 || same[1]?.same !== false) fail(`page script: elements showing different words were said to be one: ${JSON.stringify(same[1])}`);
   await words.close();
 } finally {
   await browser.close();

@@ -294,11 +294,11 @@ export function Inspector({ project, platform, selection, regions, components, d
 
       {showMove && now ? <MoveSection arrange={arrange} region={now} trace={trace} panelRef={movePanel} onClose={() => setMoving(false)} /> : null}
       {retyping && pick?.own ? (
-        <RetypeWords key={pick.selector} pick={pick} layer={layer} page={pagePath(page) || pagePath(pick.url)}
+        <RetypeWords key={pick.selector} pick={pick} layer={layer} page={pagePath(page) || pagePath(pick.url)} trace={trace}
           onAdded={(a) => { setRetyping(false); setAdded(a); }} onCancel={() => setRetyping(false)} />
       ) : null}
       {styling && pick ? (
-        <StyleEdit key={pick.selector} pick={pick} layer={layer} page={pagePath(page) || pagePath(pick.url)} onAdded={setAdded} onDone={() => setStyling(false)} />
+        <StyleEdit key={pick.selector} pick={pick} layer={layer} page={pagePath(page) || pagePath(pick.url)} trace={trace} onAdded={setAdded} onDone={() => setStyling(false)} />
       ) : null}
       {added ? <LayerAddedNote added={added} onTray={onTray} /> : null}
 

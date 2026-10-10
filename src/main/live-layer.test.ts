@@ -86,7 +86,11 @@ function modelPage() {
       const id = args[0] as string;
       const els = (page.set?.tags[id] ?? []).map((i) => page.found.get(id)?.[i]).filter((e): e is El => !!e);
       const el = els[0];
-      return (el ? { count: els.length, field: el.field ?? null, words: el.plain ? el.text : null, plain: el.plain } : { count: 0, field: null, words: null, plain: false }) as T;
+      const wordsOf = (e: El): string | null => (e.plain ? e.text : null);
+      return (el ? {
+        count: els.length, field: el.field ?? null, words: wordsOf(el), plain: el.plain,
+        same: wordsOf(el) !== null && els.every((e) => e.plain && wordsOf(e) === wordsOf(el) && (e.field ?? null) === (el.field ?? null)),
+      } : { count: 0, field: null, words: null, plain: false, same: false }) as T;
     }
     return fallback;
   };
@@ -466,6 +470,39 @@ test('making an edit real: words go through the helper’s save, a style goes to
     const again = await w.implement(retyped.id);
     assert.ok(!again.ok && /in the site already/.test(again.why));
   } finally { w.done(); }
+});
+
+test('the same stored thing shown twice is saved once; elements that differ, or that a document path matched, are refused', async () => {
+  // The article's title in the page and again in a sidebar teaser: one identity, two elements, the same field mark.
+  const twice: LiveTrace = { ...trace(), parts: [...trace().parts, { id: 'p8', kind: 'field', label: 'Title', identity: title() }] };
+  const retyped = edit({ label: 'Title', change: { type: 'text', value: 'Pagayer 102' }, target: { part: title(), inner: null, selector: null, textHash: layerTextHash('Pagayer 101') } });
+  const w = wire({ edits: [retyped], trace: twice });
+  try {
+    const mark = 'node:12:title:string:fr';
+    w.page.parts = { p6: { '': [words('Pagayer 101', mark)] }, p8: { '': [words('Pagayer 101', mark)] } };
+    assert.deepEqual((await w.apply()).shown, [{ id: retyped.id, elements: 2 }]);
+    assert.deepEqual(await w.implement(retyped.id), { ok: true, id: retyped.id, state: 'implemented', revision: '42' });
+    assert.deepEqual(w.saves, [[mark, 'Pagayer 101', 'Pagayer 102', { uuid: UUID, langcode: 'fr', item: null }]], 'saved once, to the content, translation and item it names');
+  } finally { w.done(); }
+  // The teaser shortens the title: two elements showing different words are not saved from here.
+  const short = wire({ edits: [{ ...retyped, state: 'draft' }], trace: twice });
+  try {
+    short.page.parts = { p6: { '': [words('Pagayer 101', 'node:12:title:string:fr')] }, p8: { '': [words('Pagayer…', 'node:12:title:string:fr')] } };
+    await short.apply();
+    const refused = await short.implement(retyped.id);
+    assert.ok(!refused.ok && /reaches 2 elements here/.test(refused.why));
+    assert.deepEqual(short.saves, []);
+  } finally { short.done(); }
+  // A document path that matched two elements is not one stored thing, whatever they show.
+  const loose = edit({ label: 'Heading', change: { type: 'text', value: 'New' }, target: { part: null, inner: null, selector: 'html > body > h2', textHash: layerTextHash('Old') } });
+  const path = wire({ edits: [loose] });
+  try {
+    path.page.selectors = { 'html > body > h2': [words('Old', 'node:12:title:string:fr'), words('Old', 'node:12:title:string:fr')] };
+    await path.apply();
+    const refused = await path.implement(loose.id);
+    assert.ok(!refused.ok && /reaches 2 elements here/.test(refused.why));
+    assert.deepEqual(path.saves, []);
+  } finally { path.done(); }
 });
 
 test('words with no field the helper marks, or a refusal from the site, are said and nothing is marked', async () => {

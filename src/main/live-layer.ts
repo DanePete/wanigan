@@ -774,9 +774,11 @@ export function wireLiveLayer(options: LiveLayerOptions): { hooks: LiveViewHooks
     const value = edit.change.value;
     const here = shown();
     if (!here || here.cur.projectId !== cur.projectId || !madeOn(edit, here.path)) return none(`Open ${edit.page} in the live view first: words are saved from the page they are on.`);
-    const at = await options.run<{ count?: unknown; field?: unknown; words?: unknown; plain?: unknown } | null>(call('layerOf', id), null);
+    const at = await options.run<{ count?: unknown; field?: unknown; words?: unknown; plain?: unknown; same?: unknown } | null>(call('layerOf', id), null);
     if (!at || at.count === 0) return none('Its element is not tagged on this page. Reload the page, then try again.');
-    if (at.count !== 1) return none(`It reaches ${String(at.count)} elements here; words are saved one element at a time.`);
+    // One stored thing shown more than once (one identity, every element the same plain words in the same field mark) is
+    // saved once; elements a document path matched, or that differ, are refused.
+    if (at.count !== 1 && !(edit.target.part && at.same === true)) return none(`It reaches ${String(at.count)} elements here; words are saved one element at a time.`);
     if (at.plain !== true || typeof at.words !== 'string') return none('Its element holds more than plain words, so they are not saved from here.');
     if (at.words.length > SAVE_MAX || value.length > SAVE_MAX) return none(`Words longer than ${SAVE_MAX.toLocaleString('en')} characters are saved in the site’s own form.`);
     if (typeof at.field === 'string') {

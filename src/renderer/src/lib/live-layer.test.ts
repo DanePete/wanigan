@@ -8,7 +8,7 @@ import type { LiveEdit } from '../../../shared/live.ts';
 import { kindKey, type EditTarget, type LiveTrace, type PartIdentity, type TracePart } from '../../../shared/live-trace.ts';
 import {
   NOTHING_HOLDS, byPage, changeLines, differenceWords, draftsOf, failedWords, heldInLayer, isFragile, kindName, madeOn, noiseWords, orphanWhy, ownTemplate,
-  pagePath, reachWords, redoLabel, sameTarget, sendsTyped, templateOf, templateOffered, templateSaveRefused, undoLabel, verdictHeadline,
+  pagePath, placesOf, reachWords, redoLabel, sameTarget, sendsTyped, thisReach, templateOf, templateOffered, templateSaveRefused, undoLabel, verdictHeadline,
 } from './live-layer.ts';
 
 const card = (nth: number): PartIdentity => ({ kind: 'component', name: 'acme:card', within: null, nth });
@@ -190,4 +190,20 @@ test('Enter sends retyped words once: not again while it is held, not when an in
   assert.ok(!sendsTyped({ ...key, shiftKey: true }), 'Shift+Enter is a new line');
   assert.ok(!sendsTyped({ ...key, metaKey: true }));
   assert.ok(!sendsTyped({ ...key, key: 'a' }));
+});
+
+test('an edit for one element shown in more than one place says so, as the layer reaches and saving saves each', () => {
+  const twice: LiveTrace = { ...trace, parts: [...trace.parts, { id: 'p3', kind: 'component', label: 'Card', identity: card(0) }] };
+  assert.equal(placesOf(card(0), twice), 2);
+  assert.equal(placesOf(card(0), trace), 1);
+  assert.equal(placesOf(null, twice), 1, 'markup no part names: one element');
+  assert.equal(thisReach(1), 'this element');
+  assert.equal(thisReach(2), 'this item, shown twice on this page');
+  assert.equal(thisReach(3), 'this item, shown 3 times on this page');
+  const one = edit({ id: 'o' });
+  assert.equal(reachWords(one, twice, applied({ shown: [{ id: 'o', elements: 2 }] })), 'this item, shown twice on this page');
+  assert.equal(reachWords(one, twice, applied({ shown: [{ id: 'o', elements: 1 }] })), 'this element');
+  assert.equal(reachWords(one, twice, applied({ shown: [{ id: 'o', elements: 2 }], off: true })), 'this element', 'switched off, nothing is shown');
+  assert.equal(reachWords(edit({ id: 's', target: { part: null, inner: null, selector: 'html > body > h3', textHash: null } }), null, applied({ shown: [{ id: 's', elements: 2 }] })),
+    'this element (2 matches on this page)');
 });
