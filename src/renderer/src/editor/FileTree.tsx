@@ -221,7 +221,8 @@ export function FileTree({ projectId, cardId, label, activePath, onClose }: {
       actions={(
         <>
           <IconButton icon="refresh" size="s" label="Read the folders again" onClick={readAll} />
-          <IconButton icon="up" size="s" label="Close every folder" disabled={!open.size} onClick={() => { setOpen(new Set()); setFocus(null); }} />
+          {/* Only while a folder is open: a disabled quiet button still draws a box (the foundation's disabled look). */}
+          {open.size ? <IconButton icon="up" size="s" label="Close every folder" onClick={() => { setOpen(new Set()); setFocus(null); }} /> : null}
         </>
       )}>
       {top?.error && !top.entries ? (
