@@ -3,7 +3,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import vm from 'node:vm';
-import { CLOCK, folderOf, inHiddenWindow } from './live-capture.ts';
+import { CLOCK, folderOf, inHiddenWindow, type HiddenPage, type HiddenWindow } from './live-capture.ts';
 import { captureInWindow } from './live-library.ts';
 
 test('a hidden window is given a page before the debugger acts on it: the first Emulation command on an empty one crashes Electron', () => {
@@ -61,4 +61,63 @@ test('the injected clock: time stands still until it is advanced, then timers an
   const draws = (p: vm.Context): unknown => JSON.parse(vm.runInContext('JSON.stringify([Math.random(), Math.random()])', p));
   assert.deepEqual(draws(run()), draws(run()), 'the same numbers on every load');
   assert.equal(at('Object.keys(window).includes("__wlClock")'), false, 'not enumerable on the page');
+});
+
+/**
+ * A hidden window played by a stand-in: it answers everything at once, except the one step named, which it never
+ * answers (a page whose script waits on the clock it stopped, a renderer that is stuck). It records what was done to it.
+ */
+function standIn(hang: 'tick' | 'height' | 'snapshot' | 'picture' | null): { window: HiddenWindow; log: string[] } {
+  const log: string[] = [];
+  const never = new Promise<never>(() => {});
+  let attached = false;
+  const wc = {
+    on: () => wc, setWindowOpenHandler: () => {}, setAudioMuted: () => {}, setBackgroundThrottling: () => {},
+    getURL: () => 'https://acme.example.test/paddling',
+    loadURL: async () => {},
+    insertCSS: async () => 'key',
+    executeJavaScript: (code: string) => (hang === 'tick' && code.includes('tick(3000)') ? never : Promise.resolve(0)),
+    executeJavaScriptInIsolatedWorld: (_world: number, scripts: { code: string }[]) => {
+      const code = scripts[0]?.code ?? '';
+      if (hang === 'height' && code.includes('scrollHeight')) return never;
+      if (hang === 'snapshot' && code.includes('layerSnap')) return never;
+      return Promise.resolve(code.includes('scrollHeight') ? 900 : null);
+    },
+    debugger: {
+      attach: () => { attached = true; log.push('attach'); },
+      isAttached: () => attached,
+      detach: () => { attached = false; log.push('detach'); },
+      on: () => {},
+      sendCommand: (method: string) => (hang === 'picture' && method === 'Page.captureScreenshot' ? never : Promise.resolve(method === 'Page.captureScreenshot' ? { data: Buffer.from('png').toString('base64') } : {})),
+    },
+  };
+  return { log, window: { webContents: wc as never, destroy: () => { log.push('destroy'); } } };
+}
+
+/** What a verification's render does with its page, in order: run its clock, grow it, measure it, picture it. */
+const render = async (page: HiddenPage): Promise<string> => {
+  await page.freeze();
+  const { height } = await page.grow(6_000);
+  await page.read('window.__wl.layerSnap()', [], 4242);
+  return (await page.shoot(height, true)) ? 'pictured' : 'no picture';
+};
+const options = { partition: 'persist:test', url: 'https://acme.example.test/paddling', base: 'https://acme.example.test/', width: 390, freeze: true, what: 'The page', failed: 'The page could not be rendered' };
+
+test('every step of a hidden render has a deadline: a page that never answers fails the render, saying where, and its window goes', { timeout: 10_000 }, async () => {
+  const fine = standIn(null);
+  assert.equal(await inHiddenWindow({ ...options, open: () => fine.window, stepMs: 50 }, render), 'pictured', 'a page that answers is rendered');
+  assert.deepEqual(fine.log, ['attach', 'detach', 'destroy']);
+  for (const [hang, step] of [['tick', 'its clock was advanced'], ['height', 'it was read'], ['snapshot', 'it was read'], ['picture', 'it was pictured']] as const) {
+    const stuck = standIn(hang);
+    const started = Date.now();
+    const answer = await inHiddenWindow({ ...options, open: () => stuck.window, stepMs: 50 }, render);
+    assert.deepEqual(answer, { error: `The page could not be rendered: it did not answer within 50 ms while ${step}, so its window was closed` }, hang);
+    assert.deepEqual(stuck.log, ['attach', 'detach', 'destroy'], `${hang}: the debugger detached and the window destroyed`);
+    assert.ok(Date.now() - started < 2_000, `${hang}: no step after the stuck one waited out its own deadline`);
+  }
+  // The render as a whole has an end too, for what it waits on besides the page.
+  const slow = standIn(null);
+  const forever = await inHiddenWindow({ ...options, open: () => slow.window, stepMs: 50, renderMs: 80 }, () => new Promise<string>(() => {}));
+  assert.deepEqual(forever, { error: 'The page could not be rendered: it did not answer within 80 ms while it was rendered, so its window was closed' });
+  assert.deepEqual(slow.log, ['attach', 'detach', 'destroy']);
 });

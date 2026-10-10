@@ -935,6 +935,29 @@ try {
     if (back.join() !== 'Search,Latest news,Opening hours') fail(`page script: put back as ${back.join()}`);
   }
   await page.close();
+
+  // The design layer patches words in place: only the element's own text nodes change, so the helper's wl:part marks
+  // around a field item's words stay (and the part with them); an element with an element inside it is not written
+  // to; and switched off, exactly what was there is put back.
+  const words = await browser.newPage();
+  const title = '<!-- wl:part id="p-title" -->Paddling 101<!-- /wl:part id="p-title" -->';
+  const tag = '\n<!-- wl:part id="p-tag" -->Canoe<!-- /wl:part id="p-tag" -->\n';
+  await words.setContent(`<!doctype html><html><body><h2 id="t1">${title}</h2><div id="t2">${tag}</div><p id="t3">Hello <b>world</b></p></body></html>`);
+  await words.addScriptTag({ content: script });
+  const inner = () => words.evaluate(() => ['t1', 't2', 't3'].map((id) => document.getElementById(id).innerHTML));
+  const partsOf = () => words.evaluate(() => window.__wl.scan().map((r) => r.part).filter(Boolean).sort().join());
+  const partsBefore = await partsOf();
+  await words.evaluate(() => window.__wl.layerFind(['t1', 't2', 't3'].map((id, i) => ({ id: `e${i + 1}`, parts: null, inner: null, selector: `#${id}` })), true));
+  await words.evaluate(() => window.__wl.layerSet({ tags: { e1: [0], e2: [0], e3: [0] }, texts: [{ id: 'e1', value: 'Paddling 102' }, { id: 'e2', value: 'Kayak' }, { id: 'e3', value: 'Bye' }], on: true, gate: 'g1' }));
+  const shown = await inner();
+  if (shown[0] !== title.replace('Paddling 101', 'Paddling 102') || shown[1] !== tag.replace('Canoe', 'Kayak')) fail(`page script: patched words took the part marks with them: ${JSON.stringify(shown.slice(0, 2))}`);
+  if (shown[2] !== 'Hello <b>world</b>') fail(`page script: words were written into an element with an element inside it: ${JSON.stringify(shown[2])}`);
+  if ((await partsOf()) !== partsBefore || partsBefore !== 'p-tag,p-title') fail(`page script: parts after patching words: ${await partsOf()} (before: ${partsBefore})`);
+  if ((await words.evaluate(() => window.__wl.layerOf('e1')))?.words !== 'Paddling 101') fail('page script: a patched element did not answer the words the site rendered');
+  await words.evaluate(() => window.__wl.layerSet({ tags: { e1: [0], e2: [0], e3: [0] }, texts: [], on: false, gate: null }));
+  const putBack = await inner();
+  if (putBack[0] !== title || putBack[1] !== tag) fail(`page script: words not put back exactly: ${JSON.stringify(putBack.slice(0, 2))}`);
+  await words.close();
 } finally {
   await browser.close();
   gateway.kill('SIGTERM');

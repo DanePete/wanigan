@@ -8,7 +8,9 @@
 //   replay that list, so they are exact: undo takes back the newest add or discard still in effect, redo brings back
 //   the newest one undone, and a new add or discard ends what redo could bring back.
 // - An edit already in the site (implemented, verified) is never taken back by undo or redo: taking it out of the
-//   layer would not take it out of the site, and the layer would lose track of it.
+//   layer would not take it out of the site, and the layer would lose track of it. Nor does it go back to draft or
+//   to orphaned, from where it could be discarded: a page where its element is not found does not take it out of
+//   the site, and a failed verification is kept with it, saying what differs.
 // - States move only along the design's transitions (`mark`), and a refusal says why.
 // - Bounded: edits listed per project, the bytes they hold, and every row a project's layer has ever had.
 import { randomUUID } from 'node:crypto';
@@ -29,10 +31,10 @@ export const MAX_LAYER_ROWS = 20_000;
 const STATES: readonly LayerState[] = ['draft', 'implemented', 'verified', 'retired', 'orphaned'];
 /** Kinds of change phase 1 shows on the page. Pictures, inserts and removals come later. */
 const PHASE_1 = new Set(['style', 'token', 'text']);
-/** Where an edit may go from each state. */
+/** Where an edit may go from each state. Once in the site (implemented), only forward: it is never a draft again. */
 const NEXT: Record<LayerState, readonly LayerState[]> = {
   draft: ['implemented', 'orphaned'],
-  implemented: ['verified', 'draft', 'orphaned'],
+  implemented: ['verified'],
   orphaned: ['draft'],
   verified: ['retired'],
   retired: [],
@@ -171,9 +173,11 @@ export class LiveLayer {
   }
 
   /**
-   * What became of an edit: draft → implemented → verified → retired; draft or implemented → orphaned, and back to
-   * draft when it resolves again; implemented → draft when a verification fails (the verdict is kept). A verdict may
-   * come with any of them; verified needs one that passed. Marking an edit the state it is in only records a verdict.
+   * What became of an edit: draft → implemented → verified → retired; a draft → orphaned, and back to draft when it
+   * resolves again. An implemented edit is in the site: it never goes back to draft or to orphaned, and a verification
+   * that failed is kept with it (marked implemented again, with the verdict). A verdict is kept only on an implemented
+   * edit by its verification: verified needs one that passed, and one that passed makes it verified. Marking an edit
+   * the state it is in only records a verdict.
    */
   mark(projectId: string, id: string, rawState: unknown, rawVerdict: unknown): LayerSnapshot {
     const project = this.board.project(projectId);
@@ -192,7 +196,10 @@ export class LiveLayer {
       if (to === from && !verdict) return;
       if (to !== from && !NEXT[from].includes(to)) refused(this.why(from, to));
       if (to === 'verified' && !verdict?.ok) refused('An edit is verified only by a verification that passed.');
-      if (from === 'implemented' && to === 'draft' && verdict?.ok) refused('A verification that passed does not send an edit back to draft.');
+      if (verdict && to !== 'verified' && !(from === 'implemented' && to === 'implemented')) {
+        refused(`A verification’s verdict is kept only on an edit in the site; this one is ${said(from)}.`);
+      }
+      if (verdict?.ok && to !== 'verified') refused('A verification that passed marks the edit verified.');
       const now = this.ctx.now();
       if (verdict) db.prepare('UPDATE live_layer_edits SET state = ?, verdict_json = ?, updated_at = ? WHERE id = ?').run(to, JSON.stringify(verdict), now, row.id);
       else db.prepare('UPDATE live_layer_edits SET state = ?, updated_at = ? WHERE id = ?').run(to, now, row.id);
@@ -210,7 +217,10 @@ export class LiveLayer {
     if (to === 'implemented') return from === 'orphaned'
       ? 'An orphaned edit no longer finds its element: it goes back to draft when it does, and is made real from there.'
       : `Only a draft becomes implemented; this one is ${said(from)}.`;
-    if (to === 'orphaned') return `Only a draft or an implemented edit becomes orphaned; this one is ${said(from)}.`;
+    if (from === 'implemented') return to === 'orphaned'
+      ? 'An implemented edit is in the site: a page where its element is not found does not take it out of the layer.'
+      : 'An implemented edit is in the site: it does not go back to draft. A verification that failed is kept with it, and says what differs.';
+    if (to === 'orphaned') return `Only a draft becomes orphaned; this one is ${said(from)}.`;
     return `A ${from} edit does not go back to draft.`;
   }
 

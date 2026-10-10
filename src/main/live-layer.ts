@@ -14,42 +14,51 @@
 //   patch their words in place. Words one of the layer's own text edits saved are not other words: put back, they
 //   still name the element an edit was made on. The same stored thing rendered twice on a page (an entity, a post) is two parts with one identity: an edit
 //   for `this` reaches every one of them, as the native change will, once one of them shows the words it was made on.
-//   An edit of this page that no longer resolves, or resolves to other words, is orphaned and the core is
-//   told; it is a draft again once it resolves. Without a trace nothing is resolved by identity, and nothing is
-//   called orphaned for it. Edits for a named breakpoint are left out: phase 1 does not read the theme's breakpoints.
+//   A draft of this page that no longer resolves, or resolves to other words, is orphaned and the core is
+//   told; it is a draft again once it resolves. An implemented edit is in the site: the window is told it was not
+//   found on this load, and it stays implemented (never a draft again, never discardable). Without a trace nothing
+//   is resolved by identity, and nothing is called orphaned for it. Edits for a named breakpoint are left out whole
+//   (not tagged, their words not patched): phase 1 does not read the theme's breakpoints, and a verification fails
+//   them as not verifiable yet.
 // - Implementing: only words, saved where they are kept, as the user logged in in the view. Where the helper marks a
 //   plain text field around them (Drupal's `data-wl-field`), through `POST /_wanigan/save`, the window's own
-//   helperSave path. Otherwise through the one edit target of the page's trace that holds exactly those words
-//   (wordsTarget(): a title, an excerpt, a string meta, a setting, a menu link's text), saved by the window's own
-//   schema save (`POST /_wanigan/edit/<id>`, live-edit-save.ts): how WordPress's helper saves a field. Formatted text
-//   (a block's, a post's content, a value with markup) goes to an agent as a brief, as do styles and tokens; anything
-//   else says why.
+//   helperSave path, to exactly the content, translation and item the edit's target names (saveTarget): never the
+//   default language, never the first item that holds the same words. Otherwise through the one edit target of the
+//   page's trace that holds exactly those words (wordsTarget(): a title, an excerpt, a string meta, a setting, a menu
+//   link's text), saved by the window's own schema save (`POST /_wanigan/edit/<id>`, live-edit-save.ts): how
+//   WordPress's helper saves a field. Formatted text (a block's, a post's content, a value with markup) goes to an
+//   agent as a brief, as do styles and tokens; anything else says why.
 // - Verifying ("Stage 3: verify", steps 1–3): the design (the page with the layer) and the result (the page without
 //   it) rendered in hidden windows in the view's session at each width (live-capture.ts), each twice for the noise
-//   floor, and every width judged against the one floor the verdict states (the largest over both and every width); the comparisons are src/shared/layer-verify.ts's. Pictures are kept in the data folder under
-//   live-layer/<project>/<edit>/, and the core is told: verified, or back to draft with the verdict.
+//   floor, and every width judged against the one floor the verdict states (the largest over both and every width); the comparisons are src/shared/layer-verify.ts's.
+//   Nothing passes for want of a comparison: an edit found but not there when measured, a token whose custom
+//   property was not read on the root, or an edit for a named breakpoint fails, saying why. The noise floor is
+//   page-wide, as the verdict states it; a page is compared down to VERIFY_MAX_HEIGHT, and where it went on the
+//   verdict says how far, passing or not. Pictures are kept in the data folder under
+//   live-layer/<project>/<edit>/, and the core is told: verified, or still implemented with the failed verdict (its
+//   words are in the site; the verdict says what differs).
 //   What step 3 can see, as contracted: the design is the native page with the layer, so a change the native
 //   implementation made beyond the touched elements is in both renders and does not show. Seen in Electron on a
 //   made-up page: a rule that also turned every paragraph blue passed. Catching that needs the page as it was before
 //   the implementation, kept when it is made real and compared row by row (text reflows); that is still to build.
 // - Nothing here writes to the site except the helper save, and nothing reaches any origin but the site's own.
-import { mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync, type Dirent } from 'node:fs';
 import { join, resolve, sep } from 'node:path';
 import type { IpcMain, IpcMainInvokeEvent, WebContents } from 'electron';
 import {
   LAYER_PROPERTIES, compileLayer, layerEdit, layerTextHash,
-  type LayerApplied, type LayerEdit, type LayerImplemented, type LayerPickTarget, type LayerSnapshot, type LayerTarget, type LayerVerdict,
+  type LayerApplied, type LayerDifference, type LayerEdit, type LayerImplemented, type LayerPickTarget, type LayerSnapshot, type LayerTarget, type LayerVerdict,
 } from '../shared/design-layer.ts';
 import {
-  MAX_DIFFERENCES, compareElements, comparePixels, diffBitmaps, diffPicture, editsAt, judge, noiseFloor, verdictNoise, verifyWidths, widestNoise, zonesOf,
+  MAX_DIFFERENCES, compareElements, comparePixels, compareTokens, diffBitmaps, diffPicture, judge, noiseFloor, verdictNoise, verifyWidths, widestNoise, zonesOf,
   type Bitmap, type ElementSnap, type WidthFindings, type Zone,
 } from '../shared/layer-verify.ts';
 import type { LiveEditSaved, LiveTraceAnswer } from '../shared/live-lens.ts';
 import { TRACE_ID, identityKey, kindKey, type EditTarget, type LiveTrace, type PartIdentity, type TracePart } from '../shared/live-trace.ts';
 import { sameSite, type LiveSite } from '../shared/live.ts';
 import type { Method } from '../shared/protocol.ts';
-import { folderOf, inHiddenWindow } from './live-capture.ts';
-import type { HelperSaved, LiveCurrent, LiveViewHooks } from './live-view.ts';
+import { RENDER_MS, deadline, folderOf, inHiddenWindow } from './live-capture.ts';
+import type { HelperSaved, LiveCurrent, LiveViewHooks, SaveAt } from './live-view.ts';
 
 interface Client { callRaw(method: Method, params: unknown): Promise<unknown> }
 
@@ -110,6 +119,9 @@ export async function resolveLayer(run: Run, trace: LiveTrace | null, edits: rea
   const asked: LayerEdit[] = [];
   for (const e of edits) {
     if (e.state !== 'draft' && e.state !== 'implemented' && e.state !== 'orphaned') continue;
+    // Phase 1 reads no breakpoints: an edit for a named one is left out whole (its styles are not in the sheet, so its
+    // words are not patched either), never shown at every width.
+    if (e.breakpoint !== 'all') continue;
     if (e.change.type === 'token') { if (e.state !== 'orphaned') out.shown.push({ id: e.id, elements: 0 }); continue; }
     // Phase 1 shows words and styles; pictures, inserts and removals are not layer edits yet.
     if (e.change.type !== 'style' && e.change.type !== 'text') continue;
@@ -128,9 +140,10 @@ export async function resolveLayer(run: Run, trace: LiveTrace | null, edits: rea
   }
   if (!asked.length) return out;
   // Words the site renders now because one of the layer's own text edits was made real (implemented, verified or
-  // retired, or back to draft after a verification): put back as they were, an element showing them is still the
-  // one an edit was made on (a style on a heading whose words were then saved, a card around that heading). A
-  // draft never saved is left out: its words are not the site's, so they cannot vouch for an element.
+  // retired, or a draft with a verdict: one a failed verification sent back before implemented edits stayed so):
+  // put back as they were, an element showing them is still the one an edit was made on (a style on a heading whose
+  // words were then saved, a card around that heading). A draft never saved is left out: its words are not the
+  // site's, so they cannot vouch for an element.
   const fold = (t: string): string => t.replace(/\s+/g, ' ').trim();
   const saved = edits.flatMap((x) => (x.change.type === 'text' && typeof x.before.text === 'string'
     && (x.state === 'implemented' || x.state === 'verified' || x.state === 'retired' || (x.state === 'draft' && x.verdict !== null))
@@ -177,6 +190,22 @@ export function effective(edits: readonly LayerEdit[], res: Pick<Resolution, 'or
   const lost = new Set(res.orphaned.map((o) => o.id));
   const back = new Set(res.resolved);
   return edits.map((e) => (lost.has(e.id) ? { ...e, state: 'orphaned' } : e.state === 'orphaned' && back.has(e.id) ? { ...e, state: 'draft' } : e));
+}
+
+/**
+ * Where a text edit's words are saved: the content, translation and item its target names (a Drupal field part's
+ * identity: the content's UUID, its langcode, and the item when the part is one), once the field the helper marked
+ * around its element (`type:id:field:fieldtype[:langcode]`) is checked to be that field. Anything else is why not:
+ * the words are never saved to a field, a translation or an item the target does not name.
+ */
+export function saveTarget(part: PartIdentity | null, field: string): SaveAt | string {
+  const [type, , name] = field.split(':');
+  if (!part || part.kind !== 'entity' || !part.field) {
+    return 'Its target is not a field of content the helper names, so Wanigan cannot say which content, translation and item the words would be saved to. An agent can make the change from a brief.';
+  }
+  if (part.type !== type || part.field !== name) return 'The field marked around its element is not the one its target names. Reload the page, then try again.';
+  if (!part.langcode) return 'Its target does not say which translation it was made on, so the words are saved to none. Reload the page, then try again.';
+  return { uuid: part.id, langcode: part.langcode, item: part.item ?? null };
 }
 
 /** What the tray calls an element, by its name. */
@@ -414,9 +443,27 @@ export interface LayerRendered {
   elements: ElementSnap[];
   /** The edits that found their elements in this render. */
   found: string[];
+  /** The token edits' custom properties as the page's root computes them, by name; a name missing was not read. */
+  tokens?: Record<string, string>;
+  /** The page went on below the capture limit (VERIFY_MAX_HEIGHT): how tall it is. Nothing below the limit is compared. */
+  cut?: { full: number } | null;
 }
 
 export type LayerRender = (r: LayerRenderRequest) => Promise<LayerRendered | { error: string }>;
+
+/** A token's name, as compileLayer prints it. */
+const TOKEN_NAME = /^--[a-z0-9][a-z0-9-]{0,99}$/i;
+
+/** The token edits' custom properties, as the page's root computes them: what the page answered, checked, for the names asked. */
+export function tokensOf(raw: unknown, names: readonly string[]): Record<string, string> {
+  const out: Record<string, string> = {};
+  if (!raw || typeof raw !== 'object') return out;
+  for (const n of names) {
+    const v = (raw as Record<string, unknown>)[n];
+    if (typeof v === 'string') out[n] = v.trim().slice(0, 2_000);
+  }
+  return out;
+}
 
 /** What the page script's layerSnap answered, checked. */
 export function snapsOf(raw: unknown): ElementSnap[] {
@@ -431,6 +478,23 @@ export function snapsOf(raw: unknown): ElementSnap[] {
     const box = r.box && typeof r.box === 'object' ? r.box as Record<string, unknown> : {};
     return [{ edit: r.edit, n: r.n as number, element: typeof r.element === 'string' ? r.element.slice(0, 200) : 'element', values, box: { x: n(box.x), y: n(box.y), width: n(box.width), height: n(box.height) } }];
   });
+}
+
+/**
+ * Why a render could not find its edits by identity, or null when it can: an edit keyed to a part needs this render's
+ * own trace, and without one it would be called not found when it was never looked for.
+ */
+export function traceProblem(edits: readonly LayerEdit[], header: string | null, answer: LiveTraceAnswer | null): string | null {
+  if (!edits.some((e) => e.target.part && e.breakpoint === 'all' && e.change.type !== 'token')) return null;
+  if (answer?.state === 'ok') return null;
+  const why = !header ? 'the page came without the helper’s trace (a cached copy, or a page the site’s platform did not render)'
+    : !answer ? 'the trace could not be asked for'
+      : answer.state === 'down' ? `the site did not answer for it (${answer.error.slice(0, 200)})`
+        : answer.state === 'refused' ? `the helper refused it (${answer.status})`
+          : answer.state === 'expired' ? 'the helper no longer kept it'
+            : answer.state === 'other' ? 'the site’s helper answers to another Wanigan'
+              : `the helper’s answer was not one Wanigan reads (${answer.state})`;
+  return `This render could not read the page’s trace: ${why}. Its edits are found by what the trace names, so nothing was compared. Try again.`;
 }
 
 /** A render in a hidden window (live-capture.ts): the page with its own trace, the edits found and tagged, the design's layer shown. */
@@ -450,6 +514,9 @@ function renderInWindow(deps: {
       const id = page.headers()?.['x-wanigan-trace'] ?? null;
       const ses = deps.sessionFor(r.projectId, r.base);
       const answer = id && TRACE_ID.test(id) && ses ? await deps.askTrace((u, init) => ses.fetch(u, init), new URL(page.wc.getURL()).origin, r.token, id) : null;
+      // Without it no edit keyed to a part can be found, and that is said, never taken as the edit being gone.
+      const unread = traceProblem(r.edits, id && TRACE_ID.test(id) ? id : null, answer);
+      if (unread) return { error: unread };
       const trace = answer?.state === 'ok' ? answer.trace : null;
       await page.read(script, null, PAGE_WORLD);
       const run: Run = (code, fallback) => page.read(code, fallback, PAGE_WORLD);
@@ -460,11 +527,16 @@ function renderInWindow(deps: {
       }
       await run(call('layerSet', { tags: res.tags, texts: r.design ? res.texts : [], on: r.design, gate: r.design ? 'g1' : null }), 0);
       await page.freeze();
-      const { height } = await page.grow(VERIFY_MAX_HEIGHT);
+      const { height, cut, full } = await page.grow(VERIFY_MAX_HEIGHT);
       const elements = snapsOf(await run<unknown>(call('layerSnap', r.edits.map((e) => e.id), LAYER_PROPERTIES), []));
+      // Each token's custom property as the root computes it, in this render: what step 1 compares for a token.
+      const names = [...new Set(r.edits.flatMap((e) => (e.change.type === 'token' && TOKEN_NAME.test(e.change.name) ? [e.change.name] : [])))];
+      const tokens = names.length
+        ? tokensOf(await run<unknown>(`(() => { const s = getComputedStyle(document.documentElement); const out = {}; for (const n of ${JSON.stringify(names)}) out[n] = s.getPropertyValue(n); return out; })()`, null), names)
+        : {};
       const png = await page.shoot(height, true);
       if (!png) return { error: 'The page could not be pictured.' };
-      return { png, bitmap: await deps.decode(png), elements, found: res.resolved };
+      return { png, bitmap: await deps.decode(png), elements, found: res.resolved, tokens, cut: cut ? { full } : null };
     },
   );
 }
@@ -496,8 +568,8 @@ export interface LiveLayerOptions {
   run: Run;
   /** The shown page's trace (live-inspect.ts). */
   trace: () => Promise<LiveTraceAnswer>;
-  /** The helper's save of words to a plain text field, as the view's user (live-view.ts). */
-  helperSave: (field: string, before: string, after: string) => Promise<HelperSaved | null>;
+  /** The helper's save of words to a plain text field, as the view's user, at the content, translation and item named (live-view.ts). */
+  helperSave: (field: string, before: string, after: string, at?: SaveAt) => Promise<HelperSaved | null>;
   /**
    * The window's save of a `via: 'schema'` edit target, as the view's user (live-inspect.ts schemaSave): the target by
    * its id in the trace the view holds, refused unless that is still the trace `trace` names.
@@ -512,8 +584,9 @@ export interface LiveLayerOptions {
   pageScript: () => string | null;
   /** Wanigan's data folder: verification pictures go under live-layer/ in it. */
   dataDir: string;
-  /** Test seams: what renders a page for a verification, and how a difference picture becomes a PNG. */
+  /** Test seams: what renders a page for a verification (and how long one may take), and how a difference picture becomes a PNG. */
   render?: LayerRender;
+  renderMs?: number;
   encode?: (b: Bitmap) => Promise<Buffer>;
   now?: () => number;
 }
@@ -537,8 +610,27 @@ export function wireLiveLayer(options: LiveLayerOptions): { hooks: LiveViewHooks
   const ok = (event: IpcMainInvokeEvent): boolean => options.trusted(event) && options.enabled();
   const core = async <T>(method: Method, params: unknown): Promise<T> => (await options.client()).callRaw(method, params) as Promise<T>;
   const snapshotOf = (projectId: string): Promise<LayerSnapshot> => core<LayerSnapshot>('live.layer', { projectId });
-  const mark = (projectId: string, id: string, state: LayerEdit['state'], verdict?: LayerVerdict): Promise<unknown> =>
-    core('live.layerMark', { projectId, id, state, ...(verdict ? { verdict } : {}) }).catch(() => null);
+  /** Tell the core what became of an edit: null once it is recorded, else why the core refused it. */
+  const mark = async (projectId: string, id: string, state: LayerEdit['state'], verdict?: LayerVerdict): Promise<string | null> => {
+    try {
+      await core('live.layerMark', { projectId, id, state, ...(verdict ? { verdict } : {}) });
+      return null;
+    } catch (error) {
+      return error instanceof Error ? error.message : String(error);
+    }
+  };
+
+  /**
+   * Take away the verification pictures of edits the layer no longer lists (discarded, undone, retired): nothing
+   * shows them again. Only folders named as an edit is, under this project's own.
+   */
+  const sweep = (projectId: string, listed: readonly LayerEdit[]): void => {
+    const dir = join(root, folderOf(projectId));
+    const keep = new Set(listed.map((e) => e.id));
+    let entries: Dirent[];
+    try { entries = readdirSync(dir, { withFileTypes: true }); } catch { return; }
+    for (const entry of entries) if (entry.isDirectory() && EDIT_ID.test(entry.name) && !keep.has(entry.name)) rmSync(join(dir, entry.name), { recursive: true, force: true });
+  };
 
   /** The local site's page the view shows, when it shows one. */
   const shown = (): { cur: LiveCurrent; url: string; path: string } | null => {
@@ -568,6 +660,7 @@ export function wireLiveLayer(options: LiveLayerOptions): { hooks: LiveViewHooks
     if (!here) return { page: '', shown: [], orphaned: [], elsewhere: [], off: !on };
     const { cur, url, path } = here;
     const snap = await snapshotOf(cur.projectId);
+    sweep(cur.projectId, snap.edits);
     const answer = await options.trace();
     const res = await resolveLayer(options.run, answer.state === 'ok' ? answer.trace : null, snap.edits, path);
     const now = effective(snap.edits, res);
@@ -580,11 +673,14 @@ export function wireLiveLayer(options: LiveLayerOptions): { hooks: LiveViewHooks
     const old = await putSheet(cur.webContents, gate ? compileLayer(now, [], gate) : '');
     await options.run(call('layerSet', { tags: res.tags, texts: on ? res.texts : [], on, gate }), 0);
     if (old && !cur.webContents.isDestroyed()) await cur.webContents.removeInsertedCSS(old).catch(() => {});
-    // The core is told what this page found: lost edits are orphaned, found ones are drafts again.
+    // The core is told what this page found: lost drafts are orphaned, found ones are drafts again. An implemented
+    // edit is in the site whatever this load showed: it is said to the window, and stays implemented. A refusal here
+    // (an edit undone meanwhile) is left: the next load finds what is listed then.
     const was = new Map(snap.edits.map((e) => [e.id, e.state]));
-    for (const o of res.orphaned) if (was.get(o.id) !== 'orphaned') await mark(cur.projectId, o.id, 'orphaned');
+    for (const o of res.orphaned) if (was.get(o.id) === 'draft') await mark(cur.projectId, o.id, 'orphaned');
     for (const id of res.resolved) if (was.get(id) === 'orphaned') await mark(cur.projectId, id, 'draft');
-    return { page: path, shown: on ? res.shown : [], orphaned: res.orphaned, elsewhere: res.elsewhere, off: !on };
+    const orphaned = res.orphaned.map((o) => (was.get(o.id) === 'implemented' ? { ...o, why: `${o.why} It is in the site, so it stays implemented.` } : o));
+    return { page: path, shown: on ? res.shown : [], orphaned, elsewhere: res.elsewhere, off: !on };
   };
   const apply = (): Promise<LayerApplied> => {
     const next = applying.then(applyNow, applyNow);
@@ -653,6 +749,10 @@ export function wireLiveLayer(options: LiveLayerOptions): { hooks: LiveViewHooks
 
   /* ── making an edit real ── */
 
+  /** Words the site has, on an edit the core would not mark: said, so they are not saved twice. */
+  const inSiteUnmarked = (revision: string | null, refused: string): string =>
+    `The words are saved in the site${revision ? ` (revision ${revision})` : ''}, but the layer could not mark this edit implemented: ${refused} Do not save it again; it is in the site.`;
+
   const implement = async (raw: unknown): Promise<LayerImplemented> => {
     const id = typeof raw === 'string' && EDIT_ID.test(raw) ? raw : '';
     const none = (why: string): LayerImplemented => ({ ok: false, id, route: 'none', why });
@@ -680,13 +780,18 @@ export function wireLiveLayer(options: LiveLayerOptions): { hooks: LiveViewHooks
     if (at.plain !== true || typeof at.words !== 'string') return none('Its element holds more than plain words, so they are not saved from here.');
     if (at.words.length > SAVE_MAX || value.length > SAVE_MAX) return none(`Words longer than ${SAVE_MAX.toLocaleString('en')} characters are saved in the site’s own form.`);
     if (typeof at.field === 'string') {
-      // A plain text field the helper marked around the words (Drupal): its own save, with the words it had.
-      const saved = await options.helperSave(at.field, at.words, value);
+      // A plain text field the helper marked around the words (Drupal): exactly the field, translation and item the
+      // edit's target names, never the first item that happens to hold the same words, never the default language.
+      const where = saveTarget(edit.target.part, at.field);
+      if (typeof where === 'string') return none(where);
+      const saved = await options.helperSave(at.field, at.words, value, where);
       if (!saved) return none('The live view has no helper for this site.');
       if (!saved.ok) return none(saved.error ?? 'The site did not save it.');
-      await core('live.layerMark', { projectId: cur.projectId, id, state: 'implemented' });
-      // The site now has the words: the page shows them as it renders them, and the layer applies again after the load.
+      const refused = await mark(cur.projectId, id, 'implemented');
+      // The site now has the words, whatever the layer recorded: the page shows them as it renders them, and the layer
+      // applies again after the load.
       if (!here.cur.webContents.isDestroyed()) here.cur.webContents.reloadIgnoringCache();
+      if (refused) return none(inSiteUnmarked(saved.revision ?? null, refused));
       return { ok: true, id, state: 'implemented', revision: saved.revision ?? null };
     }
     // No field marked around them (WordPress's helper marks none): the edit target in the page's trace that holds
@@ -701,7 +806,8 @@ export function wireLiveLayer(options: LiveLayerOptions): { hooks: LiveViewHooks
     // The save reloads the page once the site has the words; the layer applies again after the load.
     const saved = await options.schemaSave(found.target.id, next, answer.trace.id);
     if (!saved.ok) return none(saved.error ?? 'The site did not save it.');
-    await core('live.layerMark', { projectId: cur.projectId, id, state: 'implemented' });
+    const refused = await mark(cur.projectId, id, 'implemented');
+    if (refused) return none(inSiteUnmarked(saved.revision ?? null, refused));
     return { ok: true, id, state: 'implemented', revision: saved.revision ?? null };
   };
 
@@ -714,6 +820,7 @@ export function wireLiveLayer(options: LiveLayerOptions): { hooks: LiveViewHooks
     const widths = verifyWidths(rawOptions && typeof rawOptions === 'object' ? (rawOptions as { widths?: unknown }).widths : undefined);
     if (typeof widths === 'string') throw new Error(widths);
     const snap = await snapshotOf(projectId);
+    sweep(projectId, snap.edits);
     let edits: LayerEdit[];
     let page: string;
     if (raw === null || raw === undefined) {
@@ -735,10 +842,18 @@ export function wireLiveLayer(options: LiveLayerOptions): { hooks: LiveViewHooks
     const url = new URL(page, origin).toString();
     if (!sameSite(site.url, url)) throw new Error('That page is not on this site.');
     const partition = options.partition(projectId, site.url, site.token);
-    const ask = (width: number, design: boolean) => render({ projectId, partition, url, base: site.url as string, token: site.token as string, width, path: page, edits, design });
+    // Each render has an end: one that never answers fails this verification, saying so, and the queue moves on (the
+    // hidden window has deadlines of its own, and closes itself).
+    const limit = options.renderMs ?? RENDER_MS + 60_000;
+    const ask = (width: number, design: boolean) => deadline<LayerRendered | { error: string }>(
+      render({ projectId, partition, url, base: site.url as string, token: site.token as string, width, path: page, edits, design }), limit,
+      () => ({ error: `The page did not render at ${width} px within ${limit >= 1_000 ? `${Math.round(limit / 1_000)} seconds` : `${limit} ms`}, so the verification stopped there.` }),
+    );
 
     const found: WidthFindings[] = [];
     const shots: { width: number; design: Buffer; result: Buffer; resultBitmap: Bitmap; d: ReturnType<typeof diffBitmaps> }[] = [];
+    /** What was not compared, said in the verdict whatever it decides: how far down a page that went on was compared. */
+    const unseen: LayerDifference[] = [];
     for (const width of widths) {
       const first = await ask(width, false);
       if ('error' in first) throw new Error(first.error);
@@ -751,16 +866,34 @@ export function wireLiveLayer(options: LiveLayerOptions): { hooks: LiveViewHooks
       // Each version against itself: what this page does not repeat exactly, whichever of the two it is.
       const noise = widestNoise([noiseFloor(first.bitmap, second.bitmap), noiseFloor(design.bitmap, again.bitmap)]);
       const elements = compareElements(design.elements, first.elements, width);
-      // An edit the design cannot find is not verified by finding nothing different.
+      // Nothing is verified by finding nothing different: every edit is compared, or fails saying why not.
+      const measured = (x: LayerRendered, id: string): boolean => x.elements.some((s) => s.edit === id);
+      const tokens: { edit: string; name: string }[] = [];
       for (const e of edits) {
-        if (e.change.type === 'token' || design.found.includes(e.id)) continue;
-        elements.push({ kind: 'style', edit: e.id, width, element: e.label, property: 'element', design: 'not found on the page', result: first.found.includes(e.id) ? 'on the page' : 'not found on the page' });
+        if (e.breakpoint !== 'all') {
+          // The design shows no edit for a named breakpoint (phase 1 reads none of the theme's), so nothing compares it.
+          elements.push({ kind: 'style', edit: e.id, width, element: e.label, property: 'breakpoint', design: `only at the theme’s “${e.breakpoint}” breakpoint`, result: 'not verifiable yet: Wanigan does not read the theme’s breakpoints, so the design cannot show it' });
+        } else if (e.change.type === 'token') {
+          tokens.push({ edit: e.id, name: e.change.name });
+        } else if (!design.found.includes(e.id)) {
+          elements.push({ kind: 'style', edit: e.id, width, element: e.label, property: 'element', design: 'not found on the page', result: first.found.includes(e.id) ? 'on the page' : 'not found on the page' });
+        } else if (!measured(design, e.id) && !measured(first, e.id)) {
+          // Found, then gone before it was measured (the page re-rendered it while its clock ran): its tags went with it,
+          // so neither render shows anything of the edit, and the two are the same for want of it.
+          elements.push({ kind: 'style', edit: e.id, width, element: e.label, property: 'element', design: 'its element was not there when the page was measured', result: 'its element was not there when the page was measured' });
+        }
       }
+      // A token is its custom property on the root, the same in both. It adds no zone: a whole-page zone would make every
+      // difference anywhere near an edit, and step 3 would never run for the edits verified with it.
+      elements.push(...compareTokens(tokens, design.tokens, first.tokens, width));
       const zones: Zone[] = zonesOf(design.elements, first.elements);
-      // A token reaches the whole page: what differs anywhere is its.
-      for (const e of edits) if (e.change.type === 'token') zones.push({ edit: e.id, rect: { x: 0, y: 0, width: Number.MAX_SAFE_INTEGER, height: Number.MAX_SAFE_INTEGER } });
       const d = diffBitmaps(design.bitmap, first.bitmap);
       found.push({ width, noise, elements, pixels: comparePixels(d, zones, width) });
+      const full = Math.max(design.cut?.full ?? 0, first.cut?.full ?? 0);
+      if (full) {
+        const px = (n: number): string => `${Math.round(n).toLocaleString('en')} px`;
+        unseen.push({ kind: 'style', edit: edits[0]!.id, width, element: 'The page', property: 'compared', design: `down to ${px(VERIFY_MAX_HEIGHT)}`, result: `not below that: the page is ${px(full)} tall, and nothing under ${px(VERIFY_MAX_HEIGHT)} was compared` });
+      }
       shots.push({ width, design: design.png, result: first.png, resultBitmap: first.bitmap, d });
     }
     // One floor for the whole verdict, the one it states: the largest over both versions and every width. Two renders
@@ -770,7 +903,9 @@ export function wireLiveLayer(options: LiveLayerOptions): { hooks: LiveViewHooks
     const images: { width: number; design: Buffer; result: Buffer; diff: Buffer }[] = [];
     for (const i of shots) images.push({ width: i.width, design: i.design, result: i.result, diff: i.d.pixels ? await encode(diffPicture(i.resultBitmap, i.d, floor)) : Buffer.alloc(0) });
     const base: Omit<LayerVerdict, 'pictures'> = {
-      at: clock(), ok: outcome.ok, failed: outcome.failed, widths, noise: floor, differences: outcome.differences.slice(0, MAX_DIFFERENCES),
+      at: clock(), ok: outcome.ok, failed: outcome.failed, widths, noise: floor,
+      // What differs first, then what was not compared: said on a verdict that passed too, which passed only as far down as that.
+      differences: [...outcome.differences.slice(0, MAX_DIFFERENCES - unseen.length), ...unseen],
     };
     // The pictures, for each edit's tray row: its own folder, written afresh.
     const verdicts = new Map<string, LayerVerdict>();
@@ -787,12 +922,16 @@ export function wireLiveLayer(options: LiveLayerOptions): { hooks: LiveViewHooks
       });
       verdicts.set(e.id, { ...base, pictures });
     }
-    // The core is told: verified, or back to draft with the verdict for the edits it is about; the rest keep it.
-    const back = new Set(editsAt(base, edits.map((e) => e.id)));
+    // The core is told: verified, or still implemented with the verdict. The words are in the site either way; a
+    // failed verdict says what differs, and never makes an edit a draft again (from where it could be discarded).
+    const refusals: string[] = [];
     for (const e of edits) {
       const v = verdicts.get(e.id) as LayerVerdict;
-      await mark(projectId, e.id, base.ok ? 'verified' : back.has(e.id) ? 'draft' : 'implemented', v);
+      const why = await mark(projectId, e.id, base.ok ? 'verified' : 'implemented', v);
+      if (why) refusals.push(`“${e.label}”: ${why}`);
     }
+    // A verdict the layer did not keep is said, never passed off as recorded.
+    if (refusals.length) throw new Error(`The verification ran (its pictures are kept), but the layer did not record it: ${refusals.join(' ')}`);
     return verdicts.get(edits[0]!.id) as LayerVerdict;
   };
   const verify = (raw: unknown, rawOptions: unknown): Promise<LayerVerdict> => {

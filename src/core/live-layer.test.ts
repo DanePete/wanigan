@@ -107,10 +107,16 @@ describe('the design layer’s log', () => {
     assert.equal(snap.undo, null, 'undo would take an implemented edit out of the layer, not out of the site');
     await assert.rejects(t.owner.call('live.layerUndo', { projectId }), /implemented .*would not take it out of the site/);
     await assert.rejects(t.owner.call('live.layerDiscard', { projectId, id: a }), /Only a draft or an orphaned edit is discarded; this one is implemented/);
-    // Back to draft (a verification failed), it can be undone again.
-    snap = await t.owner.call('live.layerMark', { projectId, id: a, state: 'draft', verdict: verdict(false) });
-    assert.deepEqual(snap.undo, { id: a, label: 'Heading in Card 1', action: 'add' });
-    assert.deepEqual(rows().map((r) => r.listed), [1]);
+    // Neither a failed verification nor a page where its element is not found makes it a draft, or orphaned, again:
+    // either would make it discardable while its words are in the site.
+    await assert.rejects(t.owner.call('live.layerMark', { projectId, id: a, state: 'draft', verdict: verdict(false) }), /in the site: it does not go back to draft/);
+    await assert.rejects(t.owner.call('live.layerMark', { projectId, id: a, state: 'orphaned' }), /in the site: a page where its element is not found/);
+    snap = await t.owner.call('live.layerMark', { projectId, id: a, state: 'implemented', verdict: verdict(false) });
+    assert.deepEqual([snap.edits[0]?.state, snap.edits[0]?.verdict?.failed], ['implemented', 'styles'], 'a failed verification is kept with it');
+    assert.equal(snap.undo, null);
+    await assert.rejects(t.owner.call('live.layerUndo', { projectId }), /would not take it out of the site/);
+    await assert.rejects(t.owner.call('live.layerDiscard', { projectId, id: a }), /this one is implemented/);
+    assert.deepEqual(rows().map((r) => [r.state, r.listed]), [['implemented', 1]]);
   });
 
   test('states move along the design’s transitions, verdicts are kept, and every other move says why', async () => {
@@ -120,14 +126,17 @@ describe('the design layer’s log', () => {
     await assert.rejects(mark('verified', verdict(true)), /Only an implemented edit is verified; this one is draft/);
     await assert.rejects(mark('retired'), /Only a verified edit is retired/);
     await assert.rejects(mark('gone'), /draft, implemented, verified, retired or orphaned/);
+    await assert.rejects(mark('draft', verdict(true)), /kept only on an edit in the site; this one is draft/, 'a draft is not in the site: no verdict, passing or not, is kept on it');
+    await assert.rejects(mark('orphaned', verdict(false)), /kept only on an edit in the site/);
     await mark('implemented');
     await assert.rejects(mark('verified'), /verified only by a verification that passed/);
     await assert.rejects(mark('verified', verdict(false)), /verified only by a verification that passed/);
     await assert.rejects(mark('verified', { ...verdict(true), noise: { maxDiff: 999, pixels: 0 } }), /not a verification’s verdict/);
-    await assert.rejects(mark('draft', verdict(true)), /passed does not send an edit back/);
-    let snap = await mark('draft', verdict(false));
-    assert.deepEqual([snap.edits[0]?.state, snap.edits[0]?.verdict?.failed], ['draft', 'styles'], 'back to draft, keeping the verdict');
-    await mark('implemented');
+    await assert.rejects(mark('draft', verdict(true)), /does not go back to draft/);
+    await assert.rejects(mark('draft', verdict(false)), /does not go back to draft/);
+    await assert.rejects(mark('implemented', verdict(true)), /passed marks the edit verified/);
+    let snap = await mark('implemented', verdict(false));
+    assert.deepEqual([snap.edits[0]?.state, snap.edits[0]?.verdict?.failed], ['implemented', 'styles'], 'still in the site, keeping the verdict');
     snap = await mark('verified', verdict(true));
     assert.deepEqual([snap.edits[0]?.state, snap.edits[0]?.verdict?.ok], ['verified', true]);
     await assert.rejects(mark('draft'), /A verified edit does not go back to draft/);
@@ -136,8 +145,8 @@ describe('the design layer’s log', () => {
     assert.deepEqual(rows().map((r) => r.state), ['retired']);
     await assert.rejects(mark('verified', verdict(true)), /archived/);
     assert.deepEqual(actions().filter((r) => r.action === 'mark').map((r) => [r.state_from, r.state_to]), [
-      ['draft', 'implemented'], ['implemented', 'draft'], ['draft', 'implemented'], ['implemented', 'verified'], ['verified', 'retired'],
-    ], 'only moves that happened are in the log');
+      ['draft', 'implemented'], ['implemented', 'implemented'], ['implemented', 'verified'], ['verified', 'retired'],
+    ], 'only moves that happened, and the verdict recorded, are in the log');
   });
 
   test('orphaned and back: an edit whose element no longer resolves is orphaned, and a draft again when it does', async () => {

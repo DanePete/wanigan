@@ -3,7 +3,7 @@
 // (Electron's windows cannot open under this runner). What is checked is what reaches the page, the core, the site and
 // the data folder. Made-up site (acme); nothing real.
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
@@ -11,14 +11,18 @@ import { compileLayer, layerTextHash, type LayerApplied, type LayerEdit, type La
 import type { Bitmap, ElementSnap } from '../shared/layer-verify.ts';
 import type { LiveEditSaved } from '../shared/live-lens.ts';
 import type { EditTarget, LiveTrace, PartIdentity, TracePart } from '../shared/live-trace.ts';
+import { folderOf } from './live-capture.ts';
 import { saveSchemaEdit } from './live-edit-save.ts';
-import { madeOn, pathOf, wireLiveLayer, type LayerRender, type LayerRenderRequest } from './live-layer.ts';
+import { madeOn, pathOf, traceProblem, wireLiveLayer, type LayerRender, type LayerRenderRequest } from './live-layer.ts';
 
 // Plainly not a key: the helper's real token is random hex the core keeps.
 const TOKEN = ['stand', 'in', 'token'].join('-');
 const BASE = 'https://acme.example.test/';
 
 const card = (nth: number): PartIdentity => ({ kind: 'component', name: 'acme:card', within: null, nth });
+/** A made-up article's title field in French, as the Drupal helper names it (its UUID, not its id). */
+const UUID = 'c0ffee00-0000-4000-8000-000000000012';
+const title = (over: Partial<Extract<PartIdentity, { kind: 'entity' }>> = {}): PartIdentity => ({ kind: 'entity', type: 'node', id: UUID, bundle: 'article', langcode: 'fr', field: 'title', ...over });
 const trace = (): LiveTrace => ({
   version: 1, platform: 'drupal', id: '0123456789abcdef', url: '/paddling', at: 1, total: { ms: 1 }, edits: [],
   parts: [
@@ -26,6 +30,8 @@ const trace = (): LiveTrace => ({
     { id: 'p2', kind: 'component', label: 'Card', identity: card(1) },
     { id: 'p3', kind: 'component', label: 'Hero', identity: { kind: 'component', name: 'acme:hero', within: null, nth: 0 } },
     { id: 'p4', kind: 'block', label: 'Footer note' },
+    { id: 'p6', kind: 'field', label: 'Title', identity: title() },
+    { id: 'p7', kind: 'field', label: 'Tags #2', identity: title({ field: 'field_tags', item: 'delta:1' }) },
   ],
 });
 
@@ -90,13 +96,13 @@ function modelPage() {
 /** What the stand-in site answers a schema save (`POST /_wanigan/edit/<id>`): a status and its JSON. */
 interface SiteAnswer { status: number; body: unknown }
 
-function wire(over: { edits?: LayerEdit[]; url?: string; trace?: LiveTrace | null; trusted?: boolean; enabled?: boolean; render?: LayerRender; saved?: { ok: boolean; error: string | null }; site?: SiteAnswer } = {}) {
+function wire(over: { edits?: LayerEdit[]; url?: string; trace?: LiveTrace | null; trusted?: boolean; enabled?: boolean; render?: LayerRender; renderMs?: number; saved?: { ok: boolean; error: string | null }; refuseMark?: string; site?: SiteAnswer } = {}) {
   const handlers = new Map<string, (...args: unknown[]) => unknown>();
   const dataDir = mkdtempSync(join(tmpdir(), 'wanigan-layer-'));
   const { page, run } = modelPage();
   let edits = over.edits ?? [];
   const marks: { id: string; state: string; verdict?: LayerVerdict }[] = [];
-  const saves: [string, string, string][] = [];
+  const saves: unknown[][] = [];
   /** What reached the stand-in site's schema save route: the path and the JSON body. */
   const posts: { path: string; body: unknown }[] = [];
   const sheets: { inserted: string[]; origins: unknown[]; removed: string[]; reloads: number } = { inserted: [], origins: [], removed: [], reloads: 0 };
@@ -112,6 +118,7 @@ function wire(over: { edits?: LayerEdit[]; url?: string; trace?: LiveTrace | nul
     callRaw: async (method: string, params: Record<string, unknown>) => {
       if (method === 'live.layer') return { projectId: 'p1', edits, undo: null, redo: null };
       if (method === 'live.layerMark') {
+        if (over.refuseMark) throw new Error(over.refuseMark);
         marks.push({ id: params.id as string, state: params.state as string, ...(params.verdict ? { verdict: params.verdict as LayerVerdict } : {}) });
         edits = edits.map((e) => (e.id === params.id ? { ...e, state: params.state as LayerEdit['state'] } : e));
         return { projectId: 'p1', edits, undo: null, redo: null };
@@ -130,7 +137,7 @@ function wire(over: { edits?: LayerEdit[]; url?: string; trace?: LiveTrace | nul
     current: () => ({ projectId: 'p1', base: BASE, token: TOKEN, env: null, webContents: webContents as never }),
     run,
     trace: async () => (traced ? { state: 'ok', trace: traced } : { state: 'missing' }),
-    helperSave: async (field, before, after) => { saves.push([field, before, after]); return over.saved ? { ...over.saved, label: 'Paddling 101' } : { ok: true, error: null, label: 'Paddling 101', revision: '42' }; },
+    helperSave: async (field, before, after, at) => { saves.push([field, before, after, at]); return over.saved ? { ...over.saved, label: 'Paddling 101' } : { ok: true, error: null, label: 'Paddling 101', revision: '42' }; },
     // live-inspect.ts schemaSave, played here: the target found in the trace the view holds (Electron's ipcMain cannot
     // load under this runner), then the real save in live-edit-save.ts against a stand-in site.
     schemaSave: async (id, value, tracedId): Promise<LiveEditSaved> => {
@@ -154,6 +161,7 @@ function wire(over: { edits?: LayerEdit[]; url?: string; trace?: LiveTrace | nul
     render: async (r) => { renders.push(r); return over.render ? over.render(r) : { error: 'no render in this test' }; },
     encode: async () => Buffer.from('diff-png'),
     now: () => 1_000,
+    ...(over.renderMs ? { renderMs: over.renderMs } : {}),
   });
   const invoke = <T>(channel: string, ...args: unknown[]): Promise<T> => (handlers.get(channel) as (...a: unknown[]) => Promise<T>)({}, ...args);
   return {
@@ -286,6 +294,26 @@ test('words the layer’s own text edit saved are not other words: a style on th
   } finally { d.done(); }
 });
 
+test('an implemented edit stays implemented: a load where it is not found says so, and never makes it a draft or orphaned', async () => {
+  const saved = edit({ label: 'Heading', state: 'implemented', change: { type: 'text', value: 'Paddling 102' }, before: { text: 'Paddling 101' } });
+  const draft = edit();
+  const w = wire({ edits: [saved, draft] });
+  try {
+    // A template filter changed the saved words, or the element streamed in after the load: neither resolves.
+    w.page.parts = { p1: { 'h2:nth-of-type(1)': [words('Something else')] } };
+    const lost = await w.apply();
+    assert.deepEqual(lost.orphaned.map((o) => o.id), [saved.id, draft.id], 'both said to the window');
+    assert.match(lost.orphaned[0]!.why, /in the site, so it stays implemented/);
+    assert.deepEqual(w.marks, [{ id: draft.id, state: 'orphaned' }], 'only the draft is orphaned; the implemented edit is not touched');
+    // Found again: the implemented edit is still implemented, not a draft.
+    w.page.parts = { p1: { 'h2:nth-of-type(1)': [words('Paddling 102')] } };
+    const back = await w.apply();
+    assert.ok(back.shown.some((x) => x.id === saved.id));
+    assert.deepEqual(w.marks.filter((m) => m.id === saved.id), []);
+    assert.equal(w.edits().find((e) => e.id === saved.id)?.state, 'implemented');
+  } finally { w.done(); }
+});
+
 test('the same stored thing shown twice on a page is one identity: an edit for it reaches both, and is not orphaned', async () => {
   const e = edit();
   // The same card (one entity, one identity) rendered in the page and again in a sidebar teaser.
@@ -333,6 +361,18 @@ test('a text edit patches its element’s words, and still resolves once the sit
     assert.equal(w.sheets.inserted.length, sheetsBefore, 'nothing new is injected to switch it off');
     const onAgain = await w.show(true);
     assert.equal(onAgain.off, false);
+  } finally { w.done(); }
+});
+
+test('an edit for a named breakpoint is left out whole: its words are not patched at every width, its styles not shown', async () => {
+  const words102 = edit({ breakpoint: 'wide', change: { type: 'text', value: 'Paddling 102' } });
+  const styled = edit({ breakpoint: 'wide' });
+  const w = wire({ edits: [words102, styled] });
+  try {
+    w.page.parts = { p1: { 'h2:nth-of-type(1)': [words('Paddling 101')] } };
+    const applied = await w.apply();
+    assert.deepEqual(w.page.set, { tags: {}, texts: [], on: true, gate: 'g1' });
+    assert.deepEqual([applied.shown, applied.orphaned], [[], []]);
   } finally { w.done(); }
 });
 
@@ -402,7 +442,7 @@ test('a Layout Builder component’s kind is every component of its plugin in a 
 });
 
 test('making an edit real: words go through the helper’s save, a style goes to an agent, and the core is told', async () => {
-  const retyped = edit({ change: { type: 'text', value: 'Paddling 102' } });
+  const retyped = edit({ label: 'Title', change: { type: 'text', value: 'Pagayer 102' }, target: { part: title(), inner: null, selector: null, textHash: layerTextHash('Pagayer 101') } });
   const style = edit();
   const every = edit({ scope: 'kind', change: { type: 'text', value: 'Same everywhere' } });
   // The card's props hold the same words as a schema target: a field the helper marked is saved through its own save all the same.
@@ -410,7 +450,7 @@ test('making an edit real: words go through the helper’s save, a style goes to
   const drupal: LiveTrace = { ...trace(), parts: trace().parts.map((p) => (p.id === 'p1' ? { ...p, edits: [props.id] } : p)), edits: [props] };
   const w = wire({ edits: [retyped, style, every], trace: drupal });
   try {
-    w.page.parts = { p1: { 'h2:nth-of-type(1)': [words('Paddling 101', 'node:12:title:string')] } };
+    w.page.parts = { p1: { 'h2:nth-of-type(1)': [words('Paddling 101')] }, p6: { '': [words('Pagayer 101', 'node:12:title:string:fr')] } };
     await w.apply();
     assert.deepEqual(await w.implement(style.id), { ok: false, id: style.id, route: 'agent', why: 'A style goes into the theme’s CSS: in phase 1 an agent makes it from a brief, on your click.' });
     const kind = await w.implement(every.id);
@@ -418,7 +458,8 @@ test('making an edit real: words go through the helper’s save, a style goes to
     assert.deepEqual(w.saves, [], 'nothing was saved for either');
     const done = await w.implement(retyped.id);
     assert.deepEqual(done, { ok: true, id: retyped.id, state: 'implemented', revision: '42' });
-    assert.deepEqual(w.saves, [['node:12:title:string', 'Paddling 101', 'Paddling 102']], 'the field the helper marked, the words the site has, the new words');
+    assert.deepEqual(w.saves, [['node:12:title:string:fr', 'Pagayer 101', 'Pagayer 102', { uuid: UUID, langcode: 'fr', item: null }]],
+      'the field the helper marked, the words the site has, the new words, and the content, translation and item the target names');
     assert.deepEqual(w.posts, [], 'no schema target is asked when the helper marked the field');
     assert.deepEqual(w.marks.at(-1), { id: retyped.id, state: 'implemented' });
     assert.equal(w.sheets.reloads, 1, 'the page shows what the site now has');
@@ -428,15 +469,15 @@ test('making an edit real: words go through the helper’s save, a style goes to
 });
 
 test('words with no field the helper marks, or a refusal from the site, are said and nothing is marked', async () => {
-  const loose = edit({ change: { type: 'text', value: 'New words' } });
+  const loose = edit({ label: 'Title', change: { type: 'text', value: 'New words' }, target: { part: title(), inner: null, selector: null, textHash: layerTextHash('Paddling 101') } });
   const w = wire({ edits: [loose], saved: { ok: false, error: 'The user you are logged in as in the live view may not change this.' } });
   try {
-    w.page.parts = { p1: { 'h2:nth-of-type(1)': [words('Paddling 101')] } };
+    w.page.parts = { p6: { '': [words('Paddling 101')] } };
     await w.apply();
     const unmarked = await w.implement(loose.id);
     assert.deepEqual(unmarked, { ok: false, id: loose.id, route: 'none', why: NOTHING_HOLDS }, 'no field marked, and nothing in the trace holds these words');
     assert.deepEqual([w.saves, w.posts], [[], []]);
-    w.page.parts = { p1: { 'h2:nth-of-type(1)': [words('Paddling 101', 'node:12:title:string')] } };
+    w.page.parts = { p6: { '': [words('Paddling 101', 'node:12:title:string:fr')] } };
     await w.apply();
     const refused = await w.implement(loose.id);
     assert.deepEqual(refused, { ok: false, id: loose.id, route: 'none', why: 'The user you are logged in as in the live view may not change this.' });
@@ -642,6 +683,77 @@ test('WordPress: what the site refuses (403, 409) is said as the site said it, a
   } finally { w.done(); }
 });
 
+test('words are saved only to the field, translation and item the edit’s target names', async () => {
+  // The second of two tags that hold the same words, in French: the save names that item and that translation.
+  const tag = edit({ label: 'Tag', change: { type: 'text', value: 'Kayak' }, target: { part: title({ field: 'field_tags', item: 'delta:1' }), inner: null, selector: null, textHash: layerTextHash('Canoe') } });
+  // A heading in a card component whose words a field marked around it holds: the target names no field.
+  const inCard = edit({ change: { type: 'text', value: 'Paddling 102' } });
+  // The target names the body, but the field marked around its element is the title.
+  const otherField = edit({ label: 'Body', change: { type: 'text', value: 'Pagayer 102' }, target: { part: title({ field: 'body' }), inner: null, selector: null, textHash: layerTextHash('Pagayer 101') } });
+  // A target from a helper that named no language.
+  const noLanguage = edit({ label: 'Title', change: { type: 'text', value: 'Pagayer 102' }, target: { part: title({ langcode: undefined }), inner: null, selector: null, textHash: layerTextHash('Pagayer 101') } });
+  const traced: LiveTrace = { ...trace(), parts: [...trace().parts, { id: 'p8', kind: 'field', label: 'Body', identity: title({ field: 'body' }) }, { id: 'p9', kind: 'field', label: 'Title', identity: title({ langcode: undefined }) }] };
+  const w = wire({ edits: [tag, inCard, otherField, noLanguage], trace: traced });
+  try {
+    w.page.parts = {
+      p7: { '': [words('Canoe', 'node:12:field_tags:string:fr')] },
+      p1: { 'h2:nth-of-type(1)': [words('Paddling 101', 'node:12:title:string:fr')] },
+      p8: { '': [words('Pagayer 101', 'node:12:title:string:fr')] },
+      p9: { '': [words('Pagayer 101', 'node:12:title:string:fr')] },
+    };
+    await w.apply();
+    assert.equal((await w.implement(tag.id)).ok, true);
+    assert.deepEqual(w.saves, [['node:12:field_tags:string:fr', 'Canoe', 'Kayak', { uuid: UUID, langcode: 'fr', item: 'delta:1' }]], 'that item, in that translation, of that content');
+    const refusals = [await w.implement(inCard.id), await w.implement(otherField.id), await w.implement(noLanguage.id)];
+    assert.deepEqual(refusals.map((r) => (r.ok ? 'saved' : r.route)), ['none', 'none', 'none']);
+    assert.match(refusals[0]!.ok ? '' : refusals[0]!.why, /not a field of content the helper names/);
+    assert.match(refusals[1]!.ok ? '' : refusals[1]!.why, /not the one its target names/);
+    assert.match(refusals[2]!.ok ? '' : refusals[2]!.why, /which translation/);
+    assert.equal(w.saves.length, 1, 'nothing else was saved');
+    assert.deepEqual(w.marks.map((m) => [m.id, m.state]), [[tag.id, 'implemented']]);
+  } finally { w.done(); }
+});
+
+test('the layer refusing to record what happened is said: words saved stay said, the page still reloads, and a verdict is not passed off as kept', async () => {
+  const retyped = edit({ label: 'Title', change: { type: 'text', value: 'Pagayer 102' }, target: { part: title(), inner: null, selector: null, textHash: layerTextHash('Pagayer 101') } });
+  const w = wire({ edits: [retyped], refuseMark: 'That edit is not in the layer now: it was undone or discarded.' });
+  try {
+    w.page.parts = { p6: { '': [words('Pagayer 101', 'node:12:title:string:fr')] } };
+    await w.apply();
+    const done = await w.implement(retyped.id);
+    assert.equal(w.saves.length, 1);
+    assert.deepEqual(done, { ok: false, id: retyped.id, route: 'none', why: 'The words are saved in the site (revision 42), but the layer could not mark this edit implemented: That edit is not in the layer now: it was undone or discarded. Do not save it again; it is in the site.' });
+    assert.equal(w.sheets.reloads, 1, 'the page shows what the site now has');
+  } finally { w.done(); }
+  const e = edit({ state: 'implemented' });
+  const v = wire({ edits: [e], refuseMark: 'An edit is verified only by a verification that passed.', render: renders(e, { design: (b) => b, result: (b) => b }) });
+  try {
+    await assert.rejects(v.verify(e.id, { widths: [390] }), /The verification ran \(its pictures are kept\), but the layer did not record it: “Heading in Card \(component\)”: An edit is verified only by a verification that passed\./);
+  } finally { v.done(); }
+});
+
+test('the pictures of edits the layer no longer lists are taken away, and nothing else', async () => {
+  const kept = edit({ state: 'implemented' });
+  const w = wire({ edits: [kept] });
+  try {
+    const dir = join(w.dataDir, 'live-layer', folderOf('p1'));
+    for (const id of [kept.id, 'discarded-1', 'retired-2']) { mkdirSync(join(dir, id), { recursive: true }); writeFileSync(join(dir, id, '390-design.png'), 'x'); }
+    mkdirSync(join(dir, 'Not An Edit'), { recursive: true });
+    await w.apply();
+    assert.deepEqual([kept.id, 'discarded-1', 'retired-2', 'Not An Edit'].map((d) => existsSync(join(dir, d))), [true, false, false, true]);
+  } finally { w.done(); }
+});
+
+test('a render that cannot read its trace says so, rather than calling its edits not found', () => {
+  const keyed = edit({ state: 'implemented' });
+  const loose = edit({ state: 'implemented', target: { part: null, inner: null, selector: 'html > body:nth-of-type(1) > h2:nth-of-type(1)', textHash: null } });
+  assert.equal(traceProblem([keyed], '0123456789abcdef', { state: 'ok', trace: trace() }), null);
+  assert.equal(traceProblem([loose], null, null), null, 'an edit keyed by a document path needs no trace');
+  assert.match(traceProblem([keyed], null, null) ?? '', /^This render could not read the page’s trace: the page came without the helper’s trace .* nothing was compared/);
+  assert.match(traceProblem([keyed], '0123456789abcdef', { state: 'down', error: 'connection refused' }) ?? '', /the site did not answer for it \(connection refused\)/);
+  assert.match(traceProblem([keyed], '0123456789abcdef', { state: 'expired' }) ?? '', /no longer kept it/);
+});
+
 /* ── verification ── */
 
 const blank = (width: number, height: number): Bitmap => {
@@ -695,7 +807,7 @@ test('a verification stops at the first failing step: styles, then pixels near t
     const v = await a.verify(styled.id, { widths: [390] });
     assert.equal(v.failed, 'styles', 'the computed colour is off, whatever the pixels say');
     assert.deepEqual(v.differences, [{ kind: 'style', edit: styled.id, width: 390, element: 'h2.card__title', property: 'color', design: 'rgb(200, 0, 0)', result: 'rgb(18, 52, 86)' }]);
-    assert.deepEqual(a.marks.map((m) => [m.state, m.verdict?.failed]), [['draft', 'styles']], 'back to draft, with the verdict');
+    assert.deepEqual(a.marks.map((m) => [m.state, m.verdict?.failed]), [['implemented', 'styles']], 'still in the site, with the verdict saying what differs');
     assert.ok(v.pictures[0]?.diff && existsSync(v.pictures[0].diff), 'the difference is pictured');
   } finally { a.done(); }
 
@@ -713,7 +825,7 @@ test('a verification stops at the first failing step: styles, then pixels near t
     const v = await d.verify(elsewhere.id, { widths: [390] });
     assert.equal(v.failed, 'rest', 'a difference away from every touched element is a leak');
     assert.ok(v.differences.length > 0 && v.differences.every((x) => x.kind === 'leak'));
-    assert.deepEqual(d.marks.map((m) => m.state), ['draft']);
+    assert.deepEqual(d.marks.map((m) => m.state), ['implemented']);
   } finally { d.done(); }
 });
 
@@ -759,6 +871,107 @@ test('every width is judged against the one floor the verdict states, the larges
     const v = await x.verify(f.id, { widths: [390] });
     assert.deepEqual([v.ok, v.failed], [false, 'rest']);
   } finally { x.done(); }
+});
+
+test('an edit found on the page but gone when it was measured fails that width: nothing is verified for want of a comparison', async () => {
+  const e = edit({ state: 'implemented' });
+  // The page re-rendered the element while its clock ran: the tags went with it, so the layer's rules matched nothing
+  // and the design draws the same as the result.
+  const w = wire({ edits: [e], render: async (r) => ({ png: Buffer.from(`x-${r.width}`), bitmap: blank(64, 200), elements: [], found: [e.id] }) });
+  try {
+    const v = await w.verify(e.id, { widths: [390] });
+    assert.deepEqual([v.ok, v.failed], [false, 'styles']);
+    assert.deepEqual(v.differences, [{ kind: 'style', edit: e.id, width: 390, element: e.label, property: 'element', design: 'its element was not there when the page was measured', result: 'its element was not there when the page was measured' }]);
+    assert.deepEqual(w.marks.map((m) => m.state), ['implemented']);
+  } finally { w.done(); }
+});
+
+test('a token is checked by its custom property on the root in both renders, and never passed for want of one', async () => {
+  const token = edit({ label: 'Accent', scope: 'site', state: 'implemented', target: { part: null, inner: null, selector: null, textHash: null }, change: { type: 'token', name: '--color-accent', value: '#c0ffee' } });
+  const on = (design: Record<string, string> | null, result: Record<string, string> | null): LayerRender => async (r) => {
+    const tokens = r.design ? design : result;
+    return { png: Buffer.from('x'), bitmap: blank(64, 200), elements: [], found: [], ...(tokens ? { tokens } : {}) };
+  };
+  const cases: [Record<string, string> | null, Record<string, string> | null, boolean, string | null][] = [
+    [{ '--color-accent': '#c0ffee' }, { '--color-accent': '#c0ffee' }, true, null],
+    [{ '--color-accent': '#c0ffee' }, { '--color-accent': '#0a7' }, false, '#0a7'],
+    [{ '--color-accent': '#c0ffee' }, { '--color-accent': '' }, false, 'not set'],
+    [null, null, false, 'not read'],
+  ];
+  for (const [design, result, ok, said] of cases) {
+    const w = wire({ edits: [token], render: on(design, result) });
+    try {
+      const v = await w.verify(token.id, { widths: [390] });
+      assert.equal(v.ok, ok, JSON.stringify([design, result]));
+      if (!ok) {
+        assert.equal(v.failed, 'styles');
+        assert.deepEqual(v.differences, [{ kind: 'style', edit: token.id, width: 390, element: ':root', property: '--color-accent', design: design ? '#c0ffee' : 'not read', result: said }]);
+      }
+    } finally { w.done(); }
+  }
+});
+
+test('a style for a named breakpoint fails as not verifiable yet: the design cannot show it', async () => {
+  const e = edit({ state: 'implemented', breakpoint: 'wide' });
+  const w = wire({ edits: [e], render: renders(e, { design: (b) => b, result: (b) => b }) });
+  try {
+    const v = await w.verify(e.id, { widths: [390] });
+    assert.deepEqual([v.ok, v.failed], [false, 'styles']);
+    assert.equal(v.differences.length, 1);
+    assert.match(v.differences[0]!.kind === 'style' ? `${v.differences[0]!.property}: ${v.differences[0]!.result}` : '', /^breakpoint: not verifiable yet/);
+  } finally { w.done(); }
+});
+
+test('a token verified with other edits does not switch off step 3 for them: a leak away from every element is still a leak', async () => {
+  const style = edit({ state: 'implemented' });
+  const token = edit({ label: 'Accent', scope: 'site', state: 'implemented', target: { part: null, inner: null, selector: null, textHash: null }, change: { type: 'token', name: '--color-accent', value: '#c0ffee' } });
+  const w = wire({ edits: [style, token], render: async (r) => ({
+    png: Buffer.from('x'), bitmap: r.design ? blank(64, 200) : painted(blank(64, 200), { x: 0, y: 150, width: 64, height: 20 }, 0),
+    elements: [heading(style.id, 'rgb(18, 52, 86)')], found: [style.id], tokens: { '--color-accent': '#c0ffee' },
+  }) });
+  try {
+    const v = await w.verify(null, { widths: [390] });
+    assert.equal(v.failed, 'rest', 'the footer changed, away from the heading: a leak, not a difference near the token');
+    assert.ok(v.differences.length > 0 && v.differences.every((d) => d.kind === 'leak'));
+  } finally { w.done(); }
+});
+
+test('a page that went on below the capture limit: the verdict says how far down it was compared, passing or not', async () => {
+  const e = edit({ state: 'implemented' });
+  const long = (r: LayerRenderRequest, bitmap: Bitmap) => ({
+    png: Buffer.from('x'), bitmap, elements: [heading(e.id, 'rgb(18, 52, 86)')], found: [e.id], ...(r.width === 1440 ? { cut: { full: 9_412 } } : {}),
+  });
+  const w = wire({ edits: [e], render: async (r) => long(r, blank(64, 200)) });
+  try {
+    const v = await w.verify(e.id);
+    assert.equal(v.ok, true);
+    assert.deepEqual(v.differences, [{ kind: 'style', edit: e.id, width: 1440, element: 'The page', property: 'compared', design: 'down to 6,000 px', result: 'not below that: the page is 9,412 px tall, and nothing under 6,000 px was compared' }],
+      'only the width that was cut, and the verdict still passes as far down as it compared');
+    assert.deepEqual(w.marks.map((m) => [m.state, m.verdict?.differences.length]), [['verified', 1]]);
+  } finally { w.done(); }
+  // Failing, what differs comes first and what was not compared after it.
+  const f = edit({ state: 'implemented' });
+  const x = wire({ edits: [f], render: async (r) => ({ ...long(r, r.design ? blank(64, 200) : painted(blank(64, 200), { x: 0, y: 150, width: 64, height: 20 }, 0)), elements: [heading(f.id, 'rgb(18, 52, 86)')], found: [f.id] }) });
+  try {
+    const v = await x.verify(f.id);
+    assert.equal(v.failed, 'rest');
+    const last = v.differences.at(-1);
+    assert.deepEqual([v.differences[0]?.kind, last?.kind === 'style' ? last.property : null], ['leak', 'compared']);
+  } finally { x.done(); }
+});
+
+test('a render that never answers fails its verification, saying so, and the next verification still runs', { timeout: 10_000 }, async () => {
+  const e = edit({ state: 'implemented' });
+  const draft = edit();
+  const w = wire({ edits: [e, draft], renderMs: 50, render: () => new Promise(() => {}) });
+  try {
+    const first = w.verify(e.id, { widths: [390] });
+    // Queued behind the stuck one: it runs only once that one has ended.
+    const second = w.verify(draft.id);
+    await assert.rejects(first, /The page did not render at 390 px within 50 ms, so the verification stopped there/);
+    await assert.rejects(second, /Only an implemented edit is verified/);
+    assert.deepEqual(w.marks, [], 'nothing was recorded for a verification that did not finish');
+  } finally { w.done(); }
 });
 
 test('only an implemented edit is verified, an edit the design cannot find fails, and nothing is asked without the live view or trust', async () => {

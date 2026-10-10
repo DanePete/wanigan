@@ -79,8 +79,11 @@ helpers already report:
 After every load the page script resolves each edit's identity to elements and
 tags them with a dev-only attribute (`data-wl-edit`). The layer's CSS uses only
 those attributes, so nothing it does can reach an element it was not meant for.
-An edit whose identity no longer resolves becomes `orphaned`, is listed, and is
-never applied to whatever now sits in its place.
+A draft whose identity no longer resolves becomes `orphaned`, is listed, and is
+never applied to whatever now sits in its place. An implemented edit is in the
+site: a load where it does not resolve is said, and it stays `implemented`
+(never a draft again, so never discarded or undone while its words are in the
+site); a failed verification is kept with it, saying what differs.
 
 ### How it renders
 
@@ -186,7 +189,13 @@ the viewport.
 between a version and itself is the noise floor, and the tolerance is stated
 as two numbers in the manner of the web-platform-tests "fuzzy" annotation (the
 largest colour difference and the number of pixels allowed), never as a
-percentage, with anti-aliasing forgiveness off for the verdict.
+percentage, with anti-aliasing forgiveness off for the verdict. As built, the
+floor is page-wide: one pair of numbers for the whole page (the largest over
+both versions and every width), applied to each area. A block whose content
+changes between renders anywhere on the page (a random order, a clock)
+therefore forgives as many differing pixels next to an edit as it differs
+by; nothing masks it. Measuring the floor per area would need the verdict to
+state more than one, which it does not yet.
 
 **In this order, stopping at the first failure:**
 
@@ -196,14 +205,22 @@ percentage, with anti-aliasing forgiveness off for the verdict.
 2. **Pixels.** The two full-page captures, within the calibrated tolerance; a
    difference is boxed and tied to its edit.
 3. **The rest of the page.** Outside the edited elements, the result must equal
-   the page as it was before the edits, so a change that leaked is caught.
+   the design. As built (phase 1), the design is the native page with the
+   layer, so this catches a layer that reaches further than its edits, but a
+   change the native implementation itself made beyond the touched elements
+   is in both renders and is not caught yet. Catching that needs the page as
+   it was before the edits, kept when an edit is made real and compared row by
+   row (text reflows); that is still to build.
 4. **States and edges.** Hover, focus and active forced on the touched
    elements; each breakpoint and one pixel either side; dark mode and reduced
    motion where the theme answers them; long, short and empty text for text
    edits. Drupal pages are checked with CSS aggregation off and on.
 
-An edit is `verified` when all four pass everywhere it reaches (pages sampled
-from Go to's index when it reaches many). The owner then retires it; retired
+In this design, an edit is `verified` when all four pass everywhere it reaches
+(pages sampled from Go to's index when it reaches many). Phase 1 builds less,
+and its `verified` means less: steps 1 to 3 as built (step 3 against the
+design, not the page before) passed on the edit's own page at the widths
+asked. Step 4 and reach across pages are not built. The owner then retires it; retired
 edits are archived, not deleted. An agent's implementation gets at most three
 automatic rounds of "verify, give it the failures, try again"; after that the
 evidence goes to the owner.
@@ -239,7 +256,10 @@ before adding it:
 ## What this does not promise
 
 - Content that differs between renders (dates, random order, personalisation)
-  is masked, not verified.
+  is not verified, and is not masked either: it raises the page-wide noise
+  floor, which then forgives as much next to every edit.
+- A page is compared down to 6,000 px; below that nothing is, and the verdict
+  says so (a statement among its differences, even on one that passed).
 - A text format may change saved markup (Drupal filters, WordPress kses). The
   verify step shows the difference; it does not hide it.
 - Interaction states (hover, focus) and other content lengths are verified only
@@ -324,9 +344,11 @@ or the project.
    (`data-wl-layer`): Electron cannot take a user-origin sheet out again
    (`removeInsertedCSS` removes author sheets only, seen on Electron 44), so
    a new sheet replaces the old one by the root naming its generation, and
-   switching the layer off names none. An edit of this page that does not resolve
-   is reported as orphaned (and the core told); edits of other pages are left
-   alone.
+   switching the layer off names none. A draft of this page that does not
+   resolve is reported as orphaned (and the core told); an implemented edit
+   that does not resolve on a load is reported, and stays implemented: its
+   words are in the site, so it never becomes a draft again or discardable.
+   Edits of other pages are left alone.
 2. `layerTarget()` keys the picked element: its part's identity (the
    innermost region with a part that has one), the CSS path from that part's
    root element to it, its words' hash, what `kind` would reach and how many
@@ -336,7 +358,13 @@ or the project.
    logged-in user with a revision where the site keeps them, and marks it
    `implemented` only when the site says it saved (with that revision).
    - Drupal: a plain text field the helper marks around the words
-     (`data-wl-field`), saved through `helperSave` (`POST /_wanigan/save`).
+     (`data-wl-field`), saved through `helperSave` (`POST /_wanigan/save`) to
+     exactly the content, translation and item the target's identity names
+     (its UUID, langcode and item, never the default language or the first
+     item holding the same words; a target that names no field is refused),
+     only over the version the page showed (content saved since, a newer
+     draft, an inline Layout Builder block and any validation violation, the
+     workflow's included, are refused, saying why).
    - Otherwise (WordPress's helper marks no field; it saves fields through
      schema targets): the one `via: 'schema'` edit target of the page's trace
      whose value, or a string property of it, equals the words as the site
@@ -363,9 +391,22 @@ or the project.
    measures the noise floor by rendering each version twice (every width is
    judged against the one floor the verdict states, the largest over both
    versions and every width), then runs the
-   steps in order: computed styles and boxes of the touched elements, pixels
-   around them, then the rest of the page. It keeps the pictures in the data
-   folder and tells the core (`verified`, or back to `draft` with the verdict).
+   steps in order: computed styles and boxes of the touched elements (a token:
+   its custom property as the root computes it, in both renders), pixels
+   around them, then the rest of the page. Nothing passes for want of a
+   comparison: an edit found but gone when the page was measured, a token
+   whose value was not read, or an edit for a named breakpoint (phase 1 reads
+   no breakpoints, so the design cannot show it) fails, saying so. Every step
+   that waits on a hidden page has a deadline, and so does each render: a page
+   that never answers fails the verification, its window is closed, and the
+   next one runs. A page taller than 6,000 px is compared down to there, and
+   the verdict says how far, passing or not. It keeps the pictures in the data
+   folder and tells the core (`verified`, or still `implemented` with the
+   verdict, which says what differs: the words are in the site either way).
+   `verified` here is phase 1's: steps 1 to 3 passed on this page at these
+   widths, step 3 against the design rather than the page before the edits,
+   so a change the native implementation made beyond the touched elements is
+   in both renders and is not caught; step 4 and other pages are not checked.
 
 **The window** shows a tray of the project's edits (before and after, the
 page each is on, its state and verdict, fragile ones said so), per-edit
