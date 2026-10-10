@@ -114,10 +114,21 @@ export interface LiveCurrent {
 }
 
 /** What a helper save came to: the site's answer, or how it did not answer. */
-export interface HelperSaved { ok: boolean; error: string | null; label: string | null; failure?: LiveFailure | null; revision?: string | null }
+export interface HelperSaved {
+  ok: boolean; error: string | null; label: string | null; failure?: LiveFailure | null; revision?: string | null;
+  /**
+   * A refusal that a save asked again with this token would not be (the Drupal helper's, for words in a default layout
+   * every entity of a bundle shares: its error says how far the change reaches).
+   */
+  confirm?: string | null;
+}
 
-/** Where words are saved, as an edit's target names it: the content's UUID, its translation, and the item (`delta:<n>`, `ref:<type>:<uuid>`), or null for the one item holding the words. */
-export interface SaveAt { uuid: string; langcode: string; item: string | null }
+/**
+ * Where words are saved, as an edit's target names it: the content's UUID, its translation, and the item (`delta:<n>`,
+ * `ref:<type>:<uuid>`), or null for the one item holding the words; and, asked again after a refusal that gave one, its
+ * confirm token.
+ */
+export interface SaveAt { uuid: string; langcode: string; item: string | null; confirm?: string }
 
 /** Where what is built on the view hears of it: a project's session locked down, a view made or gone. */
 export interface LiveViewHooks {
@@ -562,7 +573,8 @@ export function wireLiveView(options: {
     if (!site) return null;
     if (typeof field !== 'string' || !/^[a-z0-9_]+:[^:\s]{1,64}:[a-z0-9_]+/.test(field) || typeof before !== 'string' || typeof after !== 'string') return { ok: false, error: 'That is not a field Wanigan can save to.', label: null };
     const name = /^[A-Za-z0-9_.:/@+-]{1,200}$/;
-    if (at && (!name.test(at.uuid) || !/^[A-Za-z0-9_-]{1,32}$/.test(at.langcode) || (at.item !== null && !/^(?:ref:[A-Za-z0-9_.:/@+-]{1,200}|delta:\d{1,6})$/.test(at.item)))) {
+    if (at && (!name.test(at.uuid) || !/^[A-Za-z0-9_-]{1,32}$/.test(at.langcode) || (at.item !== null && !/^(?:ref:[A-Za-z0-9_.:/@+-]{1,200}|delta:\d{1,6})$/.test(at.item))
+      || (at.confirm !== undefined && !/^[a-f0-9]{32}$/.test(at.confirm)))) {
       return { ok: false, error: 'That is not a place in the content Wanigan can save to.', label: null };
     }
     try {
@@ -570,13 +582,14 @@ export function wireLiveView(options: {
         method: 'POST', credentials: 'include', headers: { 'X-Wanigan-Live': site.token, Accept: 'application/json', 'Content-Type': 'application/json' },
         body: JSON.stringify({
           field, before: before.slice(0, 2_000), after: after.slice(0, 2_000),
-          ...(at ? { uuid: at.uuid, langcode: at.langcode, ...(at.item ? { item: at.item } : {}) } : {}),
+          ...(at ? { uuid: at.uuid, langcode: at.langcode, ...(at.item ? { item: at.item } : {}), ...(at.confirm ? { confirm: at.confirm } : {}) } : {}),
         }),
       });
-      const data = await res.json().catch(() => null) as { ok?: boolean; error?: string; label?: string; revision?: unknown } | null;
+      const data = await res.json().catch(() => null) as { ok?: boolean; error?: string; label?: string; revision?: unknown; confirm?: unknown } | null;
       return data && typeof data === 'object' ? {
         ok: data.ok === true, error: typeof data.error === 'string' ? data.error : null, label: typeof data.label === 'string' ? data.label : null,
         revision: typeof data.revision === 'string' || typeof data.revision === 'number' ? String(data.revision).slice(0, 100) : null,
+        ...(typeof data.confirm === 'string' && /^[a-f0-9]{32}$/.test(data.confirm) ? { confirm: data.confirm } : {}),
       } : { ok: false, error: `The site answered ${res.status}.`, label: null };
     } catch (error) {
       // Why the site did not answer is said in the view's own words (the window asks the core whether it runs);
@@ -605,7 +618,7 @@ export function wireLiveView(options: {
       const saved = await helperSave(field, before, after);
       // The window's answer is as it always was: the revision is the design layer's to keep.
       if (!saved) return null;
-      const { revision: _revision, ...answer } = saved;
+      const { revision: _revision, confirm: _confirm, ...answer } = saved;
       return answer;
     }
     return null;

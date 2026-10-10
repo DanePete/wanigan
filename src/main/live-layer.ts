@@ -21,13 +21,18 @@
 //   (not tagged, their words not patched): phase 1 does not read the theme's breakpoints, and a verification fails
 //   them as not verifiable yet.
 // - Implementing: only words, saved where they are kept, as the user logged in in the view. Where the helper marks a
-//   plain text field around them (Drupal's `data-wl-field`), through `POST /_wanigan/save`, the window's own
+//   text field around them (Drupal's `data-wl-field`: a plain value, or one run of words inside formatted text, which
+//   the helper splices and checks through the text's own format), through `POST /_wanigan/save`, the window's own
 //   helperSave path, to exactly the content, translation and item the edit's target names (saveTarget): never the
-//   default language, never the first item that holds the same words. Otherwise through the one edit target of the
-//   page's trace that holds exactly those words (wordsTarget(): a title, an excerpt, a string meta, a setting, a menu
-//   link's text), saved by the window's own schema save (`POST /_wanigan/edit/<id>`, live-edit-save.ts): how
-//   WordPress's helper saves a field. Formatted text (a block's, a post's content, a value with markup) goes to an
-//   agent as a brief, as do styles and tokens; anything else says why.
+//   default language, never the first item that holds the same words; a save the helper answers with a confirm token
+//   (words in a Drupal default layout every entity of a bundle shares, said with how far it reaches) is made when the
+//   edit is made real again, with that token. Otherwise through the one edit target of the page's trace that holds
+//   exactly those words (wordsTarget(): a title, an excerpt, a string meta, a setting, a menu link's text, a Drupal
+//   block's title or a run of a view's words), saved by the window's own schema save (`POST /_wanigan/edit/<id>`,
+//   live-edit-save.ts): how WordPress's helper saves a field, and both helpers save configuration. Formatted text on
+//   WordPress (a block's, a post's content, a value with markup) goes to an agent as a brief, as do styles and tokens;
+//   on Drupal, words nothing holds are said as what they are (writtenIn(): written in a template, which an agent
+//   changes, or printed through t()); anything else says why.
 // - Keeping the page as it was: just before words are saved, and when a style, a token or formatted words are handed
 //   to an agent, the page the edit is on is rendered at the verification widths through the same hidden render,
 //   without the layer and then, in the same load, with that one edit as designed on it, and kept under the edit's
@@ -208,7 +213,7 @@ export function effective(edits: readonly LayerEdit[], res: Pick<Resolution, 'or
 /**
  * Where a text edit's words are saved: the content, translation and item its target names (a Drupal field part's
  * identity: the content's UUID, its langcode, and the item when the part is one), once the field the helper marked
- * around its element (`type:id:field:fieldtype[:langcode]`) is checked to be that field. Anything else is why not:
+ * around its element (`type:id:field:fieldtype[:langcode:revision:changed:formatter]`) is checked to be that field. Anything else is why not:
  * the words are never saved to a field, a translation or an item the target does not name.
  */
 export function saveTarget(part: PartIdentity | null, field: string): SaveAt | string {
@@ -415,11 +420,44 @@ export function wordsTarget(trace: LiveTrace, identity: PartIdentity, words: str
     level = next;
     shows = nextShows;
   }
-  return {
-    ok: false, route: 'none',
-    why: 'Nothing this page offers to edit holds exactly these words, so there is nothing here to save them to: they come from a template, from formatted text, or from something the site helper does not offer on this page.',
-  };
+  return { ok: false, route: 'none', why: NOTHING_HOLDS };
 }
+
+/** wordsTarget()'s answer when no target of the trace holds the words. */
+const NOTHING_HOLDS = 'Nothing this page offers to edit holds exactly these words, so there is nothing here to save them to: they come from a template, from formatted text, or from something the site helper does not offer on this page.';
+
+/**
+ * Drupal: the target that says a template around an element writes exactly its words (the helper's TemplateWords:
+ * `words.tpl.<hash>` for words typed into it, `words.t.<hash>` for strings it prints through t()), looked for in the
+ * parts the edit's identity names, then each one's parent; null when none does. Such a target is never saved: it says
+ * why not.
+ */
+export function writtenIn(trace: LiveTrace, identity: PartIdentity, words: string): EditTarget | null {
+  const want = asWords(words);
+  const targets = new Map(trace.edits.map((e) => [e.id, e]));
+  const byId = new Map(trace.parts.map((p) => [p.id, p]));
+  const key = identityKey(identity);
+  let level = trace.parts.filter((p) => p.identity && identityKey(p.identity) === key);
+  const seen = new Set(level.map((p) => p.id));
+  for (let depth = 0; level.length && depth < 64; depth++) {
+    for (const p of level) {
+      for (const id of p.edits ?? []) {
+        const t = targets.get(id);
+        if (t && /^words\.(?:tpl|t)\./.test(t.id) && isObj(t.value) && Object.values(t.value).some((v) => typeof v === 'string' && asWords(v) === want)) return t;
+      }
+    }
+    level = level.flatMap((p) => {
+      const up = p.parent ? byId.get(p.parent) : undefined;
+      if (!up || seen.has(up.id)) return [];
+      seen.add(up.id);
+      return [up];
+    });
+  }
+  return null;
+}
+
+/** On Drupal, words no target holds and no template around them writes: made by code from what Wanigan does not save yet. */
+const DRUPAL_NOTHING_HOLDS = 'Nothing this page offers to edit holds exactly these words, and Wanigan finds them written in no template around them: code makes them (a formatter, a module or the theme) from something Wanigan does not save from here yet.';
 
 /** Why there is no trace to find what holds an element's words in. */
 function untraced(answer: Exclude<LiveTraceAnswer, { state: 'ok' }>): string {
@@ -829,6 +867,11 @@ export function wireLiveLayer(options: LiveLayerOptions): { hooks: LiveViewHooks
   let sheet: { wc: number; key: string } | null = null;
   /** Each sheet's generation: the page's root names the one that holds (compileLayer's gate). */
   let generation = 0;
+  /**
+   * The helper's confirm tokens, by edit: a save it refused saying how far it reaches (words in a Drupal default layout
+   * every entity of a bundle shares) is made when the edit is made real again, with the token that answer gave.
+   */
+  const confirms = new Map<string, string>();
   /** Applying, one at a time; and rendering for the layer, one at a time (verifying, and keeping a page from before: each loads whole pages in hidden windows). */
   let applying: Promise<unknown> = Promise.resolve();
   let verifying: Promise<unknown> = Promise.resolve();
@@ -1065,14 +1108,21 @@ export function wireLiveLayer(options: LiveLayerOptions): { hooks: LiveViewHooks
     if (at.plain !== true || typeof at.words !== 'string') return none('Its element holds more than plain words, so they are not saved from here.');
     if (at.words.length > SAVE_MAX || value.length > SAVE_MAX) return none(`Words longer than ${SAVE_MAX.toLocaleString('en')} characters are saved in the site’s own form.`);
     if (typeof at.field === 'string') {
-      // A plain text field the helper marked around the words (Drupal): exactly the field, translation and item the
-      // edit's target names, never the first item that happens to hold the same words, never the default language.
+      // A text field the helper marked around the words (Drupal): exactly the field, translation and item the edit's
+      // target names, never the first item that happens to hold the same words, never the default language.
       const where = saveTarget(edit.target.part, at.field);
       if (typeof where === 'string') return none(where);
       // The page as it is, kept just before the words are saved.
       await keepBefore(cur.projectId, edit, all, true);
-      const saved = await options.helperSave(at.field, at.words, value, where);
+      // Asked again after the site said how far it reaches: with the token it gave, so that save is made.
+      const confirm = confirms.get(id);
+      const saved = await options.helperSave(at.field, at.words, value, confirm ? { ...where, confirm } : where);
       if (!saved) return none('The live view has no helper for this site.');
+      if (!saved.ok && saved.confirm) {
+        confirms.set(id, saved.confirm);
+        return none(`${saved.error ?? 'The site asks first.'} Make it real again to save it there.`);
+      }
+      confirms.delete(id);
       if (!saved.ok) return none(saved.error ?? 'The site did not save it.');
       const refused = await mark(cur.projectId, id, 'implemented');
       // The site now has the words, whatever the layer recorded: the page shows them as it renders them, and the layer
@@ -1087,6 +1137,13 @@ export function wireLiveLayer(options: LiveLayerOptions): { hooks: LiveViewHooks
     const answer = await options.trace();
     if (answer.state !== 'ok') return none(untraced(answer));
     const found = wordsTarget(answer.trace, edit.target.part, at.words);
+    if (!found.ok && found.why === NOTHING_HOLDS && answer.trace.platform === 'drupal') {
+      // Drupal: say which it is. Words a template writes are code (an agent changes the template), or an interface
+      // translation Wanigan does not change yet; anything else is made by code from what is not saved here yet.
+      const written = writtenIn(answer.trace, edit.target.part, at.words);
+      if (written?.id.startsWith('words.tpl.')) return toAgent(written.why);
+      return { ok: false, id, route: 'none', why: written?.why ?? DRUPAL_NOTHING_HOLDS };
+    }
     if (!found.ok) return found.route === 'agent' ? toAgent(found.why) : { ok: false, id, route: found.route, why: found.why };
     // An object's other properties go back as the trace gave them (a menu link's address with its new text).
     const next = found.key === null ? value : { ...(found.target.value as Record<string, unknown>), [found.key]: value };

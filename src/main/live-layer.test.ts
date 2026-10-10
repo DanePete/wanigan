@@ -17,6 +17,7 @@ import {
   areasOf, beforeCheck, beforeKept, madeOn, masksOf, pathOf, steadyOf, traceProblem, wireLiveLayer,
   type BeforeKept, type LayerBeforeRender, type LayerRender, type LayerRenderRequest,
 } from './live-layer.ts';
+import type { HelperSaved, SaveAt } from './live-view.ts';
 
 // Plainly not a key: the helper's real token is random hex the core keeps.
 const TOKEN = ['stand', 'in', 'token'].join('-');
@@ -102,6 +103,7 @@ interface SiteAnswer { status: number; body: unknown }
 function wire(over: {
   edits?: LayerEdit[]; url?: string; trace?: LiveTrace | null; trusted?: boolean; enabled?: boolean; render?: LayerRender; renderBefore?: LayerBeforeRender; renderMs?: number;
   saved?: { ok: boolean; error: string | null }; refuseMark?: string; site?: SiteAnswer; decode?: (png: Buffer) => Promise<Bitmap>;
+  helper?: (at: SaveAt | undefined) => HelperSaved;
 } = {}) {
   const handlers = new Map<string, (...args: unknown[]) => unknown>();
   const dataDir = mkdtempSync(join(tmpdir(), 'wanigan-layer-'));
@@ -146,7 +148,12 @@ function wire(over: {
     current: () => ({ projectId: 'p1', base: BASE, token: TOKEN, env: null, webContents: webContents as never }),
     run,
     trace: async () => (traced ? { state: 'ok', trace: traced } : { state: 'missing' }),
-    helperSave: async (field, before, after, at) => { order.push('save'); saves.push([field, before, after, at]); return over.saved ? { ...over.saved, label: 'Paddling 101' } : { ok: true, error: null, label: 'Paddling 101', revision: '42' }; },
+    helperSave: async (field, before, after, at) => {
+      order.push('save');
+      saves.push([field, before, after, at]);
+      if (over.helper) return over.helper(at);
+      return over.saved ? { ...over.saved, label: 'Paddling 101' } : { ok: true, error: null, label: 'Paddling 101', revision: '42' };
+    },
     // live-inspect.ts schemaSave, played here: the target found in the trace the view holds (Electron's ipcMain cannot
     // load under this runner), then the real save in live-edit-save.ts against a stand-in site.
     schemaSave: async (id, value, tracedId): Promise<LiveEditSaved> => {
@@ -484,6 +491,9 @@ test('making an edit real: words go through the helper’s save, a style goes to
   } finally { w.done(); }
 });
 
+/** On a Drupal page, words nothing holds and no template around them writes. */
+const DRUPAL_NOTHING_HOLDS = 'Nothing this page offers to edit holds exactly these words, and Wanigan finds them written in no template around them: code makes them (a formatter, a module or the theme) from something Wanigan does not save from here yet.';
+
 test('words with no field the helper marks, or a refusal from the site, are said and nothing is marked', async () => {
   const loose = edit({ label: 'Title', change: { type: 'text', value: 'New words' }, target: { part: title(), inner: null, selector: null, textHash: layerTextHash('Paddling 101') } });
   const w = wire({ edits: [loose], saved: { ok: false, error: 'The user you are logged in as in the live view may not change this.' } });
@@ -491,7 +501,7 @@ test('words with no field the helper marks, or a refusal from the site, are said
     w.page.parts = { p6: { '': [words('Paddling 101')] } };
     await w.apply();
     const unmarked = await w.implement(loose.id);
-    assert.deepEqual(unmarked, { ok: false, id: loose.id, route: 'none', why: NOTHING_HOLDS }, 'no field marked, and nothing in the trace holds these words');
+    assert.deepEqual(unmarked, { ok: false, id: loose.id, route: 'none', why: DRUPAL_NOTHING_HOLDS }, 'no field marked, and nothing in the trace holds these words or writes them');
     assert.deepEqual([w.saves, w.posts], [[], []]);
     w.page.parts = { p6: { '': [words('Paddling 101', 'node:12:title:string:fr')] } };
     await w.apply();
@@ -1309,4 +1319,98 @@ test('only an implemented edit is verified, an edit the design cannot find fails
       assert.deepEqual([x.page.calls, x.renders, x.marks], [[], [], []]);
     } finally { x.done(); }
   }
+});
+
+test('Drupal: words a block’s title, a view’s header or a menu link keeps are saved through that configuration’s target, one run of a view’s words at a time', async () => {
+  // As the Drupal helper offers them (ConfigWords): a block placement's title, a view's header run by run (its markup
+  // is never in the value), and a menu link a module writes in code, offered with why.
+  const blockPart: PartIdentity = { kind: 'config', type: 'block', id: 'acme_tagline', plugin: 'block_content:x' };
+  const viewPart: PartIdentity = { kind: 'config', type: 'view', id: 'trips:page_1' };
+  const codeLink: PartIdentity = { kind: 'config', type: 'menu_link', id: 'acme_tours.about' };
+  const note = 'This is configuration: the next configuration import puts back what is exported, so export the site’s configuration to keep this change.';
+  const blockTitle: EditTarget = { id: 'words.block.acme_tagline', kind: 'config', label: 'Block title: Plan your trip', via: 'schema', revisions: false, schema: { type: 'string', title: 'Block title', description: note, minLength: 1, maxLength: 255 }, value: 'Plan your trip' };
+  const header: EditTarget = {
+    id: 'words.view.trips.default.header.area', kind: 'config', label: 'View header: Trips', via: 'schema', revisions: false,
+    schema: { type: 'object', title: 'Words of its header', description: note, properties: { w1: { type: 'string', title: 'Words 1', minLength: 1 }, w2: { type: 'string', title: 'Words 2', minLength: 1 } }, required: ['w1', 'w2'] },
+    value: { w1: 'Our trips this season', w2: 'Book early' },
+  };
+  const about: EditTarget = {
+    id: 'words.link.acme_tours.about', kind: 'menu-link', label: 'Link text: About us', via: 'schema', revisions: false, schema: { type: 'string', title: 'Link text', minLength: 1, maxLength: 255 }, value: 'About us',
+    why: 'Its text is written in code (the links.menu.yml file of the module that defines it), so Drupal keeps no such thing to change here.',
+  };
+  const drupal: LiveTrace = {
+    ...trace(),
+    parts: [
+      { id: 'b1', kind: 'block', label: 'Plan your trip', identity: blockPart, edits: ['config.block.acme_tagline', blockTitle.id] },
+      { id: 'v1', kind: 'view', label: 'Trips · Page', identity: viewPart, edits: ['config.view.trips', header.id] },
+      { id: 'm1', kind: 'menu', label: 'About us', identity: codeLink, edits: ['link.acme_tours.about', about.id] },
+    ],
+    edits: [{ id: 'config.block.acme_tagline', kind: 'config', label: 'Block placement: Plan your trip', via: 'native-form' }, blockTitle, { id: 'config.view.trips', kind: 'config', label: 'View: Trips', via: 'native-form' }, header, about],
+  };
+  const titled = retype(blockPart, 'Plan your paddle', 'Plan your trip', 'h2:nth-of-type(1)');
+  const booked = retype(viewPart, 'Book by May', 'Book early', 'p:nth-of-type(2)');
+  const renamed = retype(codeLink, 'About Acme', 'About us', 'a:nth-of-type(1)');
+  const w = wire({ edits: [titled, booked, renamed], trace: drupal });
+  try {
+    w.page.parts = { b1: { 'h2:nth-of-type(1)': [words('Plan your trip')] }, v1: { 'p:nth-of-type(2)': [words('Book early')] }, m1: { 'a:nth-of-type(1)': [words('About us')] } };
+    await w.apply();
+    assert.deepEqual(await w.implement(titled.id), { ok: true, id: titled.id, state: 'implemented', revision: '43' });
+    assert.deepEqual(await w.implement(booked.id), { ok: true, id: booked.id, state: 'implemented', revision: '43' });
+    assert.deepEqual(w.posts, [
+      { path: '/_wanigan/edit/words.block.acme_tagline', body: { trace: '0123456789abcdef', value: 'Plan your paddle' } },
+      { path: '/_wanigan/edit/words.view.trips.default.header.area', body: { trace: '0123456789abcdef', value: { w1: 'Our trips this season', w2: 'Book by May' } } },
+    ], 'the title as typed; the view’s other run as the trace gave it');
+    assert.deepEqual(await w.implement(renamed.id), { ok: false, id: renamed.id, route: 'none', why: about.why });
+    assert.equal(w.posts.length, 2, 'nothing is sent for words kept in code');
+    assert.deepEqual(w.saves, [], 'none of them is a field’s save');
+  } finally { w.done(); }
+});
+
+test('Drupal: words in a default layout are saved when made real again, with the token the site’s first answer gave', async () => {
+  // An inline block's field in a layout every trip without its own shares: the helper says how far it reaches first.
+  const block: PartIdentity = { kind: 'entity', type: 'block_content', id: 'c0ffee00-0000-4000-8000-000000000009', bundle: 'card', langcode: 'en', field: 'title', item: 'delta:0' };
+  const traced: LiveTrace = { ...trace(), parts: [{ id: 'k1', kind: 'field', label: 'Title #1', identity: block }] };
+  const retitled = edit({ label: 'Title', target: { part: block, inner: null, selector: null, textHash: layerTextHash('Plan your trip') }, change: { type: 'text', value: 'Plan your paddle' } });
+  const token = 'a'.repeat(32);
+  const reach = 'These words are in the default layout for Trip content, which every one without a layout of its own shows (12 now), so saving them changes them on all of those pages.';
+  const w = wire({
+    edits: [retitled], trace: traced,
+    helper: (at) => (at?.confirm === token ? { ok: true, error: null, label: 'The default layout for Trip content', revision: null } : { ok: false, error: reach, label: null, confirm: token }),
+  });
+  try {
+    w.page.parts = { k1: { '': [words('Plan your trip', 'block_content:9:title:string:en:41:1760000000:string')] } };
+    await w.apply();
+    assert.deepEqual(await w.implement(retitled.id), { ok: false, id: retitled.id, route: 'none', why: `${reach} Make it real again to save it there.` }, 'said first');
+    assert.equal(w.marks.length, 0, 'nothing marked');
+    assert.deepEqual(await w.implement(retitled.id), { ok: true, id: retitled.id, state: 'implemented', revision: null });
+    assert.deepEqual(w.saves.map((s) => (s[3] as SaveAt).confirm ?? null), [null, token], 'the token only on the save asked again');
+    assert.deepEqual(w.marks.map((m) => m.state), ['implemented']);
+  } finally { w.done(); }
+});
+
+test('Drupal: words a template writes are refused as code, and words it prints through t() as an interface translation', async () => {
+  // As the Drupal helper lists them for a node's template (TemplateWords): the words typed into it, and those it
+  // prints through t(). The node part is the one around the element, its page the part above it.
+  const node: PartIdentity = { kind: 'entity', type: 'node', id: UUID, bundle: 'article', langcode: 'en' };
+  const codeWhy = 'These words are written in themes/custom/acme/templates/node.html.twig, a template: a template is code, so Drupal keeps no such thing to change in the site. An agent can change the template from a brief (a copy of it in your theme, when the template is not yours).';
+  const tWhy = 'These words are printed by themes/custom/acme/templates/node.html.twig through Drupal’s interface translation (t()): Wanigan does not change an interface translation yet, and a change there reaches every page that prints the same words. Change them under Interface translation, or in the template.';
+  const written: EditTarget = { id: 'words.tpl.0a1b2c3d4e5f', kind: 'template-override', label: 'Words written in node.html.twig', via: 'schema', revisions: false, schema: { type: 'object', properties: { w1: { type: 'string', readOnly: true } } }, value: { w1: 'Trip notes' }, why: codeWhy };
+  const translated: EditTarget = { id: 'words.t.0a1b2c3d4e5f', kind: 'template-override', label: 'Words node.html.twig translates', via: 'schema', revisions: false, schema: { type: 'object', properties: { w1: { type: 'string', readOnly: true } } }, value: { w1: 'Read more' }, why: tWhy };
+  const drupal: LiveTrace = {
+    ...trace(),
+    parts: [{ id: 'page', kind: 'template', label: 'Page' }, { id: 'n1', kind: 'entity', label: 'Article: Paddling 101', parent: 'page', identity: node, edits: [written.id, translated.id] }],
+    edits: [written, translated],
+  };
+  const heading = retype(node, 'Paddling notes', 'Trip notes', 'h3:nth-of-type(1)');
+  const more = retype(node, 'Keep reading', 'Read more', 'a:nth-of-type(1)');
+  const other = retype(node, '2 June', '1 June', 'time:nth-of-type(1)');
+  const w = wire({ edits: [heading, more, other], trace: drupal });
+  try {
+    w.page.parts = { n1: { 'h3:nth-of-type(1)': [words('Trip notes')], 'a:nth-of-type(1)': [words('Read more')], 'time:nth-of-type(1)': [words('1 June')] } };
+    await w.apply();
+    assert.deepEqual(await w.implement(heading.id), { ok: false, id: heading.id, route: 'agent', why: codeWhy }, 'Drupal keeps no such thing: an agent changes the template');
+    assert.deepEqual(await w.implement(more.id), { ok: false, id: more.id, route: 'none', why: tWhy }, 'Wanigan does not change an interface translation yet');
+    assert.deepEqual(await w.implement(other.id), { ok: false, id: other.id, route: 'none', why: DRUPAL_NOTHING_HOLDS });
+    assert.deepEqual([w.posts, w.saves, w.marks], [[], [], []], 'nothing is sent for any of them');
+  } finally { w.done(); }
 });

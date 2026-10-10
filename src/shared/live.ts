@@ -240,8 +240,9 @@ export interface LiveRegion {
   hook: string | null;
   /**
    * A field the site's helper marked (data-wl-field), what a hand edit to its words saves to:
-   * `entity_type:id:field_name:field_type:langcode:revision:changed` (the translation the page rendered, the revision it
-   * showed, and when that translation last changed; a save over anything newer is refused).
+   * `entity_type:id:field_name:field_type:langcode:revision:changed:formatter` (the translation the page rendered, the
+   * revision it showed, and when that translation last changed, so a save over anything newer is refused; and the
+   * formatter that showed it, which says what of a formatted text the page showed, whole or trimmed).
    */
   field: string | null;
   /** Drupal's template file name suggestions for it, most specific first, without `.html.twig`. */

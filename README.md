@@ -182,17 +182,30 @@ WordPress and other sites can each be on or off.
   property can change for the whole site. Edits lists every edit by page, with
   before → after, what it reaches, its state, and why when it no longer finds
   its element. Make it real saves words through the site itself to the one
-  thing that holds exactly those words: a plain text field on Drupal; on
-  WordPress a title, an excerpt, a string meta, the site's title or tagline, or
-  a menu link's text, each through core's REST API with a revision where
-  WordPress keeps one; or to your own template when they are written there
-  exactly once (with a revert). Formatted text (a block's, a post's content)
-  goes to an agent, as does a style: never written into the stylesheets by
-  hand. Then Verify renders the page with and without the layer and says what
-  differs, with pictures. Undo, redo, discard, and the page shown without the
-  layer to compare. The window has been checked against the UI sweep's
-  stand-in; on the Northstar demo, a script driving the real app made words
-  real and verified them. On WordPress that has been tested with stand-ins only.
+  thing that holds exactly those words. On Drupal: a text field (a plain one,
+  or one run of words inside formatted text, spliced in with its markup kept
+  and saved only when the field's own text format shows nothing else changed),
+  a field's label, a block's title, the site's name and slogan, the words of a
+  view's header, footer or empty text, a menu link's text, or the words of a
+  Layout Builder inline block, through its layout (a default layout that every
+  page of a kind shares is saved only when you make it real again, after it
+  says how many pages that reaches); configuration says the next config import
+  puts back what is exported. On WordPress a title, an excerpt, a string meta,
+  the site's title or tagline, or a menu link's text, each through core's REST
+  API with a revision where WordPress keeps one. Or to your own template when
+  they are written there exactly once (with a revert). What it cannot save
+  says why, and which kind of why: Drupal keeps no such thing (words written
+  in a Twig template, a menu link written in code, a base field's label), or
+  Wanigan does not do it yet (an interface translation, a caption, words
+  across formatting). Formatted text on WordPress (a block's, a post's
+  content) and words a Drupal template writes go to an agent, as does a style:
+  never written into the stylesheets by hand. Then Verify renders the page
+  with and without the layer and says what differs, with pictures. Undo, redo,
+  discard, and the page shown without the layer to compare. The window has
+  been checked against the UI sweep's stand-in; on the Northstar demo, a
+  script driving the real app made words in a plain field real and verified
+  them. Drupal's formatted text, configuration and Layout Builder saves, and
+  WordPress, have been tested with stand-ins only.
 - **Go to**, in the address field (click it, or Shift+Space in the live view,
   ⌘⇧Space anywhere in a project): an address, or any page of the site by
   typing a few letters of its title, an admin or structure page, a path or an id, ranked as you type and by what you choose
@@ -710,7 +723,11 @@ verification results and the behavior that remains unverified.
   reordering a field with several items, have not been run against a real
   site. Retyped words saved on WordPress (a title, a menu link's text) are
   tested with stand-in pages, traces and a stand-in site, not yet seen against
-  a running WordPress. Agents' looks at it
+  a running WordPress. On Drupal, words saved inside formatted text, to
+  configuration (block titles, the site's name and slogan, a view's words, a
+  field's label), to a menu link and through a Layout Builder layout are
+  tested with a stand-in Drupal, not yet seen against a running one (nor what
+  CKEditor 5 does to a stored text the next time it opens it). Agents' looks at it
   (`wanigan mcp`): tested with a real core and a stand-in app; each CLI seen
   connecting and listing the tools, as above, not yet seen calling one in a
   real turn.
