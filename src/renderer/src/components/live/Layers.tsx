@@ -43,8 +43,10 @@ function reveal(row: HTMLElement): void {
   if (!box) return;
   const r = row.getBoundingClientRect();
   const b = box.getBoundingClientRect();
-  if (r.top < b.top) box.scrollTop -= b.top - r.top;
-  else if (r.bottom > b.bottom) box.scrollTop += r.bottom - b.bottom;
+  // With room around it: flush with the edge, the row sat half under the box's own scrollbar, with nothing past it.
+  const m = Math.max(0, Math.min(48, (b.height - r.height) / 2));
+  if (r.top < b.top + m) box.scrollTop -= b.top + m - r.top;
+  else if (r.bottom > b.bottom - m) box.scrollTop += r.bottom - (b.bottom - m);
 }
 
 export function Layers({ regions, components, selected, fold = false, changed, onHover, onSelect, partName, onDevtools }: {

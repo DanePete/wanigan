@@ -981,9 +981,10 @@ export function livePage(): void {
     shown = { indexes, label, tone };
     const drawn = indexes.filter((i) => { const r = regions[i]; return !!r && !!viewRect(r); });
     draw();
-    // Bring the first outlined region into view if none of it is on screen.
+    // Bring the first outlined region into view if none of it is on screen: a quarter of the way down, clear of a site's
+    // sticky header (96 px from the top hid what sat above the part, under the header).
     const first = drawn.length && tone !== 'hover' ? viewRect(regions[drawn[0] as number] as Region) : null;
-    if (first && (first.bottom < 0 || first.top > innerHeight)) scrollBy({ top: first.top - 96, behavior: 'smooth' });
+    if (first && (first.bottom < 0 || first.top > innerHeight)) scrollBy({ top: first.top - Math.max(96, innerHeight / 4), behavior: 'smooth' });
     return drawn.length;
   }
 
