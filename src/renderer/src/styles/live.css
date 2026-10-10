@@ -14,9 +14,12 @@
 /* ── the bar ─────────────────────────────────────────────────────────────── */
 
 .live-bar {
+  /* What the bar shows depends on the width the page gets (the window, the rail, the dock beside it): see below. */
+  container: live-bar / inline-size;
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: var(--space-1);
+  gap: var(--space-2) var(--space-1);
   padding: var(--space-2) var(--space-4);
   border-bottom: 1px solid var(--line);
   background: var(--surface);
@@ -36,16 +39,22 @@
   }
 }
 
-/* Three groups: the site (one menu), the page (where, how wide, which lens), the tools (Pick, and the rest). */
+/*
+  Three groups: the site (one menu), the page (where, how wide, which lens), the tools (Pick, and the rest).
+  A group is never narrower than what it holds (nothing in it is drawn over the next group); the page's
+  address field is what gives. As the bar narrows: the address gives up its hint, then shrinks to its least
+  (it opens Go to, which is as wide as it needs); then the tools show their icons alone (each keeps its name
+  as its accessible name and its tooltip); then the tools take a row of their own, their names back.
+*/
 .live-bar-group {
   display: flex;
+  flex: none;
   align-items: center;
   gap: var(--space-1);
-  min-width: 0;
 }
 
 .live-bar-page {
-  flex: 1;
+  flex: 1 1 0;
 }
 
 .live-bar-site {
@@ -76,10 +85,11 @@
   color: var(--water-ink);
 }
 
-/* Where a page is typed: it opens Go to over itself (components/live/GoTo.tsx). */
+/* Where a page is typed: it opens Go to over itself (components/live/GoTo.tsx). It takes what the bar has left. */
 .live-address {
-  flex: 1;
-  min-width: 0;
+  flex: 1 1 0;
+  width: 0;
+  min-width: var(--live-address-min);
   display: flex;
   align-items: center;
   gap: var(--space-2);
@@ -132,6 +142,39 @@
 /* Beside a terminal the address needs the room: the hint gives it up. */
 .live-compact .live-address-hint {
   display: none;
+}
+
+@container live-bar (max-width: 1160px) {
+  .live-address-hint {
+    display: none;
+  }
+}
+
+@container live-bar (max-width: 960px) {
+  .live-bar-tools .live-tool-name,
+  .live-bar-tools .live-key,
+  .live-lens-pick .live-key {
+    display: none;
+  }
+}
+
+@container live-bar (max-width: 740px) {
+  .live:not(.live-compact) .live-bar-tools {
+    flex: 1 0 100%;
+    justify-content: flex-end;
+    margin-left: 0;
+    padding-left: 0;
+    border-left: 0;
+  }
+
+  .live:not(.live-compact) .live-bar-tools .live-tool-name,
+  .live:not(.live-compact) .live-bar-tools .live-key {
+    display: inline;
+  }
+
+  .live-lens-pick > svg {
+    display: none;
+  }
 }
 
 /* ── the stage and its side ──────────────────────────────────────────────── */
@@ -341,6 +384,7 @@
   work now. The Talk to Wanigan button sits over its right end.
 */
 .live-status {
+  container: live-status / inline-size;
   display: flex;
   align-items: center;
   gap: var(--space-3);
@@ -396,7 +440,8 @@
   font-size: var(--text-2xs);
 }
 
-@media (max-width: 1280px) {
+/* The keys are a reminder: where the line has no room for them (a small window, the dock beside), they give way. */
+@container live-status (max-width: 1000px) {
   .live-status-keys {
     display: none;
   }
@@ -597,6 +642,91 @@
 /* It scrolls down, never sideways: long paths and queries wrap inside it. */
 .live-side {
   overflow-x: hidden;
+}
+
+/*
+  A chosen part's details with the tree still there (LayersPane.tsx): the tree
+  above them, folded to the part's branch, each scrolling on its own so
+  neither hides the other; beside them once the window is wide enough
+  (LayersPane.tsx's WIDE is the same width). Alone, the tree is as it was.
+*/
+.live-split,
+.live-split-tree {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.live-split-tree > * {
+  flex-shrink: 0;
+}
+
+/* The panel is the tree's container: above the details the tree takes a share of its height, whatever the dock leaves. */
+.live-side.with-part {
+  overflow: hidden;
+  container-type: size;
+}
+
+.live-side > .live-split.with-part {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+/* The tree's rows reach into the panel's padding (.live-tree's margin): its box does too, so they are not cut off. */
+.live-split.with-part > .live-split-tree {
+  flex: none;
+  max-height: var(--live-tree-above);
+  margin: 0 calc(-1 * var(--space-2));
+  padding: 0 var(--space-2) var(--space-3);
+  overflow-x: hidden;
+  overflow-y: auto;
+  border-bottom: 1px solid var(--line);
+}
+
+.live-split-part {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  /* The Talk to Wanigan button sits over the bottom corner: what scrolls can come out from under it. */
+  scroll-padding-bottom: calc(var(--fab) + var(--space-4));
+  padding-bottom: calc(var(--fab) + var(--space-2));
+}
+
+@media (min-width: 1680px) {
+  .live-side.with-part {
+    width: var(--live-side-split);
+  }
+
+  .live-split.with-part {
+    flex-direction: row;
+    gap: var(--space-4);
+  }
+
+  .live-split.with-part > .live-split-tree {
+    width: var(--live-split-tree);
+    max-height: none;
+    margin: 0 0 0 calc(-1 * var(--space-2));
+    padding: 0 var(--space-3) 0 var(--space-2);
+    border-bottom: 0;
+    border-right: 1px solid var(--line);
+  }
+}
+
+/* ── the live view's tabs in the dock beneath the page (Dock.tsx) ────────── */
+
+.live-docked {
+  display: grid;
+  align-content: start;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  /* Clear of the Talk to Wanigan button over the bottom corner. */
+  padding-bottom: calc(var(--fab) + var(--space-4));
+}
+
+.live-docked > * {
+  min-width: 0;
 }
 
 .live-inspector > *,

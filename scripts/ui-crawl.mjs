@@ -640,6 +640,9 @@ function keyChecks(w) {
   const choose = (name) => async (page) => { await page.click(`.live-layer:has-text("${name}")`); await page.waitForSelector('.live-inspector', { timeout: 5000 }); };
   const widthIs = (label) => focused((l) => document.querySelector(`.live-widths button[aria-label^="${l}"]`)?.getAttribute('aria-pressed') === 'true', label);
   const tabIs = (label) => focused((l) => document.querySelector('.live-side > .segmented [aria-checked="true"]')?.textContent?.startsWith(l), label);
+  /** What the dock beneath the page shows now ('' closed), remembered before a key, which must move it to another tab, open. */
+  const dockWas = async (page) => { await page.evaluate(() => { window.__dockWas = document.querySelector('.editor-drawer:not([hidden]) .dock-tabs [aria-checked="true"]')?.textContent ?? ''; }); };
+  const dockMoved = focused(() => { const now = document.querySelector('.editor-drawer:not([hidden]) .dock-tabs [aria-checked="true"]')?.textContent ?? ''; return !!now && now !== window.__dockWas; });
   /** A note written in the box under a chosen part. */
   const noting = async (page) => {
     await choose('Opening hours')(page);
@@ -740,11 +743,16 @@ function keyChecks(w) {
       { standIn: 'live', at: live, ready: '.live-tree', keys: ['2'], expect: widthIs('Tablet') },
       { standIn: 'live', at: live, ready: '.live-tree', setup: press('1'), keys: ['3'], expect: widthIs('Full width') },
     ],
+    // The side panel's tabs are Layers and Add; Notes, Problems and Request are the dock's, beneath the page.
     'Previous or next tab of the side panel': [
       { standIn: 'live', at: live, ready: '.live-tree', keys: ['['], expect: tabIs('Add') },
-      { standIn: 'live', at: live, ready: '.live-tree', keys: [']'], expect: tabIs('Notes') },
+      { standIn: 'live', at: live, ready: '.live-tree', keys: [']'], expect: tabIs('Add') },
     ],
-    'Compare Local with a hosted environment': [{ standIn: 'compare', at: live, ready: '.live-bar', keys: ['Shift+C'], expect: shows('.dialog .cmp-head') }],
+    'Previous or next tab of the dock beneath the page (code, notes, problems, request)': [
+      { standIn: 'live', at: live, ready: '.live-tree', setup: dockWas, keys: ['Shift+BracketLeft'], expect: dockMoved },
+      { standIn: 'live', at: live, ready: '.live-tree', setup: dockWas, keys: ['Shift+BracketRight'], expect: dockMoved },
+    ],
+    'Compare Local with a hosted environment': [{ standIn: 'compare', at: live, ready: '.live-bar', keys: ['Shift+C'], expect: shows('.live-stage .live-stage-compare .cmp-head') }],
     'The site’s component library': [{ standIn: 'live', at: live, ready: '.live-tree', keys: ['Shift+B'], expect: shows('.live-library-entry') }],
     'Your edits to the page, in the design layer': [{ standIn: 'live', at: live, ready: '.live-tree', keys: ['Shift+E'], expect: shows('.live-tray .live-side-title') }],
     'Every way to edit the chosen part': [{ standIn: 'live', at: live, ready: '.live-tree', setup: choose('Hero'), keys: ['e'], expect: shows('[role="menu"] [role="menuitem"]:has-text("Hero props")') }],
@@ -756,7 +764,7 @@ function keyChecks(w) {
     // A content item: taken out at once, so the site was asked (the stand-in plays it).
     'Take the chosen part out of the page': [{ standIn: 'live', at: live, ready: '.live-tree', setup: choose('Quote paragraph'), keys: ['Shift+X'],
       expect: focused(() => window.__wgLive.calls.includes('remove {"collection":"c-paras","item":"p-para-1"}')) }],
-    'Add the note to the notes (in the note box)': [{ standIn: 'live', at: live, ready: '.live-tree', setup: noting, keys: ['Meta+Enter'], expect: shows('.live-side > .segmented button:has-text("Notes 1")') }],
+    'Add the note to the notes (in the note box)': [{ standIn: 'live', at: live, ready: '.live-tree', setup: noting, keys: ['Meta+Enter'], expect: shows('.dock-tabs button:has-text("Notes 1")') }],
     'Send the note now, or the notes waiting': [{ standIn: 'live', at: live, ready: '.live-tree', setup: noting, keys: ['Meta+Shift+Enter'], expect: shows('.toast:has-text("Sent to")') }],
     // Compare, opened from the live view. It starts on the slider, at the first change, at the view's 1440 px.
     'Show Local, or the hosted page': [

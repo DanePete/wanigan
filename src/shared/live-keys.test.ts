@@ -5,11 +5,14 @@ import { test } from 'node:test';
 import { LIVE_KEYS, LIVE_PAGE_KEYS, isAddKey, isLiveKeyId, isSendKey, liveKey } from './live-keys.ts';
 import { SHORTCUTS, matchKey, type KeyInput } from './shortcuts.ts';
 
+/** What a US keyboard types with Shift held, where it is not the capital: what a key event's `key` then says. */
+const SHIFTED: Record<string, string> = { '[': '{', ']': '}' };
+
 const press = (keys: string[]): KeyInput => {
   const shift = keys.includes('Shift');
   const mod = keys.includes('Mod');
   const k = keys[keys.length - 1] as string;
-  const key = k === 'Enter' ? 'Enter' : shift ? k.toUpperCase() : k.toLowerCase();
+  const key = k === 'Enter' ? 'Enter' : shift ? SHIFTED[k] ?? k.toUpperCase() : k.toLowerCase();
   return { key, shiftKey: shift, metaKey: mod, ctrlKey: false, altKey: false };
 };
 
@@ -25,6 +28,8 @@ test('the shortcut sheet lists exactly the live view’s keys, and each does wha
     'Colour the page by a lens: lens',
     'Phone, tablet or full width: width-phone', 'Phone, tablet or full width: width-tablet', 'Phone, tablet or full width: width-full',
     'Previous or next tab of the side panel: tab-previous', 'Previous or next tab of the side panel: tab-next',
+    'Previous or next tab of the dock beneath the page (code, notes, problems, request): dock-previous',
+    'Previous or next tab of the dock beneath the page (code, notes, problems, request): dock-next',
     'Compare Local with a hosted environment: compare',
     'The site’s component library: library',
     'Your edits to the page, in the design layer: edits',
@@ -79,6 +84,9 @@ test('modifiers other than Shift are never a live view key, and Shift is part of
   assert.equal(liveKey({ key: 'X', shiftKey: true, metaKey: false, ctrlKey: false, altKey: false }), 'take-out');
   assert.equal(liveKey({ key: 'B', shiftKey: true, metaKey: false, ctrlKey: false, altKey: false }), 'library');
   assert.equal(liveKey({ key: 'E', shiftKey: true, metaKey: false, ctrlKey: false, altKey: false }), 'edits', 'plain E edits the chosen part');
+  assert.equal(liveKey({ key: '}', shiftKey: true, metaKey: false, ctrlKey: false, altKey: false }), 'dock-next', '⇧] steps the dock');
+  assert.equal(liveKey({ key: '{', shiftKey: true, metaKey: false, ctrlKey: false, altKey: false }), 'dock-previous');
+  assert.equal(liveKey({ key: ']', shiftKey: false, metaKey: false, ctrlKey: false, altKey: false }), 'tab-next', '] alone still steps the side panel');
   assert.equal(liveKey({ key: 'Enter', shiftKey: false, metaKey: false, ctrlKey: false, altKey: false }), null);
   assert.equal(liveKey({ key: 'P', shiftKey: false, metaKey: false, ctrlKey: false, altKey: false }), 'pick', 'Caps Lock still picks');
   assert.ok(isSendKey({ key: 'Enter', shiftKey: true, metaKey: false, ctrlKey: true, altKey: false }, false));
@@ -87,7 +95,7 @@ test('modifiers other than Shift are never a live view key, and Shift is part of
 });
 
 test('the page gives up only the keys that need no chosen part, and the window handles every key', () => {
-  assert.deepEqual(LIVE_PAGE_KEYS.map((k) => k.id), ['pick', 'lens', 'width-phone', 'width-tablet', 'width-full', 'tab-previous', 'tab-next', 'compare', 'library', 'edits']);
+  assert.deepEqual(LIVE_PAGE_KEYS.map((k) => k.id), ['pick', 'lens', 'width-phone', 'width-tablet', 'width-full', 'tab-previous', 'tab-next', 'dock-previous', 'dock-next', 'compare', 'library', 'edits']);
   assert.ok(isLiveKeyId('compare') && !isLiveKeyId('goto') && !isLiveKeyId(null));
   const live = readFileSync(resolve(import.meta.dirname, '../renderer/src/components/Live.tsx'), 'utf8');
   for (const k of LIVE_KEYS) assert.ok(live.includes(`case '${k.id}'`), `the live view does not handle ${k.id}`);

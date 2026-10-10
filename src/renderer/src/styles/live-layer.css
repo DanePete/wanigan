@@ -3,7 +3,7 @@
   (components/live/Tray.tsx) and the Inspector's edits made in the layer
   (components/live/LayerEdits.tsx). A draft is the water accent (Wanigan's
   own); in the site and verified is green; a failed verification or an
-  orphaned edit is red. Amber is not used here: nothing in the tray is
+  orphaned edit is red; fragile is said on a neutral line. Amber is not used here: nothing in the tray is
   waiting on the owner the way "needs you" means.
 */
 
@@ -11,7 +11,8 @@
 .live-tray-page,
 .live-tray-edit,
 .live-tray-verdict,
-.live-tray-answer {
+.live-tray-answer,
+.live-tray-template {
   display: grid;
   gap: var(--space-2);
 }
@@ -63,7 +64,8 @@
 
 .live-tray-edits,
 .live-layer-lines,
-.live-tray-differences {
+.live-tray-differences,
+.live-tray-said {
   display: grid;
   gap: var(--space-1);
   margin: 0;
@@ -146,7 +148,12 @@
   color: var(--muted);
 }
 
-.live-layer-fragile,
+/* Fragile is a warning about how an edit is kept, not a failure: a neutral line. Red is for failed and orphaned. */
+.live-layer-fragile {
+  padding-left: var(--space-2);
+  border-left: 2px solid var(--line-strong);
+}
+
 .live-tray-why {
   padding-left: var(--space-2);
   border-left: 2px solid var(--red);
@@ -154,6 +161,12 @@
 
 .live-tray-why {
   color: var(--fg);
+}
+
+/* A template save's reach, said before it is saved: every page that uses the template, not only this element. */
+.live-tray-template-reach {
+  padding-left: var(--space-2);
+  border-left: 2px solid var(--water-line);
 }
 
 /* What the last verification said: green when it passed, red when it did not. */
@@ -184,8 +197,20 @@
   color: var(--red);
 }
 
-.live-tray-differences li {
+.live-tray-differences li,
+.live-tray-said li {
   overflow-wrap: anywhere;
+}
+
+/* What the verification says whatever it decided, and what it left out: statements, not differences. */
+.live-tray-said {
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--line);
+}
+
+.live-tray-masked {
+  display: grid;
+  gap: var(--space-1);
 }
 
 .live-tray-pictures {
@@ -195,7 +220,8 @@
 
 .live-tray-picture-row {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-auto-columns: minmax(0, 1fr);
+  grid-auto-flow: column;
   gap: var(--space-2);
 }
 

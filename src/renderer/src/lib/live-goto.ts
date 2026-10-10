@@ -84,7 +84,7 @@ export const isTyping = editable;
 
 /**
  * Called by the live view while it is on screen: it is known to be there,
- * Shift+Space in its toolbar or side panel (not while typing) opens Go to,
+ * Shift+Space in its toolbar, side panel or dock tabs (not while typing) opens Go to,
  * and so does Shift+Space in its page, which the page script answers. The
  * page answers the live view's own keys too (P picks…), which `onPageKey`
  * runs. Returns what opens Go to from the address field.
@@ -107,7 +107,8 @@ export function useGoToKeys(projectId: string, onPageKey?: (id: LiveKeyId) => vo
     const onKey = (e: KeyboardEvent): void => {
       if (e.defaultPrevented || e.code !== 'Space' || !e.shiftKey || e.metaKey || e.ctrlKey || e.altKey || e.repeat || e.isComposing) return;
       const target = e.target instanceof Element ? e.target : null;
-      if (!target?.closest('.live') || editable(target) || document.querySelector('[aria-modal="true"]')) return;
+      // The live view, and its tabs in the dock beneath the page.
+      if (!target?.closest('.live, .live-docked') || editable(target) || document.querySelector('[aria-modal="true"]')) return;
       e.preventDefault();
       openGoTo({ projectId, fromPage: false });
     };
