@@ -120,6 +120,7 @@ try {
     const ns = nsHref.match(/#\/p\/([^/]+)/)[1];
     const places = [['board', `#/p/${ns}/board`], ['sessions', `#/p/${ns}/sessions`], ['changes', `#/p/${ns}/changes`], ['history', `#/p/${ns}/history`],
       ['decisions', `#/p/${ns}/decisions`], ['activity', `#/p/${ns}/activity`], ['list', `#/p/${ns}/list`], ['running', '#/running'], ['needs', '#/needs'], ['settings', '#/settings'],
+      ['accounts', '#/accounts'], ['skills', '#/skills'], ['mcp', '#/mcp'],
       ['live', `#/p/${ns}/live`]];
     // A session is a place of its own: one of the demo's live Claude Code sessions.
     const sessionHash = await page.evaluate(async () => {
@@ -161,10 +162,17 @@ try {
       }
     }
 
-    // ── the board's and the List's tours: each stop lights what it names, its card in the window and beside it ──
+    // ── the board's, the List's, Needs you's and Settings' tours: each stop lights what it names, its card in the window and beside it ──
     for (const [place, hash, want] of [
       ['board', `#/p/${ns}/board`, ['The lanes', 'A card', 'Move a card', 'Narrow the board', 'Saved views', 'New card', 'How this works']],
       ['list', `#/p/${ns}/list`, ['Every card', 'Sort', 'Walk the rows', 'Open a card', 'Board or List']],
+      // Needs you with things to do: the readiness lines are not on the screen, so their stop is passed over.
+      ['needs', '#/needs', ['The queue', 'Its action, in place', 'Wanigan', 'How this works']],
+      // Settings' tour goes to the section each stop is about.
+      ['settings', '#/settings', ['Every section', 'Light or dark', 'Tours like this one', 'Notifications', 'The live view', 'Updates']],
+      ['accounts', '#/accounts', ['Every account', 'Sign in', 'Another account', 'Check again', 'How this works']],
+      ['skills', '#/skills', ['Every skill', 'The one you chose', 'Copy or remove', 'One agent', 'Find one']],
+      ['mcp', '#/mcp', ['What each agent has', 'Check connections', 'One agent', 'The store']],
     ]) {
       await page.goto(`${base}${hash}`);
       if (!(await page.waitForSelector('.status-tour', { timeout: 8000 }).catch(() => null))) { fail(`${place} tour: no compass`); continue; }
@@ -189,7 +197,7 @@ try {
         if (!s.name) fail(`${place} tour "${s.title}": it points at nothing`);
         else if (!s.target) fail(`${place} tour "${s.title}": "${s.name}" is not on the screen`);
         else if (s.spot && overlaps(s.card, s.spot) && (s.spot.r - s.spot.l) * (s.spot.b - s.spot.t) < s.view.w * s.view.h * 0.5) fail(`${place} tour "${s.title}": the card covers what it describes`);
-        if (s.name === 'board-card' || s.name === 'list-row') await page.screenshot({ path: join(out, `${theme}-tour-${place}.png`) });
+        if (['board-card', 'list-row', 'needs-action', 'settings-nav', 'accounts-signin', 'skills-detail', 'mcp-check'].includes(s.name)) await page.screenshot({ path: join(out, `${theme}-tour-${place}.png`) });
         if (s.primary === 'Done') { await page.keyboard.press('Enter'); break; }
         await page.keyboard.press('ArrowRight');
         await page.waitForFunction((was) => document.querySelector('.tour-title')?.textContent !== was || !document.querySelector('.tour-card'), s.title, { timeout: 4000 }).catch(() => {});

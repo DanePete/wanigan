@@ -16,7 +16,9 @@
   -webkit-app-region: no-drag;
 }
 
+.needs-orb-place,
 .needs-orb {
+  display: inline-grid;
   flex: none;
 }
 

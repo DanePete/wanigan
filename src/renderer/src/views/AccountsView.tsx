@@ -43,7 +43,7 @@ export function AccountsView({ projects }: { projects: ProjectSummary[] | undefi
       meta={<span className="settings-meta" aria-live="polite">{checking ? 'Asking each agent…' : checked ? `Checked ${ago(checked)}` : ''}</span>}
       tools={(
         <>
-          <HowButton onClick={how.show} />
+          <span data-tour="accounts-how"><HowButton onClick={how.show} /></span>
           <Button size="s" icon="refresh" onClick={() => check()} disabled={checking} data-tour="accounts-check">Check again</Button>
         </>
       )}>

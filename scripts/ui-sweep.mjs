@@ -1282,8 +1282,9 @@ try {
     await page.waitForTimeout(250);
     await page.screenshot({ path: join(out, `${theme}-history-resume.png`) });
     await page.keyboard.press('Escape');
-    // A session, Running and History each explain themselves: How this works opens their picture, and Esc closes it.
-    for (const [name, hash] of [['session', sessionHref.replace(/^.*#/, '#')], ['running', '#/running'], ['history', `#/p/${ns}/history`]]) {
+    // A session, Running, History, Needs you and Settings' pages each explain themselves: How this works opens their picture, and Esc closes it.
+    for (const [name, hash] of [['session', sessionHref.replace(/^.*#/, '#')], ['running', '#/running'], ['history', `#/p/${ns}/history`],
+      ['needs', '#/needs'], ['accounts', '#/accounts'], ['skills', '#/skills'], ['mcp', '#/mcp'], ['settings-local', '#/settings/local'], ['settings-phone', '#/settings/phone']]) {
       await page.goto(`${base}${hash}`);
       await page.click('button:has-text("How this works")', { timeout: 8000 }).catch(() => failures.push(`${theme}/${name}-how: no How this works`));
       await page.waitForSelector('.dialog .how-lane', { timeout: 4000 }).catch(() => failures.push(`${theme}/${name}-how: the picture never showed`));

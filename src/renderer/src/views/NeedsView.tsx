@@ -56,13 +56,13 @@ export function NeedsView({ needs, projects, loading, error, onRetry, onAddProje
       <div className="view-body">
         {/* When something needs you, the queue is the hero: Wanigan and the count are its heading. */}
         <header className="needs-head">
-          <PlayableOrb size={count ? 56 : 168} signal={signalFor(needs, running)} mood={mood} className="needs-orb" />
+          <span className="needs-orb-place" data-tour="needs-orb"><PlayableOrb size={count ? 56 : 168} signal={signalFor(needs, running)} mood={mood} className="needs-orb" /></span>
           <div className="needs-words">
             <h1 id="needs-title" className="needs-headline">{headline}</h1>
             <p className="needs-sub">{sub}</p>
             {!loading && projects && !projects.length ? <Button tone="primary" icon="folder" onClick={onAddProject}>Open a project</Button> : null}
           </div>
-          <div className="needs-tools"><HowButton onClick={how.show} /></div>
+          <div className="needs-tools" data-tour="needs-how"><HowButton onClick={how.show} /></div>
         </header>
 
         {!loading && count === 0 ? <Readiness projects={projects} onAddProject={onAddProject} /> : null}
@@ -167,7 +167,7 @@ function NeedRow({ need, session, tour }: { need: Need; session: Session | null;
     // A permission prompt, or a question before the agent has started, is answered
     // in the terminal, which takes the keyboard when the session opens.
     const inTerminal = need.kind === 'permission' || need.kind === 'starting';
-    primary = <a className={`btn btn-s ${inTerminal ? 'btn-attention' : 'btn-plain'}`} href={sessionHref}><span>{inTerminal ? 'Answer in terminal' : 'Open'}</span></a>;
+    primary = <a className={`btn btn-s ${inTerminal ? 'btn-attention' : route?.ok ? 'btn-quiet' : 'btn-plain'}`} href={sessionHref}><span>{inTerminal ? 'Answer in terminal' : 'Open'}</span></a>;
   }
   const asks = need.kind === 'permission' ? need.asks ?? [] : [];
 
