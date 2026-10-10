@@ -927,6 +927,7 @@ describe('what a WordPress page offers to change, and what saving it writes, und
     const top = run(site([{ find: 'Custom Link block in navigation menu “Main”', value: { label: 'Our <em>menu</em>' } }]));
     const link = target(top, 'Custom Link block in navigation menu “Main”');
     assert.match(link.label, /shows wherever this menu shows/);
+    assert.equal(prop(link, 'label').contentMediaType, 'text/html', 'core prints a label through wp_kses_post(): it is HTML, and the window sends it as such');
     assert.equal(link.why, undefined);
     assert.equal(link.revisions, true, 'wp_navigation keeps revisions');
     assert.equal((link.value as Record<string, unknown>).label, 'Menu');
@@ -939,6 +940,15 @@ describe('what a WordPress page offers to change, and what saving it writes, und
     assert.equal((target(nested, 'Submenu block in navigation menu “Main”').value as Record<string, unknown>).label, 'About');
     assert.ok(nested.answers[0]?.data.ok, nested.answers[0]?.data.error);
     assert.equal(nested.posts[30], menu.replace('{"label":"Team"', '{"label":"Our team"'), 'a link inside a submenu, found in the menu’s tree');
+
+    // A label is cleaned as spliced rich text is: kses takes out what it would never print, inline formatting kept.
+    const cleaned = run(site([{ find: 'Custom Link block in navigation menu “Main”', value: { label: 'Tea &amp; <em>cake</em><script>x()</script>' } }]));
+    assert.ok(cleaned.answers[0]?.data.ok, cleaned.answers[0]?.data.error);
+    assert.equal(cleaned.posts[30], menu.replace('{"label":"Menu"', '{"label":"Tea \\u0026amp; \\u003cem\\u003ecake\\u003c/em\\u003e"'));
+    const block = run(site([{ find: 'Custom Link block in navigation menu “Main”', value: { label: '<div>Menu</div>' } }]));
+    assert.equal(block.answers[0]?.data.ok, false);
+    assert.match(block.answers[0]?.data.error ?? '', /a <div> cannot/);
+    assert.equal(block.posts[30], menu, 'nothing written');
 
     const fallback = target(top, 'words in a Navigation block with no menu chosen');
     assert.match(fallback.why ?? '', /^WordPress keeps no such thing: /);

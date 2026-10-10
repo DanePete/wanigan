@@ -25,9 +25,12 @@
 //   helperSave path, to exactly the content, translation and item the edit's target names (saveTarget): never the
 //   default language, never the first item that holds the same words. Otherwise through the one edit target of the
 //   page's trace that holds exactly those words (wordsTarget(): a title, an excerpt, a string meta, a setting, a menu
-//   link's text), saved by the window's own schema save (`POST /_wanigan/edit/<id>`, live-edit-save.ts): how
-//   WordPress's helper saves a field. Formatted text (a block's, a post's content, a value with markup) goes to an
-//   agent as a brief, as do styles and tokens; anything else says why.
+//   link's text, a block's rich text), saved by the window's own schema save (`POST /_wanigan/edit/<id>`,
+//   live-edit-save.ts): how WordPress's helper saves a field. A value its schema calls HTML (`contentMediaType:
+//   'text/html'`) is sent as HTML: words alone escaped (`&`, `<`, `>` and quotes as the helper writes text), words
+//   between tags written into the one run the change falls in, every tag kept (src/shared/rich-text.ts). A change
+//   across formatting, a post's content and markup nothing says how to write go to an agent as a brief, as do styles
+//   and tokens; anything else says why.
 // - Verifying ("Stage 3: verify", steps 1–3): the design (the page with the layer) and the result (the page without
 //   it) rendered in hidden windows in the view's session at each width (live-capture.ts), each twice for the noise
 //   floor, and every width judged against the one floor the verdict states (the largest over both and every width); the comparisons are src/shared/layer-verify.ts's.
@@ -55,6 +58,7 @@ import {
 } from '../shared/layer-verify.ts';
 import type { LiveEditSaved, LiveTraceAnswer } from '../shared/live-lens.ts';
 import { TRACE_ID, identityKey, kindKey, type EditTarget, type LiveTrace, type PartIdentity, type TracePart } from '../shared/live-trace.ts';
+import { MARKUP, asWords, decodeRefs, retypeRich } from '../shared/rich-text.ts';
 import { sameSite, type LiveSite } from '../shared/live.ts';
 import type { Method } from '../shared/protocol.ts';
 import { RENDER_MS, deadline, folderOf, inHiddenWindow } from './live-capture.ts';
@@ -266,9 +270,12 @@ export function kindWords(part: TracePart, key: string, inner: string | null): s
 
 /* ── which edit target holds an element's words ─────────────────────────── */
 
-/** The edit target to save new words to, and where in its value they go (a property of an object, or the value); or why there is none. */
+/**
+ * The edit target to save new words to, where in its value they go (a property of an object, or the value), and what
+ * goes there: the new words as they are, or, in formatted text, as HTML (escaped, its tags kept); or why there is none.
+ */
 export type WordsTarget =
-  | { ok: true; target: EditTarget; key: string | null }
+  | { ok: true; target: EditTarget; key: string | null; value: string }
   | { ok: false; route: 'agent' | 'none'; why: string };
 
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
@@ -280,46 +287,42 @@ function typeOf(s: Record<string, unknown>): string | null {
 }
 
 /** A tag, or a comment: a value holding one is formatted text, and its words are only part of what it keeps. */
-const TAG = /<\/?[a-z][a-z0-9-]*(?:\s[^>]*)?\/?>|<!--[\s\S]*?-->/i;
+const TAG = MARKUP;
 const TAGS = new RegExp(TAG.source, 'gi');
-/** The character references a title or a setting is commonly kept with (WordPress keeps `&` in a title as `&amp;`). */
-const REFS: Record<string, string> = { amp: '&', lt: '<', gt: '>', quot: '"', apos: '\'', nbsp: ' ' };
-/** A kept value as the page shows it: its tags taken out, its character references read. */
-const shownOf = (value: string): string => value.replace(TAGS, '').replace(/&(?:#(\d{1,7})|#x([\da-f]{1,6})|([a-z]{2,8}));/gi, (ref, dec?: string, hex?: string, name?: string) => {
-  const code = dec ? Number(dec) : hex ? Number.parseInt(hex, 16) : null;
-  if (code !== null) return code > 0 && code <= 0x10ffff ? String.fromCodePoint(code) : ref;
-  return REFS[(name ?? '').toLowerCase()] ?? ref;
-});
 /**
- * Words compared as words: whitespace folded as the page script folds it, and the typography a site prints a value
- * with read as what it was typed as (WordPress's wptexturize curls a title's quotes and turns `--` and `...` into a
- * dash and an ellipsis).
+ * A kept value as the page shows it: its tags taken out, its character references read (WordPress keeps `&` in a
+ * title as `&amp;`). Compared as words with asWords() (src/shared/rich-text.ts): whitespace folded, and the typography
+ * a site prints a value with (wptexturize's quotes, dashes and ellipsis) read as typed.
  */
-const asWords = (s: string): string => s
-  .replace(/[‘’‚‛′]/g, '\'').replace(/[“”„‟″]/g, '"')
-  .replace(/…/g, '...').replace(/---|--|[–—]/g, '-')
-  .replace(/\s+/g, ' ').trim();
+const shownOf = (value: string): string => decodeRefs(value.replace(TAGS, ''));
 
-/** Where in one target words are, and whether they are kept as formatted text. */
-interface Holding { target: EditTarget; key: string | null; formatted: boolean }
+/**
+ * Where in one target words are, and how they are kept: as words (`plain`), as HTML the schema says it is
+ * (`html`: `contentMediaType: 'text/html'`, saved escaped, or between its tags), or as markup nothing says how to
+ * write (`formatted`).
+ */
+interface Holding { target: EditTarget; key: string | null; kept: 'plain' | 'html' | 'formatted'; value: string }
 
 /**
  * Where a schema target holds exactly these words: its value (a string schema), or a string property of its value (an
  * object schema: a menu link's text, a widget's title). Only words count: a slug or a status (`property`), a template's
- * name, a choice, an address or a date (a `format`), a read-only value are never words to save into. A block's text
- * (`block-attributes`) is rich text in its saved markup, and a value holding a tag is formatted text: those are
- * found too, as formatted, so the refusal can say so.
+ * name, a choice, an address or a date (a `format`), a read-only value are never words to save into. A string the
+ * schema calls HTML (`contentMediaType: 'text/html'`, or a block attribute of type `rich-text`) is found as `html`; a
+ * block's other text (`block-attributes`, unless its schema says `text/plain`) and a value holding a tag are found as
+ * `formatted`, so the refusal can say so.
  */
 function holdings(t: EditTarget, want: string): Holding[] {
   if (t.via !== 'schema' || t.kind === 'property' || t.kind === 'template-override') return [];
   const rich = t.kind === 'block-attributes';
   const one = (schema: unknown, value: unknown, key: string | null): Holding[] => {
-    if (typeof value !== 'string' || !isObj(schema)) return [];
+    if (typeof value !== 'string' || !isObj(schema) || asWords(shownOf(value)) !== want) return [];
     const type = typeOf(schema);
-    if (rich || type === 'rich-text' || TAG.test(value)) return asWords(shownOf(value)) === want ? [{ target: t, key, formatted: true }] : [];
-    const words = type === 'string' && schema.readOnly !== true && schema.enum === undefined && schema.oneOf === undefined && schema.const === undefined
-      && (schema.format === undefined || schema.format === 'textarea');
-    return words && asWords(shownOf(value)) === want ? [{ target: t, key, formatted: false }] : [];
+    const writable = schema.readOnly !== true && schema.enum === undefined && schema.oneOf === undefined && schema.const === undefined;
+    if ((schema.contentMediaType === 'text/html' || type === 'rich-text') && writable) return [{ target: t, key, kept: 'html', value }];
+    const plainText = schema.contentMediaType === 'text/plain' && !TAG.test(value);
+    if ((rich && !plainText) || type === 'rich-text' || TAG.test(value)) return [{ target: t, key, kept: 'formatted', value }];
+    const words = type === 'string' && writable && (schema.format === undefined || schema.format === 'textarea');
+    return words ? [{ target: t, key, kept: 'plain', value }] : [];
   };
   if (isObj(t.schema) && isObj(t.schema.properties)) {
     const value = t.value;
@@ -350,10 +353,13 @@ function listed(labels: string[]): string {
  * time, and the nearest level with any finding decides. Outward is each part's parent, and the post a block shows
  * through its context: a post-title block shows its post's title, inside the post or wherever the template put it,
  * and that post's parts carry the title's target. A post's content reached only as what the element sits in means
- * the words are content. One plain finding is the answer; none, several, formatted text or a target the site says
- * cannot be changed here is refused with why.
+ * the words are content. One finding is the answer, with what to send for `after` (the new words): words as they are;
+ * HTML that is words alone, the new words escaped as the helper writes text; HTML with tags, the new words written
+ * into the one run between tags the change falls in (retypeRich(), src/shared/rich-text.ts). None, several, markup
+ * nothing says how to write, a change across formatting, or a target the site says cannot be changed here is refused
+ * with why.
  */
-export function wordsTarget(trace: LiveTrace, identity: PartIdentity, words: string): WordsTarget {
+export function wordsTarget(trace: LiveTrace, identity: PartIdentity, words: string, after: string): WordsTarget {
   const want = asWords(words);
   if (!want) return { ok: false, route: 'none', why: 'Its element shows no words to find.' };
   const targets = new Map(trace.edits.map((e) => [e.id, e]));
@@ -381,10 +387,19 @@ export function wordsTarget(trace: LiveTrace, identity: PartIdentity, words: str
       return { ok: false, route: 'none', why: `More than one thing here holds exactly these words (${listed([...new Set(all.map((h) => h.target.label))])}), so Wanigan cannot tell which to save them to.` };
     }
     const [h] = all;
-    if (h?.formatted) {
+    if (h?.kept === 'formatted') {
       return { ok: false, route: 'agent', why: `These words are formatted text (${h.target.label}): the site keeps them with their markup, which Wanigan does not save from here. An agent can make the change from a brief.` };
     }
-    if (h) return h.target.why ? { ok: false, route: 'none', why: h.target.why } : { ok: true, target: h.target, key: h.key };
+    if (h?.target.why) return { ok: false, route: 'none', why: h.target.why };
+    if (h?.kept === 'html') {
+      // Words alone go escaped (& < > and quotes as the helper writes them); between tags, only within one run.
+      const written = retypeRich(h.value, words, after);
+      if (!written.ok) {
+        return { ok: false, route: 'agent', why: `These words are formatted text (${h.target.label}) and the change ${written.why}: Wanigan saves new words between tags only where the change falls within one run of words. An agent can make the change from a brief.` };
+      }
+      return { ok: true, target: h.target, key: h.key, value: written.html };
+    }
+    if (h) return { ok: true, target: h.target, key: h.key, value: after };
     const next: TracePart[] = [];
     const nextShows = new Set<string>();
     for (const p of level) {
@@ -799,10 +814,10 @@ export function wireLiveLayer(options: LiveLayerOptions): { hooks: LiveViewHooks
     if (!edit.target.part) return none('Its element is in markup no part of the page’s trace names, so Wanigan cannot tell what holds these words.');
     const answer = await options.trace();
     if (answer.state !== 'ok') return none(untraced(answer));
-    const found = wordsTarget(answer.trace, edit.target.part, at.words);
+    const found = wordsTarget(answer.trace, edit.target.part, at.words, value);
     if (!found.ok) return { ok: false, id, route: found.route, why: found.why };
     // An object's other properties go back as the trace gave them (a menu link's address with its new text).
-    const next = found.key === null ? value : { ...(found.target.value as Record<string, unknown>), [found.key]: value };
+    const next = found.key === null ? found.value : { ...(found.target.value as Record<string, unknown>), [found.key]: found.value };
     // The save reloads the page once the site has the words; the layer applies again after the load.
     const saved = await options.schemaSave(found.target.id, next, answer.trace.id);
     if (!saved.ok) return none(saved.error ?? 'The site did not save it.');

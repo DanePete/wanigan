@@ -2088,6 +2088,10 @@ final class Wanigan_Live {
 				if (!$why && in_array($attr, array('metadata', 'lock'), true)) $why = 'Wanigan does not change this: it is the editor’s own bookkeeping (the block’s name, bindings and lock).';
 				if (!$why && !$dynamic) $why = self::NO_SUCH . 'this block’s markup is written from this setting by the block’s editor script, and WordPress has no PHP version of that script. Change it in the editor.';
 				if (!$why && !$empty) $why = self::NO_SUCH . 'this block saved markup its editor script wrote from its settings, and WordPress has no PHP version of that script to write it again. Change it in the editor.';
+				if (!$why && self::html_attribute($name, (string) $attr, $def)) {
+					$schema['contentMediaType'] = 'text/html';
+					$schema['description'] = 'Its words as HTML, with inline formatting (bold, italic, links and the editor’s other formats), which WordPress prints through wp_kses_post(). Saved cleaned by wp_kses_post(), inline formatting only.';
+				}
 			} elseif (in_array($source, array('rich-text', 'html', 'text'), true) || $source === 'attribute') {
 				$found = self::sourced($node, $def, $name, $attr);
 				$current = $found['value'];
@@ -2338,6 +2342,16 @@ final class Wanigan_Live {
 		if (function_exists('get_block_bindings_supported_attributes')) return (array) get_block_bindings_supported_attributes($name);
 		$list = array('core/paragraph' => array('content'), 'core/heading' => array('content'), 'core/list-item' => array('content'), 'core/image' => array('id', 'url', 'title', 'alt', 'caption'), 'core/button' => array('url', 'text', 'linkTarget', 'rel'));
 		return isset($list[$name]) ? $list[$name] : array();
+	}
+
+	/**
+	 * Whether an attribute kept in a block's comment delimiter is HTML: core's own "rich-text" attribute type (6.5+),
+	 * or a navigation link's or submenu's label, which the editor writes as rich text and core prints through
+	 * wp_kses_post() (blocks/navigation-link.php, blocks/navigation-submenu.php).
+	 */
+	private static function html_attribute(string $name, string $attr, array $def): bool {
+		if (isset($def['type']) && $def['type'] === 'rich-text') return true;
+		return $attr === 'label' && in_array($name, array('core/navigation-link', 'core/navigation-submenu'), true);
 	}
 
 	/**
@@ -4770,6 +4784,11 @@ final class Wanigan_Live {
 			if ($source === null) {
 				$current = array_key_exists($attr, $node['attrs']) ? $node['attrs'][$attr] : (array_key_exists('default', $def) ? $def['default'] : null);
 				if ($current === $v) continue;
+				// HTML kept in the delimiter is cleaned as spliced rich text is: kses, inline formatting only.
+				if (is_string($v) && self::html_attribute($p['name'], (string) $attr, $def)) {
+					$v = self::rich_text($v, is_string($current) ? $current : '');
+					if (is_wp_error($v)) return $v;
+				}
 				if (array_key_exists('default', $def) && $def['default'] === $v) unset($node['attrs'][$attr]);
 				else $node['attrs'][$attr] = $v;
 				$changed = true;

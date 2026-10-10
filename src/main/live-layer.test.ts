@@ -608,12 +608,86 @@ test('WordPress: words no target holds, or that two hold, are refused with why, 
   } finally { b.done(); }
 });
 
+/* ── WordPress: a block's rich text, the HTML its schema says it is ── */
+
+/** A paragraph block in post 12's content, with its target as the helper builds it: `content` is HTML (live-helper-wordpress.ts block_edit()). */
+const paragraph: PartIdentity = { kind: 'block', store: 'post:12', path: [3], name: 'core/paragraph' };
+const paragraphTarget = (content: string, over: Partial<EditTarget> = {}): EditTarget => ({
+  id: 'block-post-12-3', kind: 'block-attributes', label: 'Paragraph block in post “Paddling 101”', via: 'schema', revisions: true,
+  schema: {
+    type: 'object', additionalProperties: false,
+    properties: {
+      content: { type: 'string', source: 'rich-text', contentMediaType: 'text/html', description: 'Its words as HTML, with inline formatting.' },
+      dropCap: { type: 'boolean', default: false },
+    },
+  },
+  value: { content, dropCap: false },
+  ...over,
+});
+const withParagraph = (t: EditTarget): LiveTrace => wpTrace({
+  parts: [{ id: 'w2', kind: 'entity', label: 'Post 12: Paddling 101', identity: postContent, edits: postEdits().map((e) => e.id) }, { id: 'b3', kind: 'block', label: 'Paragraph', parent: 'w2', identity: paragraph, edits: [t.id] }],
+  edits: [...postEdits(), t],
+});
+
+test('WordPress: a paragraph’s words alone are saved as its rich text, escaped as the helper writes text, its other settings as they were', async () => {
+  const target = paragraphTarget('Fish &amp; chips by the lake');
+  const retyped = retype(paragraph, 'Fish & "chips" <3 by the lake', 'Fish & chips by the lake');
+  const w = wire({ edits: [retyped], trace: withParagraph(target) });
+  try {
+    w.page.parts = { b3: { '': [words('Fish & chips by the lake')] } };
+    await w.apply();
+    assert.deepEqual(await w.implement(retyped.id), { ok: true, id: retyped.id, state: 'implemented', revision: '43' });
+    assert.deepEqual(w.posts, [{ path: '/_wanigan/edit/block-post-12-3', body: { trace: '0123456789abcdef', value: { content: 'Fish &amp; &quot;chips&quot; &lt;3 by the lake', dropCap: false } } }],
+      'the typed < and quotes are words, never markup: & < > " \' escaped as WordPress’s HTML processor writes text');
+    assert.deepEqual(w.marks, [{ id: retyped.id, state: 'implemented' }]);
+  } finally { w.done(); }
+
+  // A block attribute read as text (`source: text`, said text/plain): the helper escapes it itself, so the words go as they are.
+  const plain: EditTarget = { ...paragraphTarget('x'), id: 'block-post-12-4', label: 'Code block in post “Paddling 101”', schema: { type: 'object', properties: { content: { type: 'string', source: 'text', contentMediaType: 'text/plain' } } }, value: { content: 'a < b && c' } };
+  const code = retype({ ...paragraph, path: [4], name: 'core/code' }, 'a <= b && c', 'a < b && c');
+  const c = wire({ edits: [code], trace: wpTrace({ parts: [{ id: 'b4', kind: 'block', label: 'Code', identity: { ...paragraph, path: [4], name: 'core/code' }, edits: [plain.id] }], edits: [plain] }) });
+  try {
+    c.page.parts = { b4: { '': [words('a < b && c')] } };
+    await c.apply();
+    assert.equal((await c.implement(code.id)).ok, true);
+    assert.deepEqual(c.posts.map((x) => x.body), [{ trace: '0123456789abcdef', value: { content: 'a <= b && c' } }]);
+  } finally { c.done(); }
+});
+
+test('WordPress: words between a paragraph’s tags are saved in their run with every tag kept; a change across them goes to an agent, saying so', async () => {
+  const html = 'Read <a href="/trails/" class="acme-link">the trail guide</a> before you go.';
+  const shown = 'Read the trail guide before you go.';
+  const target = paragraphTarget(html);
+  const inRun = retype(paragraph, 'Read the trail guide before you set out.', shown);
+  const a = wire({ edits: [inRun], trace: withParagraph(target) });
+  try {
+    a.page.parts = { b3: { '': [words(shown)] } };
+    await a.apply();
+    assert.equal((await a.implement(inRun.id)).ok, true);
+    assert.deepEqual(a.posts.map((x) => x.body), [{ trace: '0123456789abcdef', value: { content: 'Read <a href="/trails/" class="acme-link">the trail guide</a> before you set out.', dropCap: false } }],
+      'the link, its address and class byte for byte; only the words after it changed');
+  } finally { a.done(); }
+
+  const across = retype(paragraph, 'Read our trail notes & go.', shown);
+  const b = wire({ edits: [across], trace: withParagraph(target) });
+  try {
+    b.page.parts = { b3: { '': [words(shown)] } };
+    await b.apply();
+    assert.deepEqual(await b.implement(across.id), {
+      ok: false, id: across.id, route: 'agent',
+      why: 'These words are formatted text (Paragraph block in post “Paddling 101”) and the change it crosses its formatting (a link, bold or another inline tag): Wanigan saves new words between tags only where the change falls within one run of words. An agent can make the change from a brief.',
+    });
+    assert.deepEqual([b.posts, b.marks], [[], []], 'nothing sent, nothing marked');
+  } finally { b.done(); }
+});
+
 test('WordPress: formatted text goes to an agent as a brief, and nothing is saved', async () => {
-  // A heading block in the post's content: its words are rich text in the post's saved block markup.
-  const block: PartIdentity = { kind: 'block', store: 'post:12', path: [2], name: 'core/heading' };
+  // A dynamic block's setting its schema does not call HTML or text: how the site prints it is not known, so its
+  // words are not written from here.
+  const block: PartIdentity = { kind: 'block', store: 'post:12', path: [2], name: 'acme/notice' };
   const rich: EditTarget = {
-    id: 'block-post-12-2', kind: 'block-attributes', label: 'Heading block in post “Paddling 101”', via: 'schema', revisions: true,
-    schema: { type: 'object', properties: { content: { type: 'rich-text' }, level: { type: 'integer' } }, additionalProperties: false },
+    id: 'block-post-12-2', kind: 'block-attributes', label: 'Notice block in post “Paddling 101”', via: 'schema', revisions: true,
+    schema: { type: 'object', properties: { content: { type: 'string' }, level: { type: 'integer' } }, additionalProperties: false },
     value: { content: 'Before the lake', level: 2 },
   };
   const headed = retype(block, 'Before the river', 'Before the lake');
@@ -623,7 +697,7 @@ test('WordPress: formatted text goes to an agent as a brief, and nothing is save
     await a.apply();
     assert.deepEqual(await a.implement(headed.id), {
       ok: false, id: headed.id, route: 'agent',
-      why: 'These words are formatted text (Heading block in post “Paddling 101”): the site keeps them with their markup, which Wanigan does not save from here. An agent can make the change from a brief.',
+      why: 'These words are formatted text (Notice block in post “Paddling 101”): the site keeps them with their markup, which Wanigan does not save from here. An agent can make the change from a brief.',
     });
     assert.deepEqual(a.posts, []);
   } finally { a.done(); }
