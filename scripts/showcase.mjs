@@ -139,7 +139,7 @@ try {
     await win.waitForSelector('.palette-said mark', { timeout: 8_000 }).catch(() => failures.push('search found nothing said'));
     await shot('search', theme);
     await win.keyboard.press('Escape');
-    await go('#/settings', '#set-jev');
+    await go('#/settings/jev', '#set-jev');
     await shot('settings', theme);
     await go('#/skills', '.prose h3');
     await shot('skills', theme);

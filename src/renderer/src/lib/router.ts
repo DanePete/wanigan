@@ -5,13 +5,17 @@ import { GIT_TABS, LIVE_VIEW, PROJECT_VIEWS, type GitTab, type ProjectView } fro
 
 export { GIT_TABS, LIVE_VIEW, PROJECT_VIEWS, type GitTab, type ProjectView };
 
+/** Settings' own sections, one at a time (`#/settings/general`); Accounts, Skills and MCP servers are routes of their own. */
+export const SETTINGS_SECTIONS = ['appearance', 'general', 'live', 'updates', 'local', 'phone', 'jev'] as const;
+export type SettingsSection = (typeof SETTINGS_SECTIONS)[number];
+
 export type Route =
   | { name: 'needs' }
   | { name: 'running' }
   | { name: 'accounts' }
   | { name: 'skills' }
   | { name: 'mcp' }
-  | { name: 'settings' }
+  | { name: 'settings'; section?: SettingsSection }
   | { name: 'project'; projectKey: string; view: ProjectView }
   | { name: 'session'; projectKey: string; sessionId: string };
 
@@ -36,7 +40,10 @@ export function parse(hash: string): Location {
   else if (parts[0] === 'accounts') route = { name: 'accounts' };
   else if (parts[0] === 'skills') route = { name: 'skills' };
   else if (parts[0] === 'mcp') route = { name: 'mcp' };
-  else if (parts[0] === 'settings') route = { name: 'settings' };
+  else if (parts[0] === 'settings') {
+    const section = SETTINGS_SECTIONS.find((x) => x === parts[1]);
+    route = section ? { name: 'settings', section } : { name: 'settings' };
+  }
   else if (parts[0] === 'p' && parts[1]) {
     if (parts[2] === 's' && parts[3]) route = { name: 'session', projectKey: parts[1], sessionId: parts[3] };
     else {
@@ -64,7 +71,7 @@ export function href(route: Route, card?: string | null): string {
     case 'accounts': path = '/accounts'; break;
     case 'skills': path = '/skills'; break;
     case 'mcp': path = '/mcp'; break;
-    case 'settings': path = '/settings'; break;
+    case 'settings': path = route.section ? `/settings/${route.section}` : '/settings'; break;
     case 'project': path = `/p/${encodeURIComponent(route.projectKey)}/${route.view}`; break;
     case 'session': path = `/p/${encodeURIComponent(route.projectKey)}/s/${encodeURIComponent(route.sessionId)}`; break;
   }

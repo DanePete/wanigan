@@ -1,191 +1,164 @@
-/* List, and the parts several views draw. Decisions and Activity are styles/records.css. */
+/* Settings and its sections, Accounts and the shared dialog bits. Decisions and Activity are styles/records.css; the List
+   draws its own table (views/ListView.tsx). */
 
-.list-wrap {
-  display: flex;
-  flex-direction: column;
-}
-
-.table {
-  width: calc(100% - 2 * var(--space-8));
-  margin: 0 var(--space-8) var(--space-8);
-  border-collapse: separate;
-  border-spacing: 0;
-  font-size: var(--text-md);
-}
-
-.table th {
-  position: sticky;
-  top: 0;
-  z-index: 1;
-  padding: 0;
-  border-bottom: 1px solid var(--line-strong);
-  background: var(--bg);
-  text-align: left;
-  font-size: var(--text-sm);
-  font-weight: 600;
-  color: var(--muted);
-}
-
-.table th button,
-.table th:not(:has(button)) {
-  padding: var(--space-2) var(--space-3);
-}
-
-.table th button {
-  width: 100%;
-  border: 0;
-  background: none;
-  color: inherit;
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
-}
-
-.table td {
-  padding: var(--space-2) var(--space-3);
-  border-bottom: 1px solid var(--line);
-  white-space: nowrap;
-}
-
-.table tbody tr {
-  cursor: pointer;
-}
-
-.table tbody tr:hover td {
-  background: var(--hover);
-}
-
-.table-title {
-  white-space: normal !important;
-  width: 50%;
-}
-
-.status {
-  font-size: var(--text-sm);
-  text-transform: capitalize;
-  color: var(--muted);
-}
-
-.status-review {
-  color: var(--water-text);
-}
-
-.status-done {
-  color: var(--green);
-}
-
-.status-working {
-  color: var(--fg);
-}
-
-/* ── accounts ────────────────────────────────────────────────────────────── */
-
-.accounts {
-  max-width: 920px;
-}
-
-.account-group + .account-group {
-  margin-top: var(--space-8);
-}
-
-.account-group-head {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  margin-bottom: var(--space-3);
-}
-
-.account-group-head h2 {
-  margin: 0;
-  font: 600 var(--text-lg) / 1 var(--font-ui);
-}
-
-.account-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
+/* The section on the ground, a readable column beside the list of sections. */
+.settings-body {
   display: grid;
-  border-top: 1px solid var(--line);
+  align-content: start;
+  gap: var(--space-6);
+  padding: var(--space-6) var(--space-8) var(--space-10);
 }
 
-.account-list > li {
-  border-bottom: 1px solid var(--line);
+.settings-body-m {
+  max-width: 100ch;
 }
 
-.account {
-  display: flex;
-  align-items: flex-start;
-  gap: var(--space-3);
-  padding: var(--space-4);
+.settings-body-l {
+  max-width: 150ch;
+}
+
+/* One panel of rows per group: the rows divide it with the hairline; none is a box of its own. */
+.settings-list {
+  min-width: 0;
+  border: var(--hairline) solid var(--line);
+  border-radius: var(--radius-l);
   background: var(--surface);
 }
 
-.account-dot {
-  width: 9px;
-  height: 9px;
-  margin-top: 6px;
-  flex: none;
-  border-radius: var(--radius-round);
-  background: var(--faint);
+.setting {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3) var(--space-4);
+  min-height: calc(var(--control-m) + 2 * var(--space-3));
+  padding: var(--space-3) var(--space-4);
 }
 
-.dot-green {
-  background: var(--green);
+.setting + .setting {
+  border-top: var(--hairline) solid var(--line);
 }
 
-.dot-amber {
-  background: var(--amber);
-}
-
-.dot-red {
-  background: var(--red);
-}
-
-.dot-faint {
-  background: transparent;
-  box-shadow: inset 0 0 0 2px var(--faint);
-}
-
-.account-main {
-  flex: 1;
+.setting-text {
+  flex: 1 1 24ch;
   min-width: 0;
   display: grid;
-  gap: 2px;
+  gap: var(--gap-hair);
 }
 
-.account-main p {
+.setting-label {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+
+.setting-hint {
+  color: var(--muted);
+  font-size: var(--text-sm);
+  line-height: var(--lh-sm);
+  overflow-wrap: anywhere;
+}
+
+.setting-text > p:not(.setting-more) {
   margin: 0;
 }
 
-.account-name {
+.setting-more {
+  margin: var(--space-1) 0 0;
+  color: var(--muted);
+  font-size: var(--text-sm);
+}
+
+.setting-control {
+  flex: none;
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  font-weight: 600;
+  max-width: 100%;
+}
+
+.settings-note {
+  margin: 0;
+  color: var(--faint);
+  font-size: var(--text-sm);
+}
+
+/* What a section owes its reader in full (what Jev receives, that updates are manual): last, and quiet. */
+.settings-foot {
+  margin: 0;
+  max-width: 90ch;
+  color: var(--faint);
+  font-size: var(--text-sm);
+  line-height: var(--lh-sm);
+}
+
+.settings-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.settings-more p {
+  margin: 0;
+  color: var(--muted);
+  font-size: var(--text-sm);
+  line-height: var(--lh-sm);
+}
+
+.settings-project-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── settings › accounts (views/AccountsView.tsx) ───────────────────────── */
+
+.settings-meta {
+  color: var(--faint);
+  font-size: var(--text-sm);
+  white-space: nowrap;
+}
+
+.account-name {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
 }
 
 .account-status {
   font-size: var(--text-sm);
 }
 
-.status-green {
-  color: var(--fg);
+.account-status.status-green {
+  color: var(--muted);
 }
 
-.status-amber {
+.account-status.status-amber {
   color: var(--amber);
 }
 
-.status-red {
+.account-status.status-red {
   color: var(--red);
 }
 
-.status-faint {
+.account-status.status-faint {
   color: var(--faint);
 }
 
+.account .setting-text > p {
+  color: var(--muted);
+  font-size: var(--text-sm);
+}
+
 .account-dir {
-  font-size: var(--text-xs);
+  color: var(--faint);
+  font-size: var(--text-xs) !important;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -196,34 +169,49 @@
   flex-wrap: wrap;
   align-items: center;
   gap: var(--space-1);
-  margin-top: var(--space-1) !important;
-  font-size: var(--text-xs);
+  color: var(--faint);
+  font-size: var(--text-xs) !important;
 }
 
+.account-twin {
+  color: var(--muted);
+}
+
+/* The row's verbs at its end, in one line: the ··· holds the rest. */
 .account-actions {
   display: flex;
-  flex: none;
-  justify-content: flex-end;
+  align-items: center;
   gap: var(--space-1);
 }
 
 .account-rename {
   display: flex;
+  align-items: center;
   gap: var(--space-2);
-  max-width: 360px;
+  width: min(100%, 52ch);
+}
+
+.account-rename input {
+  flex: 1;
+  min-width: 0;
+  height: var(--control-s);
 }
 
 .signin-terminal {
-  height: 440px;
-  margin-top: var(--space-3);
-  border-radius: var(--radius-m);
-  overflow: hidden;
-  background: var(--sunken);
   display: flex;
+  height: calc(9 * var(--space-12));
+  margin-top: var(--space-3);
+  overflow: hidden;
+  border-radius: var(--radius-m);
+  background: var(--sunken);
 }
 
 .signin-terminal .terminal {
   flex: 1;
+}
+
+.signin-wait {
+  margin: auto;
 }
 
 /* ── small shared bits for dialogs ───────────────────────────────────────── */
@@ -250,9 +238,55 @@
   margin-top: 3px;
 }
 
-.dialog-section {
-  margin: var(--space-5) 0 var(--space-1);
-  font: 600 var(--text-md) / 1.2 var(--font-ui);
+/* A dialog's sections space themselves (components.css); a dialog's row of a control and its word. */
+.dialog .section {
+  margin-top: var(--space-4);
+}
+
+.dialog .section > p {
+  margin: 0;
+}
+
+.dialog-row {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+/* ── the shortcut sheet (dialogs/ShortcutSheet.tsx) ──────────────────────── */
+
+/* The search stays in reach while the groups scroll under it. */
+.shortcuts-find {
+  position: sticky;
+  top: calc(-1 * var(--space-2));
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) 0;
+  background: var(--raised);
+}
+
+.shortcuts-find .search-field {
+  flex: 1;
+  width: auto;
+}
+
+.shortcuts-found {
+  flex: none;
+  color: var(--faint);
+  font-size: var(--text-sm);
+}
+
+.shortcuts .keycaps {
+  gap: var(--space-1);
+}
+
+.shortcuts-note {
+  margin: 0;
+  color: var(--faint);
+  font-size: var(--text-sm);
 }
 
 .key-input {
@@ -668,23 +702,22 @@
 }
 
 .suggestions ul {
-  list-style: none;
-  margin: var(--space-2) 0 var(--space-2);
-  padding: 0;
   display: grid;
-  gap: 1px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius-m);
-  overflow: hidden;
-  background: var(--line);
+  margin: 0;
+  padding: 0;
+  list-style: none;
 }
 
+/* In the dialog's sheet: rows the hairline divides, never a bordered box inside it. */
 .suggestions li {
   display: flex;
   align-items: center;
   gap: var(--space-3);
-  padding: var(--space-2) var(--space-3);
-  background: var(--surface);
+  padding: var(--space-2) 0;
+}
+
+.suggestions li + li {
+  border-top: var(--hairline) solid var(--line);
 }
 
 .suggestion-text {
@@ -708,7 +741,7 @@
   font-size: var(--text-xs);
 }
 
-.suggestion-name .tag {
+.suggestion-name .badge {
   margin-left: var(--space-2);
 }
 
@@ -716,69 +749,13 @@
   margin: var(--space-1) 0;
 }
 
-.suggestions-head {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-}
-
-.scope-picker select {
-  width: auto;
-  padding: var(--space-1) var(--space-3);
-}
-
-.branch-line {
-  display: flex;
-  align-items: baseline;
-  gap: var(--space-2);
-  margin: 0 0 var(--space-1);
-}
-
-.branch-actions {
-  margin: var(--space-2) 0;
-  flex-wrap: wrap;
-}
-
-.branch-path {
-  margin: 0;
-  overflow-wrap: anywhere;
-}
-
-/* An approved card's pull request: what will be pushed where, then its link. */
-.pr-confirm {
-  display: grid;
-  gap: var(--space-2);
-  margin: var(--space-2) 0;
-  padding: var(--space-3);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-m);
-  background: var(--sunken);
-}
-
-.pr-confirm p {
-  margin: 0;
-  overflow-wrap: anywhere;
-}
-
-.branch-pr {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  margin: var(--space-2) 0;
-  font-size: var(--text-sm);
-}
-
-.branch-pr a {
-  min-width: 0;
-  overflow-wrap: anywhere;
-}
-
+/* What an account's limits have left: one row per window, the bar in water until it is used up (red). */
 .meters {
   display: grid;
-  grid-template-columns: 96px minmax(80px, 160px) 72px 1fr;
+  grid-template-columns: max-content minmax(var(--space-12), 1fr) max-content max-content;
   align-items: center;
-  column-gap: var(--space-3);
-  row-gap: 2px;
+  gap: var(--gap-hair) var(--space-3);
+  max-width: 72ch;
   margin: var(--space-2) 0 var(--space-1);
   font-size: var(--text-xs);
 }
@@ -792,15 +769,16 @@
 }
 
 .meter-bar {
-  height: 6px;
-  border-radius: 3px;
-  background: var(--sunken);
+  height: var(--space-1);
   overflow: hidden;
+  border-radius: var(--radius-round);
+  background: var(--sunken);
 }
 
 .meter-bar span {
   display: block;
   height: 100%;
+  border-radius: inherit;
   background: var(--water);
 }
 
@@ -816,12 +794,13 @@
   color: var(--red);
 }
 
-.meter-checked {
-  grid-column: 1 / -1;
+.meter-reset {
+  color: var(--faint);
 }
 
-.account-twin {
-  color: var(--muted);
+.meter-checked {
+  grid-column: 1 / -1;
+  color: var(--faint);
 }
 
 /* ── review notes on a diff ────────────────────────────────────────────── */

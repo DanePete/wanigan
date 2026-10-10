@@ -594,7 +594,7 @@ function GoTo({ project, address = null, initialQuery = null, onClose, onHelper 
   const helperWord = plan?.kind === 'wordpress' ? 'WordPress' : 'Drupal';
   const notice = noticeFor({ live: !!live, state, answer, loading, host, plan: plan && !plan.refused ? plan : null, helperWord, site: site.data ?? null,
     onHelper, onRetry: () => setAttempt((n) => n + 1), onSetUp: () => { onClose('away'); navigate({ name: 'project', projectKey: project.key, view: 'live' }); },
-    onSettings: () => { onClose('away'); navigate({ name: 'settings' }); } });
+    onSettings: () => { onClose('away'); navigate({ name: 'settings', section: 'live' }); } });
   const placeholder = blocked ? 'Go to a page of the site' : `Go to a page of ${host ?? project.name}: a title, an admin page, a path or an id`;
   const activeId = acting ? optionId(`act-${acting.index}`) : active ? optionId(active.key) : undefined;
   const editKey = active && editOf(active);

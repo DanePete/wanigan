@@ -97,7 +97,7 @@ function useAppNews(): { count: number; items: ReactNode } {
         <div className="tray-item tray-news tray-update">
           <Icon name="pull" size={15} className="tray-icon" />
           <div className="tray-text"><p>{label}</p><span className="faint">Download it from Settings, Updates.</span></div>
-          <Button size="s" onClick={() => navigate({ name: 'settings' })}>Settings</Button>
+          <Button size="s" onClick={() => navigate({ name: 'settings', section: 'updates' })}>Settings</Button>
         </div>
       ),
     };

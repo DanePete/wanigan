@@ -1,4 +1,4 @@
-// Models that run on this Mac. Optional throughout: without LM Studio (or a
+// Models that run on this computer. Optional throughout: without LM Studio (or a
 // running Ollama or NVIDIA PAIR) nothing here appears, and nothing downloads
 // until the owner asks with the size in front of them.
 //
@@ -151,7 +151,7 @@ const AGENT_NAME: Record<LocalAgent, string> = { claude: 'Claude Code', codex: '
 /**
  * The local models an agent's picker offers. Nothing without LM Studio or a
  * running Ollama. A module not yet downloaded is listed with its size, and
- * cannot be started until it is on this Mac.
+ * cannot be started until it is on this computer.
  */
 export function localChoices(status: LocalStatus, agent: LocalAgent): ModelChoice[] {
   const choice = (runtime: LocalRuntime, id: string, label: string, detail: string, ready: boolean, proven: boolean): ModelChoice => ({
@@ -163,15 +163,15 @@ export function localChoices(status: LocalStatus, agent: LocalAgent): ModelChoic
       const module = m.module ? moduleById(m.module) : null;
       const proven = !!module && module.agent === agent && module.proven !== null;
       const pairing = module && module.agent === agent ? (proven ? `proven with ${AGENT_NAME[agent]}` : 'not yet proven') : `not proven with ${AGENT_NAME[agent]}`;
-      out.push(choice('lmstudio', m.id, module?.label ?? m.id, `On this Mac · LM Studio · ${pairing}`, true, proven));
+      out.push(choice('lmstudio', m.id, module?.label ?? m.id, `On this computer · LM Studio · ${pairing}`, true, proven));
     }
     for (const { module, downloaded } of status.modules) {
       if (downloaded || module.agent !== agent) continue;
-      out.push(choice('lmstudio', module.key, module.label, `Not on this Mac yet · ${formatBytes(module.downloadBytes)} · get it in Settings › Local models`, false, module.proven !== null));
+      out.push(choice('lmstudio', module.key, module.label, `Not on this computer yet · ${formatBytes(module.downloadBytes)} · get it in Settings › Local models`, false, module.proven !== null));
     }
   }
   if (status.ollama.running) {
-    for (const m of status.ollama.models) out.push(choice('ollama', m.id, m.id, `On this Mac · Ollama or NVIDIA PAIR · not proven with ${AGENT_NAME[agent]}`, true, false));
+    for (const m of status.ollama.models) out.push(choice('ollama', m.id, m.id, `On this computer · Ollama or NVIDIA PAIR · not proven with ${AGENT_NAME[agent]}`, true, false));
   }
   return out;
 }

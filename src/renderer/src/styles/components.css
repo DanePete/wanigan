@@ -581,11 +581,6 @@
   font-size: var(--text-sm);
 }
 
-/* Talk to Wanigan's button sits over the line's right end: the line ends before it. */
-.app:has(> .chat-fab) .status-line {
-  padding-right: calc(var(--fab) + var(--space-5) + var(--space-2));
-}
-
 .status-said {
   flex: 1;
   min-width: 0;

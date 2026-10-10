@@ -1,70 +1,89 @@
-// Settings' sections, beside every one of them: what was the sidebar's
-// Accounts, Skills and MCP servers are Settings now, each one step from the
-// rail's Settings (and from the palette, ⌘K). The app's own settings are one
-// page today; their names here take you to each. The Settings pass makes this
-// one section at a time.
-import type { ReactNode } from 'react';
-import { href, navigate, type Route } from '../lib/router';
+// Settings' sections, beside every one of them: Wanigan's own settings, one
+// section at a time, and what was the sidebar's (Accounts, Skills, MCP
+// servers), each one step from the rail's Settings and from the palette (⌘K).
+import type { KeyboardEvent, ReactNode } from 'react';
+import type { CommandId } from '@shared/shortcuts';
+import { href, navigate, SETTINGS_SECTIONS, type Route, type SettingsSection } from '../lib/router';
 import { Icon, type IconName } from '../components/icons';
 import { tipProps } from '../components/ui';
 
-/** The groups of the Settings page, by the id of their heading. */
-const ON_THE_PAGE: readonly { id: string; label: string; icon: IconName }[] = [
-  { id: 'set-appearance', label: 'Appearance', icon: 'sun' },
-  { id: 'set-general', label: 'General', icon: 'settings' },
-  { id: 'set-live', label: 'Live view', icon: 'live' },
-  { id: 'set-updates', label: 'Updates', icon: 'pull' },
-  { id: 'set-local', label: 'Local models', icon: 'local' },
-  { id: 'set-phone', label: 'Phone', icon: 'phone' },
-  { id: 'set-jev', label: 'Jev', icon: 'board' },
+export interface SettingsPlace {
+  id: SettingsSection | 'accounts' | 'skills' | 'mcp';
+  label: string;
+  /** What the palette calls it, where the label alone would be taken for something else ("Live view" is a project's tab too). */
+  palette?: string;
+  icon: IconName;
+  group: 'Wanigan' | 'Agents' | 'Connected';
+  route: Route;
+  keys?: CommandId;
+}
+
+const section = (id: SettingsSection): Route => ({ name: 'settings', section: id });
+
+/** Every section, in the order the list shows them. */
+export const SETTINGS_PLACES: readonly SettingsPlace[] = [
+  { id: 'appearance', label: 'Appearance', icon: 'sun', group: 'Wanigan', route: section('appearance') },
+  { id: 'general', label: 'General', icon: 'settings', group: 'Wanigan', route: section('general') },
+  { id: 'live', label: 'Live view', palette: 'Live view settings', icon: 'live', group: 'Wanigan', route: section('live') },
+  { id: 'updates', label: 'Updates', icon: 'pull', group: 'Wanigan', route: section('updates') },
+  { id: 'accounts', label: 'Accounts', icon: 'account', group: 'Agents', route: { name: 'accounts' }, keys: 'go-accounts' },
+  { id: 'skills', label: 'Skills', icon: 'skill', group: 'Agents', route: { name: 'skills' } },
+  { id: 'mcp', label: 'MCP servers', icon: 'plug', group: 'Agents', route: { name: 'mcp' } },
+  { id: 'local', label: 'Local models', icon: 'local', group: 'Agents', route: section('local') },
+  { id: 'phone', label: 'Phone', icon: 'phone', group: 'Connected', route: section('phone') },
+  { id: 'jev', label: 'Jev', icon: 'board', group: 'Connected', route: section('jev') },
 ];
 
-const PAGES: readonly { route: Extract<Route, { name: 'accounts' | 'skills' | 'mcp' }>; label: string; icon: IconName; keys?: 'go-accounts' }[] = [
-  { route: { name: 'accounts' }, label: 'Accounts', icon: 'account', keys: 'go-accounts' },
-  { route: { name: 'skills' }, label: 'Skills', icon: 'skill' },
-  { route: { name: 'mcp' }, label: 'MCP servers', icon: 'plug' },
-];
+const GROUPS = ['Wanigan', 'Agents', 'Connected'] as const;
 
-/** Go to a group of the Settings page, from anywhere: the page first, then the group, once it is drawn. */
+/** Go to one of Settings' own sections, from anywhere: by its name, or by its heading's id (`set-local`). */
 export function openSettingsSection(id: string): void {
-  navigate({ name: 'settings' });
-  let tries = 0;
-  const find = (): void => {
-    const el = document.getElementById(id);
-    if (el) { el.scrollIntoView({ block: 'start' }); return; }
-    if (++tries < 60) requestAnimationFrame(find);
-  };
-  requestAnimationFrame(find);
+  const name = id.replace(/^set-/, '');
+  const found = SETTINGS_SECTIONS.find((s) => s === name);
+  navigate(found ? { name: 'settings', section: found } : { name: 'settings' });
+}
+
+/** The section a route shows: a Settings route without one shows the first. */
+function hereOf(route: Route): SettingsPlace['id'] | null {
+  if (route.name === 'settings') return route.section ?? 'appearance';
+  return route.name === 'accounts' || route.name === 'skills' || route.name === 'mcp' ? route.name : null;
+}
+
+/** Up and down move along the list, Home and End to its ends; Tab leaves it. */
+function onListKey(e: KeyboardEvent<HTMLElement>): void {
+  if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(e.key)) return;
+  const links = [...e.currentTarget.querySelectorAll<HTMLAnchorElement>('a.settings-nav-item')];
+  const at = links.indexOf(document.activeElement as HTMLAnchorElement);
+  const next = e.key === 'Home' ? 0 : e.key === 'End' ? links.length - 1
+    : e.key === 'ArrowDown' ? Math.min(links.length - 1, at + 1) : Math.max(0, at - 1);
+  e.preventDefault();
+  links[next]?.focus();
 }
 
 export function SettingsFrame({ route, children }: { route: Route; children: ReactNode }) {
+  const here = hereOf(route);
   return (
     <div className="settings-frame">
-      <nav className="settings-nav" aria-label="Settings sections">
-        <h2 className="settings-nav-title">Settings</h2>
-        <ul>
-          {ON_THE_PAGE.map((s) => (
-            <li key={s.id}>
-              <button type="button" className="settings-nav-item" onClick={() => openSettingsSection(s.id)}>
-                <Icon name={s.icon} size={16} /><span>{s.label}</span>
-              </button>
-            </li>
-          ))}
-        </ul>
-        <h2 className="settings-nav-title">Agents</h2>
-        <ul>
-          {PAGES.map((p) => {
-            const here = route.name === p.route.name;
-            return (
-              <li key={p.route.name}>
-                <a href={href(p.route)} className={`settings-nav-item${here ? ' active' : ''}`} aria-current={here ? 'page' : undefined}
-                  {...(p.keys ? tipProps(p.label, p.keys, 'right') : {})}>
-                  <Icon name={p.icon} size={16} /><span>{p.label}</span>
-                </a>
-              </li>
-            );
-          })}
-        </ul>
+      <nav className="settings-nav" aria-label="Settings sections" data-tour="settings-nav" onKeyDown={onListKey}>
+        <h2 className="settings-nav-head">Settings</h2>
+        {GROUPS.map((group) => (
+          <div key={group} className="settings-nav-group">
+            <h3 className="settings-nav-title">{group}</h3>
+            <ul>
+              {SETTINGS_PLACES.filter((p) => p.group === group).map((p) => {
+                const current = here === p.id;
+                return (
+                  <li key={p.id}>
+                    <a href={href(p.route)} className={`settings-nav-item${current ? ' active' : ''}`} aria-current={current ? 'page' : undefined}
+                      {...(p.keys ? tipProps(p.label, p.keys, 'right') : {})}>
+                      <Icon name={p.icon} size={16} /><span>{p.label}</span>
+                    </a>
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
+        ))}
       </nav>
       <div className="settings-frame-view">{children}</div>
     </div>

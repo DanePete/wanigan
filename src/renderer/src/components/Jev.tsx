@@ -10,7 +10,8 @@ import type { CardDetail, CardSummary, ProjectSummary } from '@shared/model';
 import { attempt, call, useQuery } from '../lib/api';
 import { ago } from '../lib/format';
 import { href, openCard } from '../lib/router';
-import { Button, IconButton, Segmented, useToast } from './ui';
+import { Button, IconButton, NotAnswering, Segmented, useToast } from './ui';
+import { SettingRow, SettingsGroup } from '../views/SettingsPage';
 
 const pct = (p: number | null): string => (p === null ? '' : `${Math.round(p * 100)}%`);
 
@@ -102,7 +103,8 @@ export function JevSection({ card, mode }: { card: CardDetail; mode: JevMode }) 
       )}
       <div className="row-gap">
         {inbox && read?.action === 'ready' ? (
-          <Button size="s" tone="primary" onClick={() => attempt(() => call('cards.move', { id: card.id, status: 'ready' }), fail)}>Accept to Ready</Button>
+          // Plain: the drawer's one primary is its own; Jev's read is advice beside it.
+          <Button size="s" onClick={() => attempt(() => call('cards.move', { id: card.id, status: 'ready' }), fail)}>Accept to Ready</Button>
         ) : null}
         {inbox && dup ? (
           <Button size="s" onClick={() => attempt(async () => {
@@ -142,7 +144,7 @@ export function JevStrip({ project }: { project: ProjectSummary }) {
         <span className="jev-mark" aria-hidden="true">J</span>
         <span className="faint">Jev can read each new card for you: what to do with it, how much it matters, and whether it repeats another.</span>
         <span className="jev-strip-end">
-          <a href={href({ name: 'settings' })}>Set up Jev</a>
+          <a href={href({ name: 'settings', section: 'jev' })}>Set up Jev</a>
           <IconButton icon="close" label="Hide this hint" onClick={hide} />
         </span>
       </div>
@@ -193,7 +195,13 @@ export function JevModePicker({ project }: { project: ProjectSummary }) {
   );
 }
 
-/** Settings: the key, the connection, and each project's mode. */
+/** Jev's health beside the Settings section's title, once the core has answered. */
+export function JevHealthNow() {
+  const status = useQuery('jev.status', {}, ['projects']);
+  return status.data?.configured ? <JevHealth status={status.data} /> : null;
+}
+
+/** Settings › Jev: the key, the connection, what it has cost, and each project's mode. */
 export function JevSettings({ projects }: { projects: ProjectSummary[] | undefined }) {
   const toast = useToast();
   const status = useQuery('jev.status', {}, ['projects']);
@@ -208,7 +216,7 @@ export function JevSettings({ projects }: { projects: ProjectSummary[] | undefin
     if (saved) {
       setKey('');
       const tested = await attempt(() => call('jev.test', {}), fail);
-      toast(tested?.online ? 'Jev answered. It will read new cards from now on.' : `Saved, but Jev did not answer${tested?.lastError ? `: ${tested.lastError}` : '.'}`, tested?.online ? 'info' : 'error');
+      toast(tested?.online ? 'Jev answered. It will read new cards from now on.' : `Saved, but Jev did not answer${tested?.lastError ? `: ${tested.lastError}` : '.'}`, tested?.online ? 'done' : 'error');
     }
     setBusy(false);
     status.reload();
@@ -216,69 +224,65 @@ export function JevSettings({ projects }: { projects: ProjectSummary[] | undefin
   const test = async (): Promise<void> => {
     setBusy(true);
     const tested = await attempt(() => call('jev.test', {}), fail);
-    if (tested) toast(tested.online ? `Jev answered in ${tested.latencyP50 ?? '?'} ms.` : `Jev did not answer${tested.lastError ? `: ${tested.lastError}` : '.'}`, tested.online ? 'info' : 'error');
+    if (tested) toast(tested.online ? `Jev answered in ${tested.latencyP50 ?? '?'} ms.` : `Jev did not answer${tested.lastError ? `: ${tested.lastError}` : '.'}`, tested.online ? 'done' : 'error');
     setBusy(false);
     status.reload();
   };
+  const testButton = <Button size="s" icon="refresh" onClick={() => test()} disabled={busy}>Test the connection</Button>;
 
+  if (status.error) return <NotAnswering error={status.error} onRetry={status.reload} />;
   return (
-    <section className="settings-group" aria-labelledby="set-jev">
-      <header className="account-group-head">
-        <h2 id="set-jev">Jev</h2>
-        {s ? <JevHealth status={s} /> : null}
-      </header>
-      <p className="lede">
+    <>
+      <SettingsGroup title="Connection">
+        {s?.configured === 'env' ? (
+          <SettingRow label="Key" hint={<>Using <code>TYPESAFE_API_KEY</code> from your shell.</>} control={testButton} />
+        ) : s?.configured === 'saved' ? (
+          <SettingRow label="Key" hint="A key is saved for Wanigan’s core, readable by your user only. It is never shown again."
+            control={(
+              <span className="settings-actions">
+                {testButton}
+                <Button size="s" tone="quiet" onClick={() => attempt(() => call('jev.forgetKey', {}), fail).then(() => status.reload())}>Forget the key</Button>
+              </span>
+            )} />
+        ) : s ? (
+          <SettingRow>
+            <form className="jev-key" onSubmit={(e) => { e.preventDefault(); if (key.trim()) void save(); }}>
+              <label htmlFor="jev-key">TypeSafe API key</label>
+              <div className="row-gap">
+                <input id="jev-key" type="password" autoComplete="off" spellCheck={false} value={key} onChange={(e) => setKey(e.target.value)} placeholder="Paste your key" />
+                <Button tone="primary" type="submit" disabled={!key.trim() || busy}>Save and test</Button>
+              </div>
+              <p className="field-hint">Get one at <a href="https://console.typesafe.ai/keys" target="_blank" rel="noreferrer">console.typesafe.ai/keys</a>, or export <code>TYPESAFE_API_KEY</code> in your shell.</p>
+            </form>
+          </SettingRow>
+        ) : null}
+        {s && s.calls ? (
+          <SettingRow label="So far" hint={(
+            <>
+              {s.calls} calls, {s.errors} failed{s.model ? `, model ${s.model}` : ''}.{' '}
+              {s.costUsd === null ? <>
+                Total cost unknown. {s.knownCostUsd === null ? 'The recorded subtotal is unavailable.' : `$${s.knownCostUsd.toFixed(4)} estimated from calls with usable token counts.`}{' '}
+                {s.unknownUsageCalls ? `${s.unknownUsageCalls} successful call${s.unknownUsageCalls === 1 ? ' has' : 's have'} no usable token count.` : null}
+              </> : `$${s.costUsd.toFixed(4)} estimated from reported usage in all.`}
+            </>
+          )} />
+        ) : null}
+      </SettingsGroup>
+
+      {projects?.length ? (
+        <SettingsGroup title="In each project">
+          {projects.map((p) => (
+            <SettingRow key={p.id} label={<span className="settings-project-name">{p.name}</span>} control={<JevModePicker project={p} />} />
+          ))}
+        </SettingsGroup>
+      ) : null}
+
+      <p className="settings-foot">
         Jev is TypeSafe’s decision model. It reads each new card and suggests what to do with it, how much it matters,
         and whether it repeats another card. It receives the project name, card key, type, title, description, priority and criteria,
         plus keys, titles and statuses of possible duplicates. Project files and transcripts are not included.
         Cost is estimated from reported input-token usage; it is not a bill. Missing or invalid token counts leave the total unknown.
       </p>
-
-      <div className="settings-row">
-        {s?.configured === 'env' ? (
-          <p>Using <code>TYPESAFE_API_KEY</code> from your shell.</p>
-        ) : s?.configured === 'saved' ? (
-          <p>A key is saved for Wanigan’s core, readable by your user only. It is never shown again.</p>
-        ) : (
-          <form className="jev-key" onSubmit={(e) => { e.preventDefault(); if (key.trim()) void save(); }}>
-            <label htmlFor="jev-key">TypeSafe API key</label>
-            <div className="row-gap">
-              <input id="jev-key" type="password" autoComplete="off" spellCheck={false} value={key} onChange={(e) => setKey(e.target.value)} placeholder="Paste your key" />
-              <Button tone="primary" type="submit" disabled={!key.trim() || busy}>Save and test</Button>
-            </div>
-            <p className="field-hint">Get one at <a href="https://console.typesafe.ai/keys" target="_blank" rel="noreferrer">console.typesafe.ai/keys</a>, or export <code>TYPESAFE_API_KEY</code> in your shell.</p>
-          </form>
-        )}
-        {s?.configured ? (
-          <div className="row-gap">
-            <Button size="s" onClick={() => test()} disabled={busy}>Test the connection</Button>
-            {s.configured === 'saved' ? <Button size="s" tone="quiet" onClick={() => attempt(() => call('jev.forgetKey', {}), fail).then(() => status.reload())}>Forget the key</Button> : null}
-          </div>
-        ) : null}
-        {s && s.calls ? (
-          <p className="faint small">
-            {s.calls} calls so far, {s.errors} failed{s.model ? `, model ${s.model}` : ''}.{' '}
-            {s.costUsd === null ? <>
-              Total cost unknown. {s.knownCostUsd === null ? 'The recorded subtotal is unavailable.' : `$${s.knownCostUsd.toFixed(4)} estimated from calls with usable token counts.`}{' '}
-              {s.unknownUsageCalls ? `${s.unknownUsageCalls} successful call${s.unknownUsageCalls === 1 ? ' has' : 's have'} no usable token count.` : null}
-            </> : `$${s.costUsd.toFixed(4)} estimated from reported usage in all.`}
-          </p>
-        ) : null}
-      </div>
-
-      {projects?.length ? (
-        <>
-          <h3 className="settings-sub">In each project</h3>
-          <ul className="settings-projects">
-            {projects.map((p) => (
-              <li key={p.id}>
-                <span className="settings-project-name">{p.name}</span>
-                <JevModePicker project={p} />
-              </li>
-            ))}
-          </ul>
-        </>
-      ) : null}
-    </section>
+    </>
   );
 }

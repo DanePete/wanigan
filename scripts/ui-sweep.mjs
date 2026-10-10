@@ -207,7 +207,13 @@ try {
       ['decisions', `#/p/${ns}/decisions`, '.decision'],
       ['activity', `#/p/${ns}/activity`, '.activity-item'],
       ['accounts', '#/accounts', '.account'],
-      ['settings', '#/settings', '#set-general'],
+      // Settings, one section at a time: #/settings opens its first, Appearance.
+      ['settings', '#/settings', '#set-appearance'],
+      ['settings-general', '#/settings/general', '#set-general'],
+      ['settings-live', '#/settings/live', '#set-live'],
+      ['settings-updates', '#/settings/updates', '#set-updates'],
+      ['settings-phone', '#/settings/phone', '#set-phone'],
+      ['settings-jev', '#/settings/jev', '#set-jev'],
       ['skills', '#/skills', '.prose h3'],
       ['mcp', '#/mcp', '.mcp-row'],
       ['paused-project', '#/p/FIE/board', '.banner-paused'],
@@ -1199,7 +1205,7 @@ try {
     // The project's settings are in its name's menu, in the project bar.
     await page.click('.project-name-button');
     await page.click('.menu-list [role="menuitem"]:has-text("Project settings")');
-    await page.waitForSelector('.dialog .dialog-section');
+    await page.waitForSelector('.dialog .section-label');
     await page.waitForTimeout(250);
     await page.screenshot({ path: join(out, `${theme}-project-settings.png`) });
     await page.keyboard.press('Escape');
@@ -1283,8 +1289,9 @@ try {
     await page.waitForTimeout(250);
     await page.screenshot({ path: join(out, `${theme}-history-resume.png`) });
     await page.keyboard.press('Escape');
-    // A session, Running and History each explain themselves: How this works opens their picture, and Esc closes it.
-    for (const [name, hash] of [['session', sessionHref.replace(/^.*#/, '#')], ['running', '#/running'], ['history', `#/p/${ns}/history`]]) {
+    // A session, Running, History, Needs you and Settings' pages each explain themselves: How this works opens their picture, and Esc closes it.
+    for (const [name, hash] of [['session', sessionHref.replace(/^.*#/, '#')], ['running', '#/running'], ['history', `#/p/${ns}/history`],
+      ['needs', '#/needs'], ['accounts', '#/accounts'], ['skills', '#/skills'], ['mcp', '#/mcp'], ['settings-local', '#/settings/local'], ['settings-phone', '#/settings/phone']]) {
       await page.goto(`${base}${hash}`);
       await page.click('button:has-text("How this works")', { timeout: 8000 }).catch(() => failures.push(`${theme}/${name}-how: no How this works`));
       await page.waitForSelector('.dialog .how-lane', { timeout: 4000 }).catch(() => failures.push(`${theme}/${name}-how: the picture never showed`));
@@ -1401,16 +1408,16 @@ try {
     await page.waitForSelector('.mcp-status.tone-ok', { timeout: 8000 }).catch(() => failures.push(`${theme}: Check connections never showed a status`));
     await page.waitForTimeout(250);
     await page.screenshot({ path: join(out, `${theme}-mcp-checked.png`) });
-    await page.click('.topbar-tools [role="radio"]:has-text("Store")');
-    await page.waitForSelector('.store-card');
+    await page.click('.topbar-tools [role="tab"]:has-text("Store")');
+    await page.waitForSelector('.store-item');
     await page.waitForTimeout(250);
     await page.screenshot({ path: join(out, `${theme}-mcp-store.png`) });
-    await page.click('.store-card:has-text("GitHub") button');
+    await page.click('.store-item:has-text("GitHub") button');
     await page.waitForSelector('.dialog .plan-command', { timeout: 8000 }).catch(() => failures.push(`${theme}: the GitHub add plan never showed`));
     await page.waitForTimeout(250);
     await page.screenshot({ path: join(out, `${theme}-mcp-add-key.png`) });
     await page.keyboard.press('Escape');
-    await page.click('.store-card:has-text("Notion") button');
+    await page.click('.store-item:has-text("Notion") button');
     await page.waitForSelector('.dialog .plan-command', { timeout: 8000 }).catch(() => failures.push(`${theme}: the Notion add plan never showed`));
     await page.click('.dialog [role="radio"]:has-text("The repository")');
     await page.waitForSelector('.dialog .plan-command', { timeout: 8000 });
@@ -1418,7 +1425,7 @@ try {
     await page.screenshot({ path: join(out, `${theme}-mcp-add.png`) });
     await page.keyboard.press('Escape');
     // Gemini CLI: one sign-in, picked as itself; its repository scope runs trusted for that one command.
-    await page.click('.store-card:has-text("Linear") button');
+    await page.click('.store-item:has-text("Linear") button');
     await page.waitForSelector('.dialog .plan-command', { timeout: 8000 });
     await page.click('#mcp-account');
     await page.click('.sel-list [role="option"]:has-text("Gemini CLI")').catch(() => failures.push(`${theme}: the add dialog does not offer Gemini CLI`));
@@ -1429,7 +1436,7 @@ try {
     await page.screenshot({ path: join(out, `${theme}-mcp-add-gemini.png`) });
     await page.keyboard.press('Escape');
     // Gemini's own servers, filtered.
-    await page.click('.topbar-tools [role="radio"]:has-text("Installed")');
+    await page.click('.topbar-tools [role="tab"]:has-text("Installed")');
     await page.click('.topbar-tools [role="radio"]:has-text("Gemini CLI")');
     await page.waitForSelector('.mcp-row:has-text("northstar-search")', { timeout: 3000 }).catch(() => failures.push(`${theme}: the MCP view does not list Gemini CLI’s servers`));
     if (await page.$('.mcp-row:has-text("drupal-db")')) failures.push(`${theme}: the Gemini CLI filter shows a Claude Code server`);
@@ -1571,7 +1578,7 @@ try {
     await bare.screenshot({ path: join(out, `${theme}-needs-not-installed.png`) });
     await bare.goto(`${base}#/accounts`);
     await bare.waitForSelector('.account-status:has-text("Codex is not installed")', { timeout: 5000 }).catch(() => failures.push(`${theme}/not installed: Accounts does not say so`));
-    if (await bare.$('section[aria-labelledby="acct-codex"] .account-list button:has-text("Sign in")')) failures.push(`${theme}/not installed: Accounts offers to sign in to a CLI that is not there`);
+    if (await bare.$('.account-group-codex .account button:has-text("Sign in")')) failures.push(`${theme}/not installed: Accounts offers to sign in to a CLI that is not there`);
     await bare.screenshot({ path: join(out, `${theme}-accounts-not-installed.png`) });
     await bare.evaluate(() => window.__wgCommand('new-session'));
     await bare.click('.dialog [role="radio"]:has-text("Codex")');
@@ -1922,22 +1929,22 @@ try {
     await page.keyboard.press('Escape');
 
     // Settings reach the app as patches.
-    await page.goto(`${base}#/settings`);
+    await page.goto(`${base}#/settings/general`);
     await page.waitForSelector('#set-general');
-    await page.click('.settings-notify [role="radio"]:has-text("Only permission")');
-    await page.click('.settings .check-row input');
+    await page.click('section[aria-labelledby="set-general"] [role="radio"]:has-text("Only permission")');
+    await page.click('section[aria-labelledby="set-general"] input[role="switch"]');
     const app = await page.evaluate(() => window.__wgApp.settings);
     if (app.notifications !== 'urgent' || app.keepAwake !== false) failures.push(`${theme}/settings: patches did not reach the app (${JSON.stringify(app)})`);
-    // The General group by its heading (Appearance comes first on the page now).
-    if (!/Off: the Mac sleeps/.test(await page.textContent('section[aria-labelledby="set-general"]'))) failures.push(`${theme}/settings: turning keep-awake off is not said`);
+    // The General section by its heading: one section at a time.
+    if (!/Off: this computer sleeps/.test(await page.textContent('section[aria-labelledby="set-general"]'))) failures.push(`${theme}/settings: turning keep-awake off is not said`);
 
-    // Local models: LM Studio found, its server's real port, Qwen on this Mac; the demo downloads nothing.
+    // Local models: LM Studio found, its server's real port, Qwen on this computer; the demo downloads nothing.
+    await page.goto(`${base}#/settings/local`);
     const localSection = await page.waitForSelector('section[aria-labelledby="set-local"] .local-module', { timeout: 5000 })
       .then(() => page.textContent('section[aria-labelledby="set-local"]'), () => '');
-    if (!/Server running on port 1234/.test(localSection) || !/Qwen3-Coder 30B/.test(localSection) || !/On this Mac/.test(localSection)) {
+    if (!/Server running on port 1234/.test(localSection) || !/Qwen3-Coder 30B/.test(localSection) || !/On this computer/.test(localSection)) {
       failures.push(`${theme}/local: Settings does not show LM Studio and Qwen (${localSection.slice(0, 160)})`);
     }
-    await page.$eval('section[aria-labelledby="set-local"]', (el) => el.scrollIntoView({ block: 'start' }));
     await page.waitForTimeout(150);
     await page.screenshot({ path: join(out, `${theme}-settings-local.png`) });
     // A session on Qwen says so in its header; stopped at once, so nothing after is disturbed.
@@ -1959,8 +1966,8 @@ try {
       await page.click('#session-panel-tab-turns').catch(() => {});
       await page.evaluate((id) => window.wanigan.call('sessions.stop', { id }), localSession.id);
     }
-    await page.goto(`${base}#/settings`);
-    await page.waitForSelector('#set-general');
+    await page.goto(`${base}#/settings/updates`);
+    await page.waitForSelector('#set-updates');
 
     // Updates: the notification tray asks once (the bell says there is something), nothing is checked before a yes,
     // and a new version is news in the tray and in Settings.
@@ -1980,7 +1987,7 @@ try {
     await page.waitForSelector('.tray-update-ask', { state: 'detached', timeout: 3000 }).catch(() => failures.push(`${theme}/updates: answering did not put the question away`));
     await page.keyboard.press('Escape');
     if ((await page.evaluate(() => window.__wgApp.settings.updateChecks)) !== 'daily') failures.push(`${theme}/updates: "Check daily" did not reach the app`);
-    if (!(await page.isChecked('section[aria-labelledby="set-updates"] .check-row input'))) failures.push(`${theme}/updates: Settings does not show the daily check as on`);
+    if (!(await page.isChecked('section[aria-labelledby="set-updates"] input[role="switch"]'))) failures.push(`${theme}/updates: Settings does not show the daily check as on`);
     await page.evaluate(() => {
       window.__wgUpdateAnswer = {
         state: 'available', checkedAt: Date.now(),
@@ -2021,6 +2028,14 @@ try {
     }));
     if (alerts.roles.join() !== 'alert,status') failures.push(`${theme}/alerts: roles ${alerts.roles.join()}, wanted one urgent alert and one status`);
     if (alerts.seen !== open.length) failures.push(`${theme}/alerts: told the app it showed ${alerts.seen} of ${open.length}`);
+    // Said in the status line's own place, above it: the work moves up, and nothing is drawn over it.
+    const placed = await page.evaluate(() => {
+      const list = document.querySelector('.alerts')?.getBoundingClientRect();
+      const line = document.querySelector('.status-line')?.getBoundingClientRect();
+      const work = document.querySelector('.work')?.getBoundingClientRect();
+      return { inHost: !!document.querySelector('.status-host > .alerts'), above: !!list && !!line && list.bottom <= line.top + 0.5, clear: !!list && !!work && list.top >= work.bottom - 0.5 };
+    });
+    if (!placed.inHost || !placed.above || !placed.clear) failures.push(`${theme}/alerts: not said in the status line's place, clear of the view (${JSON.stringify(placed)})`);
     await page.screenshot({ path: join(out, `${theme}-alerts.png`) });
     await page.click('.alert[role="alert"] button:has-text("Open")');
     await page.waitForSelector('.xterm-rows', { timeout: 8000 }).catch(() => failures.push(`${theme}/alerts: Open did not go to the session asking`));

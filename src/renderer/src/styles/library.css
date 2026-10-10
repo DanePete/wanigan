@@ -1,17 +1,20 @@
-/* Skills and MCP servers: a list on the left, what you picked on the right. */
+/* Settings › Skills and MCP servers. Skills: the list as a panel on the left,
+   the one picked open on the ground beside it. MCP servers: each place a
+   label over one panel of rows, and the store as tiles. */
 
 .library {
   flex: 1;
   min-height: 0;
   display: grid;
-  grid-template-columns: minmax(280px, 380px) minmax(0, 1fr);
+  grid-template-columns: minmax(var(--panel-left-w), 32%) minmax(0, 1fr);
 }
 
 .library-list {
   min-height: 0;
   overflow-y: auto;
   padding: var(--space-2) 0 var(--space-8);
-  border-right: 1px solid var(--line);
+  border-right: var(--hairline) solid var(--line);
+  background: var(--surface);
 }
 
 .library-detail {
@@ -23,11 +26,11 @@
 /* ── groups and rows ─────────────────────────────────────────────────────── */
 
 .lib-group {
-  padding: var(--space-3) var(--space-3) var(--space-1);
+  padding: var(--space-3) var(--space-2) var(--space-1);
 }
 
 .lib-group + .lib-group {
-  border-top: 1px solid var(--line);
+  border-top: var(--hairline) solid var(--line);
 }
 
 .lib-group-head {
@@ -38,46 +41,47 @@
   display: flex;
   align-items: center;
   gap: var(--space-2);
+  min-width: 0;
   margin: 0;
   font-size: var(--text-sm);
   font-weight: 600;
 }
 
-.lib-agent {
-  margin-left: auto;
-  flex: none;
-  font-size: var(--text-xs);
-  font-weight: 500;
-  color: var(--faint);
-}
-
-.lib-where {
-  margin: 2px 0 0;
-  font-size: var(--text-xs);
-  color: var(--faint);
+.lib-group-name {
+  flex: 1;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.lib-group-note {
-  margin: 2px 0 0;
-  font-size: var(--text-xs);
+.lib-where {
+  margin: var(--gap-hair) 0 0;
+  overflow: hidden;
   color: var(--faint);
+  font-size: var(--text-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lib-group-note {
+  margin: var(--gap-hair) 0 0;
+  color: var(--faint);
+  font-size: var(--text-xs);
 }
 
 .lib-rows {
-  list-style: none;
+  display: grid;
+  gap: var(--gap-hair);
   margin: 0;
   padding: 0;
-  display: grid;
-  gap: 1px;
+  list-style: none;
 }
 
 .lib-row {
-  width: 100%;
   display: grid;
-  gap: 2px;
+  gap: var(--gap-hair);
+  width: 100%;
   padding: var(--space-2);
   border: 0;
   border-radius: var(--radius-m);
@@ -86,6 +90,7 @@
   font: inherit;
   text-align: left;
   cursor: pointer;
+  transition: background var(--dur-fast) var(--ease);
 }
 
 .lib-row:hover {
@@ -94,7 +99,10 @@
 
 .lib-row.active {
   background: var(--water-soft);
-  box-shadow: inset 2px 0 0 var(--water);
+}
+
+.lib-row.active .lib-row-name {
+  color: var(--water-text);
 }
 
 .lib-row:focus-visible {
@@ -115,14 +123,15 @@
   overflow: hidden;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
-  font-size: var(--text-sm);
   color: var(--muted);
+  font-size: var(--text-sm);
 }
 
+/* The live view's part trace still draws its kinds as these (components/live/PartTrace.tsx). */
 .lib-tag {
   flex: none;
   padding: 0 var(--space-1);
-  border: 1px solid var(--line-strong);
+  border: var(--hairline) solid var(--line-strong);
   border-radius: var(--radius-s);
   color: var(--muted);
   font-size: var(--text-xs);
@@ -131,9 +140,9 @@
 }
 
 .lib-foot {
-  padding: var(--space-4) var(--space-5) 0;
+  padding: var(--space-4) var(--space-4) 0;
+  color: var(--faint);
   font-size: var(--text-sm);
-  color: var(--muted);
 }
 
 .lib-foot p {
@@ -145,17 +154,17 @@
   font-size: var(--text-xs);
 }
 
-/* ── the thing you picked ────────────────────────────────────────────────── */
+/* ── the one picked ─────────────────────────────────────────────────────── */
 
 .lib-detail-head {
   padding: var(--space-6) var(--space-8) var(--space-5);
-  border-bottom: 1px solid var(--line);
+  border-bottom: var(--hairline) solid var(--line);
 }
 
 .lib-kicker {
   margin: 0 0 var(--space-1);
-  font-size: var(--text-sm);
   color: var(--faint);
+  font-size: var(--text-sm);
 }
 
 .lib-detail-head h2 {
@@ -187,8 +196,8 @@
 }
 
 .lib-facts dd {
-  margin: 0;
   min-width: 0;
+  margin: 0;
 }
 
 .lib-path {
@@ -203,28 +212,20 @@
 }
 
 .lib-detail-body {
+  max-width: 90ch;
   padding: var(--space-5) var(--space-8) var(--space-12);
 }
 
 .lib-frontmatter {
-  max-width: 72ch;
   margin-bottom: var(--space-4);
-  font-size: var(--text-sm);
-}
-
-.lib-frontmatter summary {
-  color: var(--muted);
-  cursor: pointer;
 }
 
 .lib-frontmatter dl {
   display: grid;
   grid-template-columns: max-content minmax(0, 1fr);
   gap: var(--space-1) var(--space-4);
-  margin: var(--space-2) 0 0;
-  padding: var(--space-3);
-  border-radius: var(--radius-m);
-  background: var(--sunken);
+  margin: 0;
+  font-size: var(--text-sm);
 }
 
 .lib-frontmatter dl > div {
@@ -240,7 +241,7 @@
   overflow-wrap: anywhere;
 }
 
-/* ── plans: what a click would change ────────────────────────────────────── */
+/* ── plans: what a click would change (in a dialog: sunk, never a box in the box) ── */
 
 .plan {
   display: grid;
@@ -256,35 +257,34 @@
 }
 
 .plan-files {
-  list-style: none;
-  max-height: 220px;
+  max-height: calc(5 * var(--space-12));
   margin: 0;
   padding: var(--space-1) 0;
   overflow-y: auto;
-  border: 1px solid var(--line);
   border-radius: var(--radius-m);
   background: var(--sunken);
   font-size: var(--text-sm);
+  list-style: none;
 }
 
 .plan-files li {
   display: flex;
   justify-content: space-between;
   gap: var(--space-4);
-  padding: 2px var(--space-3);
+  padding: var(--gap-hair) var(--space-3);
 }
 
 .plan-files .mono {
   overflow-wrap: anywhere;
 }
 
+/* Something would be replaced: said plainly, with the box to tick, on the sunk tint. */
 .plan-warn {
   display: grid;
   gap: var(--space-2);
   padding: var(--space-3);
-  border: 1px solid var(--amber-line);
   border-radius: var(--radius-m);
-  background: var(--amber-soft);
+  background: var(--sunken);
 }
 
 .plan-warn .check-row {
@@ -295,10 +295,9 @@
 .plan-command {
   margin: 0;
   padding: var(--space-3);
-  border: 1px solid var(--line);
   border-radius: var(--radius-m);
   background: var(--sunken);
-  font: 400 var(--text-sm) / 1.55 var(--font-mono);
+  font: 400 var(--text-sm) / var(--leading-loose) var(--font-mono);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   user-select: all;
@@ -306,19 +305,16 @@
 
 /* ── MCP servers ─────────────────────────────────────────────────────────── */
 
-.mcp {
-  max-width: 1040px;
-}
-
-.mcp-group {
-  margin-bottom: var(--space-8);
+.settings-body.mcp {
+  gap: var(--space-8);
 }
 
 .mcp-group-head {
   display: flex;
+  flex-wrap: wrap;
   align-items: flex-end;
-  gap: var(--space-4);
-  margin-bottom: var(--space-3);
+  gap: var(--space-2) var(--space-4);
+  margin-bottom: var(--space-2);
 }
 
 .mcp-group-text {
@@ -331,13 +327,7 @@
   align-items: center;
   gap: var(--space-2);
   margin: 0;
-  font: 600 var(--text-lg) / var(--leading-tight) var(--font-ui);
-}
-
-.lib-agent-inline {
-  font-size: var(--text-xs);
-  font-weight: 500;
-  color: var(--faint);
+  font: 600 var(--text-title) / var(--leading-tight) var(--font-ui);
 }
 
 .mcp-check {
@@ -349,21 +339,20 @@
 
 .mcp-note {
   max-width: 72ch;
-  margin: calc(-1 * var(--space-1)) 0 var(--space-3);
-  font-size: var(--text-sm);
+  margin: 0 0 var(--space-2);
   color: var(--muted);
+  font-size: var(--text-sm);
 }
 
+/* One panel of rows: the hairline divides them, no row is a box of its own. */
 .mcp-list {
-  list-style: none;
   margin: 0;
   padding: 0;
-  display: grid;
-  gap: 1px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius-m);
   overflow: hidden;
-  background: var(--line);
+  border: var(--hairline) solid var(--line);
+  border-radius: var(--radius-l);
+  background: var(--surface);
+  list-style: none;
 }
 
 .mcp-row {
@@ -371,7 +360,10 @@
   align-items: flex-start;
   gap: var(--space-3);
   padding: var(--space-3) var(--space-4);
-  background: var(--surface);
+}
+
+.mcp-row + .mcp-row {
+  border-top: var(--hairline) solid var(--line);
 }
 
 .mcp-row.off .mcp-main {
@@ -380,11 +372,11 @@
 
 .mcp-dot {
   flex: none;
-  width: 9px;
-  height: 9px;
-  margin-top: 7px;
+  width: var(--dot);
+  height: var(--dot);
+  margin-top: var(--space-2);
   border-radius: var(--radius-round);
-  box-shadow: inset 0 0 0 1.5px var(--line-strong);
+  box-shadow: inset 0 0 0 var(--hairline) var(--faint);
 }
 
 .mcp-dot.dot-ok {
@@ -397,20 +389,17 @@
   box-shadow: none;
 }
 
+/* Needs you to sign it in: amber, with the ring that keeps it seen on a light panel. */
 .mcp-dot.dot-auth {
-  background: var(--amber);
-  box-shadow: none;
-}
-
-.mcp-dot:is(.dot-pending, .dot-off, .dot-unknown) {
-  box-shadow: inset 0 0 0 2px var(--faint);
+  background: var(--amber-fill);
+  box-shadow: 0 0 0 var(--hairline) var(--amber);
 }
 
 .mcp-main {
   flex: 1;
   min-width: 0;
   display: grid;
-  gap: 2px;
+  gap: var(--gap-hair);
 }
 
 .mcp-main p {
@@ -422,20 +411,25 @@
   flex-wrap: wrap;
   align-items: center;
   gap: var(--space-2);
-  font-weight: 600;
+  font-weight: 500;
+}
+
+.mcp-scope {
+  display: inline-flex;
+  border-radius: var(--radius-s);
 }
 
 .mcp-target {
-  font-size: var(--text-sm);
-  color: var(--muted);
   overflow: hidden;
+  color: var(--muted);
+  font-size: var(--text-sm);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .mcp-pairs {
-  font-size: var(--text-xs);
   color: var(--faint);
+  font-size: var(--text-xs);
   overflow-wrap: anywhere;
 }
 
@@ -478,12 +472,12 @@
 }
 
 .mcp-extra ul {
-  list-style: none;
-  margin: 0;
-  padding: 0;
   display: grid;
   gap: var(--space-1);
+  margin: 0;
+  padding: 0;
   font-size: var(--text-sm);
+  list-style: none;
 }
 
 .mcp-extra li {
@@ -497,31 +491,38 @@
 }
 
 .mcp-foot {
-  padding: 0;
+  display: grid;
+  gap: var(--space-1);
+}
+
+.mcp-foot p {
+  margin: 0;
+  overflow-wrap: anywhere;
 }
 
 /* ── the store ───────────────────────────────────────────────────────────── */
 
 .store {
-  list-style: none;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(calc(6 * var(--space-12)), 1fr));
+  gap: var(--space-3);
   margin: 0;
   padding: 0;
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-  gap: var(--space-3);
+  list-style: none;
 }
 
-.store-card {
+/* A tile on the ground: one hairline, never a box inside it. */
+.store-item {
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
   padding: var(--space-4);
-  border: 1px solid var(--line);
+  border: var(--hairline) solid var(--line);
   border-radius: var(--radius-l);
   background: var(--surface);
 }
 
-.store-card p {
+.store-item p {
   margin: 0;
 }
 
@@ -533,11 +534,12 @@
 }
 
 .store-name {
-  font: 600 var(--text-lg) / var(--leading-tight) var(--font-ui);
+  font: 600 var(--text-title) / var(--leading-tight) var(--font-ui);
 }
 
 .store-purpose {
   color: var(--muted);
+  font-size: var(--text-sm);
 }
 
 .store-facts {
@@ -546,13 +548,11 @@
   gap: var(--space-1);
 }
 
-.lib-tag.tag-key {
-  border-color: var(--amber-line);
-  color: var(--amber);
-}
-
 .store-added {
-  color: var(--green);
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  color: var(--muted);
 }
 
 .store-foot {
@@ -566,18 +566,14 @@
 .store-source {
   flex: 1;
   min-width: 0;
-  font-size: var(--text-xs);
-  color: var(--faint);
   overflow: hidden;
+  color: var(--faint);
+  font-size: var(--text-xs);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 @media (max-width: 1180px) {
-  .library {
-    grid-template-columns: minmax(250px, 320px) minmax(0, 1fr);
-  }
-
   .lib-detail-head,
   .lib-detail-body {
     padding-left: var(--space-6);

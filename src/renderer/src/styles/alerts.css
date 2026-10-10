@@ -1,140 +1,204 @@
-/* Alerts while Wanigan is in front: top-right, under the toolbar, over the
-   drawer. Amber because each one is something that needs you; red when it is a
-   failure. Urgent ones carry a solid edge and stay; the rest fade. */
+/* Alerts while Wanigan is in front (components/Alerts.tsx): lines in the status
+   line's own place, above it, pushing the work up rather than covering a
+   control. Amber because each one is something that needs you; red when it is a
+   failure. Urgent ones stay; the rest fade. */
 
 .alerts {
-  position: fixed;
-  top: calc(var(--topbar-h) + var(--space-3));
-  right: var(--space-4);
-  z-index: 45;
-  width: min(360px, calc(100vw - var(--rail-w) - 2 * var(--space-4)));
+  order: -1;
   display: grid;
+  min-width: 0;
+}
+
+/* With no status line on screen: at the window's foot, clear of the rail. */
+.alerts.alerts-floating {
+  position: fixed;
+  right: var(--space-4);
+  bottom: var(--space-4);
+  left: calc(var(--rail-w) + var(--space-4));
+  z-index: 45;
   gap: var(--space-2);
 }
 
-.alert {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  gap: var(--space-3);
-  align-items: start;
-  padding: var(--space-3) var(--space-3) var(--space-3) var(--space-4);
-  border: 1px solid var(--line-strong);
-  border-left: 3px solid var(--amber-line);
-  border-radius: var(--radius-m);
-  background: var(--raised);
+.alerts-floating .alert {
+  border-radius: var(--radius-l);
   box-shadow: var(--elev-float);
-  animation: alert-in var(--dur-slow) var(--ease) both;
 }
 
-.alert-urgent {
-  border-left-color: var(--amber);
+.alert {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
+  min-height: calc(var(--status-h) + var(--space-2));
+  padding: var(--space-1) var(--space-2) var(--space-1) var(--space-4);
+  border-top: var(--hairline) solid var(--line);
+  background: var(--raised);
+  box-shadow: inset var(--track-pad) 0 0 var(--amber);
+  animation: alert-in var(--dur) var(--ease) both;
 }
 
 .alert-failed {
-  border-left-color: var(--red);
+  box-shadow: inset var(--track-pad) 0 0 var(--red);
+}
+
+.alert-review {
+  box-shadow: inset var(--track-pad) 0 0 var(--water);
 }
 
 .alert.is-leaving {
-  animation: alert-out var(--dur-slow) var(--ease) both;
+  animation: alert-out var(--dur) var(--ease-in) both;
   pointer-events: none;
 }
 
 .alert-icon {
   display: grid;
+  flex: none;
   place-items: center;
-  width: 28px;
-  height: 28px;
-  margin-top: 2px;
-  border-radius: var(--radius-round);
-  background: var(--amber-soft);
   color: var(--amber);
 }
 
 .alert-failed .alert-icon {
-  background: var(--red-soft);
   color: var(--red);
 }
 
+.alert-review .alert-icon {
+  color: var(--water-text);
+}
+
 .alert-text {
-  min-width: 0;
-  display: grid;
-  gap: 2px;
-}
-
-.alert-text p {
-  margin: 0;
-}
-
-.alert-where {
   display: flex;
-  align-items: center;
+  flex: 1;
+  align-items: baseline;
   gap: var(--space-2);
   min-width: 0;
-  font-size: var(--text-xs);
-  color: var(--muted);
-}
-
-.alert-where span:last-child {
+  margin: 0;
   overflow: hidden;
-  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .alert-title {
-  font-weight: 600;
+  flex: none;
+  max-width: 60%;
+  overflow: hidden;
   color: var(--fg);
-  overflow-wrap: anywhere;
+  font-weight: 500;
+  text-overflow: ellipsis;
 }
 
 .alert-body {
-  font-size: var(--text-sm);
-  color: var(--muted);
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
+  min-width: 0;
   overflow: hidden;
-  overflow-wrap: anywhere;
+  color: var(--muted);
+  font-size: var(--text-sm);
+  text-overflow: ellipsis;
+}
+
+.alert-where {
+  flex: none;
+  margin-left: auto;
+  padding-left: var(--space-2);
+  color: var(--faint);
+  font-size: var(--text-sm);
 }
 
 .alert-actions {
   display: flex;
+  flex: none;
   align-items: center;
   gap: var(--space-1);
 }
 
-.alert-x {
-  display: grid;
-  place-items: center;
-  width: 26px;
-  height: 26px;
-  padding: 0;
-  border: 0;
-  border-radius: var(--radius-round);
-  background: transparent;
-  color: var(--faint);
-  cursor: pointer;
-}
-
-.alert-x:hover {
-  background: var(--hover);
-  color: var(--fg);
-}
-
 .alerts-more {
-  justify-self: end;
+  padding: var(--space-1) var(--space-4);
+  border-top: var(--hairline) solid var(--line);
+  background: var(--raised);
   font-size: var(--text-sm);
 }
 
 @keyframes alert-in {
   from {
     opacity: 0;
-    transform: translateX(16px);
+    transform: translateY(var(--rise));
   }
 }
 
 @keyframes alert-out {
   to {
     opacity: 0;
-    transform: translateX(16px);
   }
+}
+
+/* ── the core (components/CoreProblem.tsx) ───────────────────────────────── */
+
+/* The core could not start, or is from another build: one band above any view, its actions at its end. */
+.core-problem {
+  display: flex;
+  flex: none;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: var(--space-3) var(--space-4);
+  padding: var(--space-4) var(--space-6);
+  border-bottom: var(--hairline) solid var(--line);
+  background: var(--surface);
+  box-shadow: inset var(--track-pad) 0 0 var(--red);
+}
+
+.core-problem.other-build {
+  box-shadow: inset var(--track-pad) 0 0 var(--water);
+}
+
+.core-problem-icon {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: var(--control-m);
+  height: var(--control-m);
+  border-radius: var(--radius-round);
+  background: var(--red-soft);
+  color: var(--red);
+}
+
+.other-build .core-problem-icon {
+  background: var(--water-soft);
+  color: var(--water-text);
+}
+
+.core-problem-text {
+  display: grid;
+  flex: 1 1 48ch;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.core-problem h2 {
+  margin: 0;
+  font: 600 var(--text-title) / var(--leading-tight) var(--font-ui);
+}
+
+.core-problem p {
+  max-width: 90ch;
+  margin: 0;
+}
+
+.core-problem-reason {
+  font-family: var(--font-mono);
+  font-size: var(--text-code);
+  overflow-wrap: anywhere;
+}
+
+.core-problem-more {
+  color: var(--muted);
+  font-size: var(--text-sm);
+}
+
+.core-problem .mono {
+  overflow-wrap: anywhere;
+}
+
+.core-problem-actions {
+  display: flex;
+  flex: none;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
 }

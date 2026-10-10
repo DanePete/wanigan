@@ -138,10 +138,16 @@ function plan(w) {
     { name: 'Push', hash: `#/p/${ns.key}/changes`, open: click('.remote-actions button:has-text("Push")'), scope: '.dialog', ready: '.dialog .push-commits li' },
     ...w.sessions.map((s) => ({ name: `Session › ${s.title}${s.live ? '' : ' (ended)'}`, session: s.ref, ready: 'main .session .xterm-rows' })),
     { name: 'Accounts', hash: '#/accounts', ready: '.account' },
-    { name: 'Settings', hash: '#/settings', ready: '#set-general' },
+    { name: 'Settings', hash: '#/settings', ready: '#set-appearance' },
+    { name: 'Settings › General', hash: '#/settings/general', ready: '#set-general' },
+    { name: 'Settings › Live view', hash: '#/settings/live', ready: '#set-live' },
+    { name: 'Settings › Updates', hash: '#/settings/updates', ready: '#set-updates' },
+    { name: 'Settings › Local models', hash: '#/settings/local', ready: '#set-local' },
+    { name: 'Settings › Phone', hash: '#/settings/phone', ready: '#set-phone' },
+    { name: 'Settings › Jev', hash: '#/settings/jev', ready: '#set-jev' },
     { name: 'Skills', hash: '#/skills', ready: '.lib-row' },
     { name: 'MCP servers', hash: '#/mcp', ready: '.mcp-row' },
-    { name: 'MCP store', hash: '#/mcp', open: click('.topbar-tools [role="radio"]:has-text("Store")'), ready: '.store-card' },
+    { name: 'MCP store', hash: '#/mcp', open: click('.topbar-tools [role="tab"]:has-text("Store")'), ready: '.store-item' },
     { name: 'Search and commands', hash: board, open: press('Meta+k'), scope: '.palette' },
     { name: 'Keyboard shortcuts', hash: board, open: press('Shift+Slash'), scope: '.dialog', ready: '.shortcuts' },
     { name: 'How this works', hash: board, open: click('.board-how button'), scope: '.dialog', ready: '.how-flow' },
@@ -166,8 +172,8 @@ function plan(w) {
     { name: 'History › reader', hash: `#/p/${ns.key}/history`, open: click('.hrow .hrow-actions button:has-text("Read")'), scope: '.reader', ready: '.reader .turn' },
     { name: 'History › resume', hash: `#/p/${ns.key}/history`, open: click('.hrow:has-text("Expired coupon codes") button:has-text("Resume")'), scope: '.dialog', ready: '.dialog .choose-accounts' },
     { name: 'Skills › copy', hash: '#/skills', open: click('.lib-actions button:has-text("Copy to a project")'), scope: '.dialog', ready: '.dialog .plan-files li' },
-    { name: 'MCP › add', hash: '#/mcp', open: async (page) => { await click('.topbar-tools [role="radio"]:has-text("Store")')(page); await click('.store-card:has-text("GitHub") button')(page); }, scope: '.dialog', ready: '.dialog .plan-command' },
-    { name: 'Accounts › add', hash: '#/accounts', open: click('.account-group-head button:has-text("Add account")'), scope: '.dialog' },
+    { name: 'MCP › add', hash: '#/mcp', open: async (page) => { await click('.topbar-tools [role="tab"]:has-text("Store")')(page); await click('.store-item:has-text("GitHub") button')(page); }, scope: '.dialog', ready: '.dialog .plan-command' },
+    { name: 'Accounts › add', hash: '#/accounts', open: click('.account-add'), scope: '.dialog' },
     { name: 'Accounts › sign in', hash: '#/accounts', open: click('.account-actions button:has-text("Sign in")'), scope: '.dialog', ready: '.dialog .error-text' },
   ].map((s) => ({ scope: 'main .view', ...s }));
 }
@@ -991,7 +997,7 @@ function checks(w) {
   const typeInto = (selector, text) => async (page) => { await page.click(selector); await page.keyboard.type(text); };
   once('A double Enter in the composer sends once', shellAt, '#composer', typeInto('#composer', 'echo once'), ['Enter', 'Enter'], 'sessions.queue');
   once('A double Enter adds one account', '#/accounts', '.account', async (page) => {
-    await page.click('.account-group-head button:has-text("Add account")');
+    await page.click('.account-add');
     await page.waitForSelector('.dialog input');
     await page.keyboard.type('Twice');
   }, ['Enter', 'Enter'], 'accounts.add');

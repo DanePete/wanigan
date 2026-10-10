@@ -61,7 +61,7 @@ try {
     const section = mac.locator('section[aria-labelledby="set-phone"]');
 
     // From nothing: off, no phones (the first theme leaves both behind).
-    await mac.goto(`${base}#/settings`);
+    await mac.goto(`${base}#/settings/phone`);
     await mac.evaluate(async () => {
       for (const d of (await window.wanigan.call('phone.status', {})).devices) await window.wanigan.call('phone.forget', { id: d.id });
       await window.wanigan.call('phone.disable', {});
@@ -70,7 +70,7 @@ try {
     await mac.waitForSelector('#set-phone');
     await must(section.getByText('Phone access is off').waitFor({ timeout: 5000 }), t('Settings does not say phone access is off'));
     const offText = await section.textContent();
-    if (!offText.includes('connected as your-mac.example.ts.net')) failures.push(t('Settings does not say which Tailscale name this Mac has'));
+    if (!offText.includes('connected as your-mac.example.ts.net')) failures.push(t('Settings does not say which Tailscale name this computer has'));
     if (!offText.includes('tailscale serve --bg --https=443 --set-path=/wanigan http://127.0.0.1:47832')) failures.push(t('Settings does not show the command before it is run'));
     await section.scrollIntoViewIfNeeded();
     await section.screenshot({ path: join(out, `${theme}-phone-settings-off.png`) });

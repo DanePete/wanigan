@@ -158,7 +158,7 @@ function LiveOff({ platform = null, kindOff = false, onChange }: { platform?: Li
           <Button tone="primary" icon="live" disabled={busy} onClick={() => void switchOn()}>
             {kindOff && plural ? `Switch it on for ${plural}` : 'Switch on the live view'}
           </Button>
-          <Button tone="quiet" icon="settings" onClick={() => navigate({ name: 'settings' })}>Settings</Button>
+          <Button tone="quiet" icon="settings" onClick={() => navigate({ name: 'settings', section: 'live' })}>Settings</Button>
           {kindOff && onChange ? <Button tone="quiet" onClick={onChange}>Change the site</Button> : null}
         </>
       )}>

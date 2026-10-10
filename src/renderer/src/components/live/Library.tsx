@@ -190,7 +190,7 @@ function LibraryTrouble({ answer, site, project, onRetry }: { answer: Exclude<Li
       </div>
       {next === 'update-helper' && canHelp && site.helper ? <Button size="s" icon="plug" onClick={() => setHelper(true)}>Update the helper…</Button>
         : next === 'install-helper' && canHelp ? <Button size="s" icon="plug" onClick={() => setHelper(true)}>Set up the helper…</Button>
-          : next === 'settings' ? <Button size="s" icon="settings" onClick={() => navigate({ name: 'settings' })}>Settings</Button>
+          : next === 'settings' ? <Button size="s" icon="settings" onClick={() => navigate({ name: 'settings', section: 'live' })}>Settings</Button>
             : next === 'retry' ? <Button size="s" icon="refresh" onClick={onRetry}>Ask again</Button> : null}
       {helper ? <HelperDialog site={site} project={project} onClose={() => setHelper(false)} /> : null}
     </div>

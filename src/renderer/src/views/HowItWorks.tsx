@@ -5,8 +5,8 @@ import type { CardSummary, ProjectSummary } from '@shared/model';
 import { useQuery } from '../lib/api';
 import { navigate } from '../lib/router';
 import { plural } from '../lib/format';
-import { Dialog } from '../components/ui';
-import { HowArrow as Arrow, HowBox as Box, HowLane as Lane, howNum as numOf } from '../components/How';
+import { openSettingsSection } from '../shell/SettingsNav';
+import { HowArrow as Arrow, HowBox as Box, HowDialog, HowLane as Lane, HowNote, howNum as numOf } from '../components/How';
 
 type Column = 'inbox' | 'ready' | 'working' | 'review' | 'done';
 
@@ -34,74 +34,12 @@ export function HowItWorks({ project, cards, onClose, showColumn }: {
         : jev.data.online ? `online · ${jev.data.callsToday} reads today` : 'not answering';
 
   return (
-    <Dialog title="How this works" onClose={onClose} width={1240}>
-      <p className="how-intro">
-        <strong>You decide what gets built and what counts as done.</strong>{' '}
-        Agents file cards and do the work in real terminals, Jev reads what comes in, and nothing reaches Done until you approve it.
-      </p>
-      <div className="how">
-        <div className="how-flow" aria-label="How a card moves through the board">
-          <Lane n={1} title="Filing" actor="you">
-            <Box actor="you" title="You file a card" num={recent ? `${plural(recent.length, 'card')} filed in 3 days` : null}>
-              New card (C) or + on a column. Yours go straight to Ready, unless you put them in the Inbox. Draft with Claude can write one up from a rough note.
-            </Box>
-            <Arrow />
-            <Box actor="agents" title="Agents file what they find" num={filedByAgents !== null ? `${filedByAgents} by agents in 3 days` : null} onClick={go('inbox')} hint="Show the Inbox">
-              Any session can run <code>wanigan file bug “…”</code>. What an agent files always lands in the Inbox, for you.
-            </Box>
-            <Arrow />
-            <Box actor="jev" title="Jev reads each new card" num={jevLine} onClick={page(() => navigate({ name: 'settings' }))} hint="Open Jev’s settings">
-              In under a second: what to do with it, how much it matters, and whether it repeats another card. Advice, unless this project lets Jev accept confident cards.
-            </Box>
-          </Lane>
-
-          <Lane n={2} title="Your call" actor="you">
-            <Box actor="you" title="Inbox" num={numOf(column('inbox'), 'waiting for you')} onClick={go('inbox')} hint="Show the Inbox">
-              Accept it to Ready (A), archive it (X), or start a session on it, which accepts it. Agents cannot take a card from the Inbox.
-            </Box>
-            <Arrow label="you accept" />
-            <Box actor="board" title="Ready" num={numOf(column('ready'), 'ready')} onClick={go('ready')} hint="Show Ready">
-              Accepted work. Acceptance criteria say what done means, and the agent is told them when it starts.
-            </Box>
-          </Lane>
-
-          <Lane n={3} title="The work" actor="agents">
-            <Box actor="agents" title="A session takes it" num={numOf(project.liveSessions, 'session running', 'sessions running')}>
-              Start Claude Code, Codex or a shell on a card. It claims the card for 30 minutes at a time, renewed while it runs, on its own branch if you like.
-            </Box>
-            <Arrow />
-            <Box actor="agents" title="Working" num={numOf(column('working'), 'in progress')} onClick={go('working')} hint="Show Working">
-              The agent works in a real terminal that keeps running when the window closes. It notes progress, and asks you with <code>wanigan ask</code>.
-            </Box>
-            <Arrow label="with evidence" />
-            <Box actor="you" title="Review" num={numOf(column('review'), 'for you to review')} onClick={go('review')} hint="Show Review">
-              Only with evidence: a file, a link or a note. Ask Claude to check it against each criterion if you like; that is advice.
-            </Box>
-            <Arrow label="you approve" />
-            <Box actor="done" tag="The board" title="Done" num={numOf(column('done'), 'done')} onClick={go('done')} hint="Show Done">
-              Only you approve. An agent can never mark its own work done.
-            </Box>
-          </Lane>
-
-          <Lane n={4} title="When it goes wrong" actor="needs">
-            <Box actor="you" title="Send back" num={numOf(count((c) => c.sentBack), 'sent back')} onClick={go('ready')} hint="Show Ready">
-              Not right yet? It goes back to Ready with your note, and the next session is told it.
-            </Box>
-            <Box actor="you" title="Reopen" num={numOf(count((c) => c.reopened), 'reopened')} onClick={go('ready')} hint="Show Ready">
-              Done, but not fixed? Reopen it and say what is still wrong; that becomes a new criterion.
-            </Box>
-            <Box actor="board" title="A session stops" num={stopped ? `${plural(stopped, 'card')} held, no session running` : null} onClick={go('working')} hint="Show Working">
-              Its claim is released and the card returns to Ready. Notes, evidence and history stay on the card.
-            </Box>
-            <Box actor="needs" title="Needs you" num={numOf(project.needsYou, 'need you now', 'need you now')} onClick={page(() => navigate({ name: 'needs' }))} hint="Open Needs you">
-              Permission prompts, questions, failures, finished turns and quiet sessions, from every project, most urgent first.
-            </Box>
-          </Lane>
-        </div>
-
-        <aside className="how-side">
-          <section className="how-card how-card-needs">
-            <h3>When you are needed</h3>
+    <HowDialog place="board" title="How the board works" onClose={onClose}
+      intro={<><strong>You decide what gets built and what counts as done.</strong>{' '}
+        Agents file cards and do the work in real terminals, Jev reads what comes in, and nothing reaches Done until you approve it.</>}
+      side={(
+        <>
+          <HowNote title="When you are needed" tone="needs">
             <ul>
               <li><strong>Asking permission:</strong> an agent is waiting on a prompt in its terminal.</li>
               <li><strong>Ready for review:</strong> evidence is in; approve it or send it back.</li>
@@ -110,27 +48,81 @@ export function HowItWorks({ project, cards, onClose, showColumn }: {
               <li><strong>Two sessions, one file:</strong> they may be undoing each other.</li>
               <li><strong>Gone quiet, or finished a turn:</strong> worth a look.</li>
             </ul>
-          </section>
-          <section className="how-card">
-            <h3>Who does what</h3>
+          </HowNote>
+          <HowNote title="Who does what">
             <ul className="how-legend">
               <li><span className="how-swatch how-you" aria-hidden="true" /><strong>You:</strong> what to build, what counts as done, and every approval.</li>
               <li><span className="how-swatch how-agents" aria-hidden="true" /><strong>Agents:</strong> Claude Code, Codex or a shell, in real terminals. They claim, work, ask and submit through <code>wanigan</code>.</li>
               <li><span className="how-swatch how-jev" aria-hidden="true" /><strong>Jev:</strong> TypeSafe’s fast decision model. Reads new cards; advice by default.{jevLine ? ` Now: ${jevLine}.` : ''}</li>
               <li><span className="how-swatch how-board" aria-hidden="true" /><strong>The board:</strong> keeps the rules. Wanigan enforces them; no one can skip a step.</li>
             </ul>
-          </section>
-          <section className="how-card how-card-quiet">
-            <h3>Reading the picture</h3>
+          </HowNote>
+          <HowNote title="Reading the picture" tone="quiet">
             <ul>
               <li>Arrows are the usual path. Lane 4 is how work comes back.</li>
               <li>Click a box to open its column or page.</li>
               <li>Numbers are live from this board. A missing number means its source has not answered.</li>
               <li>Nothing is deleted. Archived cards keep their history.</li>
             </ul>
-          </section>
-        </aside>
-      </div>
-    </Dialog>
+          </HowNote>
+        </>
+      )}>
+      <Lane n={1} title="Filing" actor="you">
+        <Box actor="you" title="You file a card" num={recent ? `${plural(recent.length, 'card')} filed in 3 days` : null}>
+          New card (C) or + on a column. Yours go straight to Ready, unless you put them in the Inbox. Draft with Claude can write one up from a rough note.
+        </Box>
+        <Arrow />
+        <Box actor="agents" title="Agents file what they find" num={filedByAgents !== null ? `${filedByAgents} by agents in 3 days` : null} onClick={go('inbox')} hint="Show the Inbox">
+          Any session can run <code>wanigan file bug “…”</code>. What an agent files always lands in the Inbox, for you.
+        </Box>
+        <Arrow />
+        <Box actor="jev" title="Jev reads each new card" num={jevLine} onClick={page(() => openSettingsSection('jev'))} hint="Open Jev’s settings">
+          In under a second: what to do with it, how much it matters, and whether it repeats another card. Advice, unless this project lets Jev accept confident cards.
+        </Box>
+      </Lane>
+
+      <Lane n={2} title="Your call" actor="you">
+        <Box actor="you" title="Inbox" num={numOf(column('inbox'), 'waiting for you')} onClick={go('inbox')} hint="Show the Inbox">
+          Accept it to Ready (A), archive it (X), or start a session on it, which accepts it. Agents cannot take a card from the Inbox.
+        </Box>
+        <Arrow label="you accept" />
+        <Box actor="board" title="Ready" num={numOf(column('ready'), 'ready')} onClick={go('ready')} hint="Show Ready">
+          Accepted work. Acceptance criteria say what done means, and the agent is told them when it starts.
+        </Box>
+      </Lane>
+
+      <Lane n={3} title="The work" actor="agents">
+        <Box actor="agents" title="A session takes it" num={numOf(project.liveSessions, 'session running', 'sessions running')}>
+          Start Claude Code, Codex or a shell on a card. It claims the card for 30 minutes at a time, renewed while it runs, on its own branch if you like.
+        </Box>
+        <Arrow />
+        <Box actor="agents" title="Working" num={numOf(column('working'), 'in progress')} onClick={go('working')} hint="Show Working">
+          The agent works in a real terminal that keeps running when the window closes. It notes progress, and asks you with <code>wanigan ask</code>.
+        </Box>
+        <Arrow label="with evidence" />
+        <Box actor="you" title="Review" num={numOf(column('review'), 'for you to review')} onClick={go('review')} hint="Show Review">
+          Only with evidence: a file, a link or a note. Ask Claude to check it against each criterion if you like; that is advice.
+        </Box>
+        <Arrow label="you approve" />
+        <Box actor="done" tag="The board" title="Done" num={numOf(column('done'), 'done')} onClick={go('done')} hint="Show Done">
+          Only you approve. An agent can never mark its own work done.
+        </Box>
+      </Lane>
+
+      <Lane n={4} title="When it goes wrong" actor="needs">
+        <Box actor="you" title="Send back" num={numOf(count((c) => c.sentBack), 'sent back')} onClick={go('ready')} hint="Show Ready">
+          Not right yet? It goes back to Ready with your note, and the next session is told it.
+        </Box>
+        <Box actor="you" title="Reopen" num={numOf(count((c) => c.reopened), 'reopened')} onClick={go('ready')} hint="Show Ready">
+          Done, but not fixed? Reopen it and say what is still wrong; that becomes a new criterion.
+        </Box>
+        <Box actor="board" title="A session stops" num={stopped ? `${plural(stopped, 'card')} held, no session running` : null} onClick={go('working')} hint="Show Working">
+          Its claim is released and the card returns to Ready. Notes, evidence and history stay on the card.
+        </Box>
+        <Box actor="needs" title="Needs you" num={numOf(project.needsYou, 'need you now', 'need you now')} onClick={page(() => navigate({ name: 'needs' }))} hint="Open Needs you">
+          Permission prompts, questions, failures, finished turns and quiet sessions, from every project, most urgent first.
+        </Box>
+      </Lane>
+    </HowDialog>
   );
 }

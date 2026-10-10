@@ -315,7 +315,7 @@ controls; they double up.
 |---|---|---|
 | Rail | `shell/Rail.tsx` | 60 px. See the spec's frame. `SETTINGS_ROUTES` lists the routes its Settings lights for. |
 | Project bar | `views/ProjectView.tsx` | 48 px, `.topbar.project-bar`. `ProjectView` now takes `projects` (for the name's menu). |
-| Settings' sections | `shell/SettingsNav.tsx` | `SettingsFrame` beside Settings, Accounts, Skills and MCP servers; `openSettingsSection(id)` goes to a group of the Settings page. |
+| Settings' sections | `shell/SettingsNav.tsx` | `SettingsFrame` beside Settings, Accounts, Skills and MCP servers: one section at a time, each a route (`#/settings/general`); `SETTINGS_PLACES` lists them for the palette, and `openSettingsSection(id)` goes to one. A section's page is `views/SettingsPage.tsx` (`SettingsPage`, `SettingsGroup`, `SettingRow`). |
 | Palette | `dialogs/Palette.tsx` | Every view, Settings' sections, projects, cards, sessions, commands, each with its key. |
 | Status line | `components/StatusLine.tsx` | Above. |
 

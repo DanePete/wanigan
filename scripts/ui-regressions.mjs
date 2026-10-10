@@ -299,7 +299,7 @@ try {
     await check('update-disclosure', () => {
       window.__wgApp.settings.updateChecks = 'ask';
     }, async page => {
-      await page.goto(`${base}#/settings`);
+      await page.goto(`${base}#/settings/updates`);
       const settings = page.locator('[aria-labelledby="set-updates"]');
       await settings.waitFor();
       const text = await settings.textContent();
@@ -511,7 +511,7 @@ try {
         return method === 'jev.status' ? { ...reply, online: true, calls: 2, errors: 1, costUsd: 0.0123 } : reply;
       };
     }, async (page) => {
-      await page.goto(`${base}#/settings`);
+      await page.goto(`${base}#/settings/jev`);
       const jev = page.locator('[aria-labelledby="set-jev"]');
       await page.waitForFunction(() => document.querySelector('[aria-labelledby="set-jev"]')?.textContent.includes('0.0123'));
       const text = await jev.textContent();
@@ -538,7 +538,7 @@ try {
         const errors = [];
         page.on('pageerror', error => errors.push(error.message));
         await page.setViewportSize({ width: 960, height: 700 });
-        await page.goto(`${base}#/settings`);
+        await page.goto(`${base}#/settings/jev`);
         const jev = page.locator('[aria-labelledby="set-jev"]');
         await page.waitForFunction(() => document.querySelector('[aria-labelledby="set-jev"]')?.textContent.includes('Total cost unknown.'), undefined, { timeout: 8_000 });
         const text = await jev.textContent();
@@ -579,11 +579,11 @@ try {
       window.__initialApp = [];
       window.wanigan.appState = () => new Promise((resolve) => window.__initialApp.push(resolve));
     }, async (page) => {
-      await page.goto(`${base}#/settings`);
+      await page.goto(`${base}#/settings/general`);
       await page.waitForSelector('#set-general');
       await page.evaluate(() => window.__wgSetApp({ ...window.__wgApp, settings: { ...window.__wgApp.settings, keepAwake: false } }));
-      const awake = page.getByRole('checkbox', { name: /Keep the Mac awake/ });
-      await page.waitForFunction(() => document.querySelector('#set-general')?.parentElement.parentElement.querySelector('input')?.checked === false);
+      const awake = page.getByRole('switch', { name: /Keep this computer awake/ });
+      await page.waitForFunction(() => document.querySelector('section[aria-labelledby="set-general"] input[role="switch"]')?.checked === false);
       await page.evaluate(() => { for (const resolve of window.__initialApp) resolve({ ...window.__wgApp, settings: { ...window.__wgApp.settings, keepAwake: true } }); });
       await page.evaluate(() => new Promise(requestAnimationFrame));
       assert.equal(await awake.isChecked(), false, 'a late snapshot must not overwrite a newer setting');

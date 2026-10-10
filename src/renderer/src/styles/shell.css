@@ -494,50 +494,6 @@
   white-space: nowrap;
 }
 
-/* The core could not start, or is from another build: said above any view. */
-.core-problem {
-  flex: none;
-  display: grid;
-  gap: var(--space-2);
-  margin: var(--space-4) var(--space-6) 0;
-  padding: var(--space-4) var(--space-5);
-  border: 1px solid var(--line-strong);
-  border-left: 3px solid var(--red);
-  border-radius: var(--radius-m);
-  background: var(--surface);
-}
-
-.core-problem.other-build {
-  border-left-color: var(--water);
-}
-
-.core-problem h2 {
-  margin: 0;
-  font-size: var(--text-lg);
-}
-
-.core-problem p {
-  margin: 0;
-  max-width: 90ch;
-}
-
-.core-problem-reason {
-  font-family: var(--font-mono);
-  font-size: var(--text-code);
-  overflow-wrap: anywhere;
-}
-
-.core-problem .mono {
-  overflow-wrap: anywhere;
-}
-
-.core-problem-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-2);
-  margin-top: var(--space-1);
-}
-
 /* ── Settings and its sections (shell/SettingsNav.tsx) ───────────────────── */
 
 .settings-frame {
@@ -551,21 +507,35 @@
   flex: none;
   width: var(--panel-min-w);
   overflow-y: auto;
-  padding: var(--space-3) var(--space-2);
   border-right: var(--hairline) solid var(--line);
   background: var(--surface);
+}
+
+/* Level with the section's own bar beside it: the same height, the same hairline. */
+.settings-nav-head {
+  display: flex;
+  align-items: center;
+  height: var(--topbar-h);
+  margin: 0;
+  padding: 0 var(--space-4);
+  border-bottom: var(--hairline) solid var(--line);
+  font: 600 var(--text-lg) / var(--leading-tight) var(--font-ui);
+}
+
+.settings-nav-group {
+  padding: var(--space-3) var(--space-2) 0;
 }
 
 .settings-nav ul {
   display: grid;
   gap: var(--gap-hair);
-  margin: 0 0 var(--space-4);
+  margin: 0;
   padding: 0;
   list-style: none;
 }
 
 .settings-nav-title {
-  margin: var(--space-2) var(--space-2) var(--space-1);
+  margin: 0 var(--space-2) var(--space-1);
   color: var(--faint);
   font: 600 var(--text-xs) / var(--lh-sm) var(--font-ui);
 }
@@ -585,6 +555,7 @@
   text-align: left;
   text-decoration: none;
   cursor: pointer;
+  transition: background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
 }
 
 .settings-nav-item:hover {

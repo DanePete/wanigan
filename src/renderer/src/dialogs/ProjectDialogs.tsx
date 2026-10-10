@@ -6,7 +6,8 @@ import { localModelLabel, localModelValue } from '@shared/local-models';
 import { attempt, call, useQuery } from '../lib/api';
 import { navigate } from '../lib/router';
 import { plural } from '../lib/format';
-import { Button, Dialog, Field, useToast } from '../components/ui';
+import { Button, Dialog, Field, Toggle, tipProps, useToast } from '../components/ui';
+import { Section } from '../components/Panel';
 
 const AGENT: Record<AccountProvider, string> = { claude: 'Claude Code', codex: 'Codex' };
 
@@ -82,23 +83,19 @@ export function ProjectSettingsDialog({ project, onClose }: { project: ProjectSu
       <p className="faint small mono">{project.path}</p>
 
       {project.git ? (
-        <label className="check-row">
-          <input type="checkbox" checked={project.isolate}
-            onChange={(e) => void attempt(() => call('projects.update', { id: project.id, isolate: e.target.checked }), fail)} />
-          <span>
-            Card sessions work on their own branch
-            <span className="faint small"> — each card gets a git worktree, so agents on different cards never share files. You merge each one after review.</span>
-          </span>
-        </label>
-      ) : null}
-      {project.git ? (
-        <Field label="Setup command" hint="Runs in each new card worktree as a shell session on the card, beside the agent, so you see it work or fail. Files the repository’s .worktreeinclude names and git ignores, such as .env, are copied in first. Kept in Wanigan, never in the repository.">{(id) => (
-          <input id={id} className="mono" value={setup} maxLength={500} placeholder="npm install, ddev start, composer install…"
-            onChange={(e) => setSetup(e.target.value)} />
-        )}</Field>
+        <Section title="Branches">
+          {/* Takes effect at once, as a switch does; the fields below wait for Save. */}
+          <Toggle checked={project.isolate} onChange={(isolate) => void attempt(() => call('projects.update', { id: project.id, isolate }), fail)}
+            label="Card sessions work on their own branch"
+            hint="Each card gets a git worktree, so agents on different cards never share files. You merge each one after review." />
+          <Field label="Setup command" hint="Runs in each new card worktree as a shell session on the card, beside the agent, so you see it work or fail. Files the repository’s .worktreeinclude names and git ignores, such as .env, are copied in first. Kept in Wanigan, never in the repository.">{(id) => (
+            <input id={id} className="mono" value={setup} maxLength={500} placeholder="npm install, ddev start, composer install…"
+              onChange={(e) => setSetup(e.target.value)} />
+          )}</Field>
+        </Section>
       ) : null}
 
-      <h3 className="dialog-section">Accounts</h3>
+      <Section title="Accounts">
       <p className="faint small">New sessions here use these accounts. You can still pick another when starting a session.</p>
       {ACCOUNT_PROVIDERS.map((provider) => {
         const list = (accounts.data ?? []).filter((a) => a.provider === provider);
@@ -112,15 +109,20 @@ export function ProjectSettingsDialog({ project, onClose }: { project: ProjectSu
           )}</Field>
         );
       })}
+      </Section>
       <LocalModelDefault project={project} />
-      <h3 className="dialog-section">Close this project</h3>
-      <p className="faint small">It leaves the rail; its cards, sessions and history are kept, and opening the folder again brings it all back. Nothing in the folder is touched.</p>
-      <Button size="s" tone="danger" disabled={project.liveSessions > 0} title={project.liveSessions ? 'Stop its live sessions first' : undefined}
-        onClick={() => attempt(() => call('projects.archive', { id: project.id }), setError).then((r) => {
-          if (r) { toast(`${project.name} closed.`); onClose(); navigate({ name: 'needs' }); }
-        })}>
-        Close project
-      </Button>
+      <Section title="Close this project">
+        <p className="faint small">It leaves the rail; its cards, sessions and history are kept, and opening the folder again brings it all back. Nothing in the folder is touched.</p>
+        <span className="dialog-row" {...(project.liveSessions ? tipProps('Stop its live sessions first') : {})}>
+          <Button size="s" tone="danger" disabled={project.liveSessions > 0}
+            onClick={() => attempt(() => call('projects.archive', { id: project.id }), setError).then((r) => {
+              if (r) { toast(`${project.name} closed.`); onClose(); navigate({ name: 'needs' }); }
+            })}>
+            Close project
+          </Button>
+          {project.liveSessions ? <span className="faint small">Stop its {plural(project.liveSessions, 'live session')} first.</span> : null}
+        </span>
+      </Section>
       {error ? <p className="error-text" role="alert">{error}</p> : null}
     </Dialog>
   );
@@ -128,7 +130,7 @@ export function ProjectSettingsDialog({ project, onClose }: { project: ProjectSu
 
 /**
  * The local model a project's new sessions start on. Shown only when there is
- * one on this Mac, or the project already has one set: optional, like the rest.
+ * one on this computer, or the project already has one set: optional, like the rest.
  */
 function LocalModelDefault({ project }: { project: ProjectSummary }) {
   const toast = useToast();
@@ -143,18 +145,17 @@ function LocalModelDefault({ project }: { project: ProjectSummary }) {
     void attempt(() => call('projects.update', { id: project.id, localModel: value || null }), (m) => toast(m, 'error'));
   };
   const current = project.localModel && !offered.some((o) => o.value === project.localModel)
-    ? [{ value: project.localModel, label: localModelLabel(project.localModel) ?? project.localModel, detail: 'Not on this Mac now' }] : [];
+    ? [{ value: project.localModel, label: localModelLabel(project.localModel) ?? project.localModel, detail: 'Not on this computer now' }] : [];
   return (
-    <>
-      <h3 className="dialog-section">Local model</h3>
-      <p className="faint small">New sessions here start on this model, which runs on this Mac. You can still pick another when starting a session.</p>
+    <Section title="Local model">
+      <p className="faint small">New sessions here start on this model, which runs on this computer. You can still pick another when starting a session.</p>
       <Field label="Start new sessions on">{(id) => (
         <Select id={id} value={project.localModel ?? ''} onChange={set} options={[
           { value: '', label: 'The agent’s own model', detail: 'Claude’s or OpenAI’s, as the account uses' },
           ...current,
-          ...offered.map((o) => ({ ...o, group: 'On this Mac' })),
+          ...offered.map((o) => ({ ...o, group: 'On this computer' })),
         ]} />
       )}</Field>
-    </>
+    </Section>
   );
 }

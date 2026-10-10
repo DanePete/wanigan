@@ -1,10 +1,5 @@
 /* ── Settings › Phone ────────────────────────────────────────────────── */
 
-/* Tailscale not ready yet is a step to take, not an alarm: amber line, no fill. */
-.settings-row.phone-needs {
-  border-color: var(--amber-line);
-}
-
 .phone-steps {
   display: grid;
   gap: var(--space-2);
@@ -29,8 +24,13 @@
 
 .phone-pairing-text {
   display: grid;
+  align-content: start;
   gap: var(--space-3);
   min-width: 0;
+}
+
+.phone-pairing-text p {
+  margin: 0;
 }
 
 .qr {
@@ -53,21 +53,31 @@
   letter-spacing: 0.12em;
 }
 
-.phone-devices {
-  list-style: none;
-  display: grid;
+.phone-pairing .setting-text {
+  flex-basis: 100%;
+}
+
+.phone-device-name {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
   gap: var(--space-2);
-  margin: 0;
-  padding: 0;
 }
 
 .phone-forget {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2) var(--space-3);
+  margin-top: var(--space-3);
   padding-top: var(--space-3);
-  border-top: 1px solid var(--line);
+  border-top: var(--hairline) solid var(--line);
+  font-size: var(--text-sm);
 }
 
-.phone-test {
-  margin-top: var(--space-3);
+.phone-can-act {
+  align-items: center;
 }
 
 @media (max-width: 720px) {

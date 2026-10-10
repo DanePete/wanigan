@@ -120,6 +120,7 @@ try {
     const ns = nsHref.match(/#\/p\/([^/]+)/)[1];
     const places = [['board', `#/p/${ns}/board`], ['sessions', `#/p/${ns}/sessions`], ['changes', `#/p/${ns}/changes`], ['history', `#/p/${ns}/history`],
       ['decisions', `#/p/${ns}/decisions`], ['activity', `#/p/${ns}/activity`], ['list', `#/p/${ns}/list`], ['running', '#/running'], ['needs', '#/needs'], ['settings', '#/settings'],
+      ['accounts', '#/accounts'], ['skills', '#/skills'], ['mcp', '#/mcp'],
       ['live', `#/p/${ns}/live`], ['code', `#/p/${ns}/code`]];
     // A session is a place of its own: one of the demo's live Claude Code sessions.
     const sessionHash = await page.evaluate(async () => {
@@ -161,7 +162,7 @@ try {
       }
     }
 
-    // ── the views' own tours: each stop lights what it names, its card in the window and beside it ──
+    // ── the views' own tours (the board's, the List's, Changes', Code's, Decisions', Activity's, Needs you's and Settings'): each stop lights what it names, its card in the window and beside it ──
     // Code's tour is walked with a file open, so its stop on the text is not passed over.
     const openAFile = async () => {
       await page.waitForSelector('.code-tree [role="treeitem"]', { timeout: 8000 });
@@ -180,6 +181,13 @@ try {
       ['code', `#/p/${ns}/code`, ['The project’s files', 'Open any file', 'Open files', 'The text', 'How this works'], openAFile],
       ['decisions', `#/p/${ns}/decisions`, ['The rules in force', 'Read one', 'Find one', 'New decision']],
       ['activity', `#/p/${ns}/activity`, ['What happened', 'Narrow it', 'Read an entry', 'Its card']],
+      // Needs you with things to do: the readiness lines are not on the screen, so their stop is passed over.
+      ['needs', '#/needs', ['The queue', 'Its action, in place', 'Wanigan', 'How this works']],
+      // Settings' tour goes to the section each stop is about.
+      ['settings', '#/settings', ['Every section', 'Light or dark', 'Tours like this one', 'Notifications', 'The live view', 'Updates']],
+      ['accounts', '#/accounts', ['Every account', 'Sign in', 'Another account', 'Check again', 'How this works']],
+      ['skills', '#/skills', ['Every skill', 'The one you chose', 'Copy or remove', 'One agent', 'Find one']],
+      ['mcp', '#/mcp', ['What each agent has', 'Check connections', 'One agent', 'The store']],
     ]) {
       await page.goto(`${base}${hash}`);
       if (setup) await setup().catch((e) => fail(`${place} tour: could not get ready (${String(e.message ?? e).split('\n')[0]})`));
@@ -205,7 +213,7 @@ try {
         if (!s.name) fail(`${place} tour "${s.title}": it points at nothing`);
         else if (!s.target) fail(`${place} tour "${s.title}": "${s.name}" is not on the screen`);
         else if (s.spot && overlaps(s.card, s.spot) && (s.spot.r - s.spot.l) * (s.spot.b - s.spot.t) < s.view.w * s.view.h * 0.5) fail(`${place} tour "${s.title}": the card covers what it describes`);
-        if (['board-card', 'list-row', 'changes-files', 'code-files', 'decisions-reader', 'activity-list'].includes(s.name)) await page.screenshot({ path: join(out, `${theme}-tour-${place}.png`) });
+        if (['board-card', 'list-row', 'changes-files', 'code-files', 'decisions-reader', 'activity-list', 'needs-action', 'settings-nav', 'accounts-signin', 'skills-detail', 'mcp-check'].includes(s.name)) await page.screenshot({ path: join(out, `${theme}-tour-${place}.png`) });
         if (s.primary === 'Done') { await page.keyboard.press('Enter'); break; }
         await page.keyboard.press('ArrowRight');
         await page.waitForFunction((was) => document.querySelector('.tour-title')?.textContent !== was || !document.querySelector('.tour-card'), s.title, { timeout: 4000 }).catch(() => {});
