@@ -680,13 +680,26 @@ test('the same stored thing shown twice is saved once; elements that differ, or 
 test('what the site says beside a save is in the answer: the field’s own words saved where the page adds more around them', async () => {
   const notice = edit({ label: 'Title', change: { type: 'text', value: '© 2026 Northwind Outfitters' }, target: { part: title(), inner: null, selector: null, textHash: layerTextHash('© 2026 Acme Outfitters') } });
   const note = 'Saved to the field’s own words, “Northwind Outfitters”: the site’s templates or code add “© 2026” before them on the page.';
+  // Content that keeps neither revisions nor a changed time: its mark carries, after the page's language, the hash of
+  // the field's stored words.
+  const stamped = 'node:12:title:string:fr:::string:fr:ea1a4c24dba9e1b1';
   const w = wire({ edits: [notice], helper: () => ({ ok: true, error: null, label: 'Acme settings', revision: null, note }) });
   try {
-    w.page.parts = { p6: { '': [words('© 2026 Acme Outfitters', 'node:12:title:string:fr')] } };
+    w.page.parts = { p6: { '': [words('© 2026 Acme Outfitters', stamped)] } };
     await w.apply();
     assert.deepEqual(await w.implement(notice.id), { ok: true, id: notice.id, state: 'implemented', revision: null, note });
-    assert.deepEqual(w.saves.map((x) => x.slice(1, 3)), [['© 2026 Acme Outfitters', '© 2026 Northwind Outfitters']], 'the words as the page shows them go to the helper, which maps them');
+    assert.deepEqual(w.saves.map((x) => x.slice(0, 3)), [[stamped, '© 2026 Acme Outfitters', '© 2026 Northwind Outfitters']],
+      'the mark as the page carries it, hash and all, and the words as the page shows them go to the helper, which maps them');
   } finally { w.done(); }
+  // A mark whose hash is not one is not read: nothing reaches the site.
+  const forged = wire({ edits: [{ ...notice, state: 'draft' }], helper: () => ({ ok: true, error: null, label: 'Acme settings', revision: null, note }) });
+  try {
+    forged.page.parts = { p6: { '': [words('© 2026 Acme Outfitters', 'node:12:title:string:fr:::string:fr:Acme Outfitters')] } };
+    await forged.apply();
+    const refused = await forged.implement(notice.id);
+    assert.ok(!refused.ok && /not marked as Wanigan’s helper marks one/.test(refused.why), JSON.stringify(refused));
+    assert.deepEqual([forged.saves, forged.marks], [[], []]);
+  } finally { forged.done(); }
 });
 
 /** On a Drupal page, words nothing holds and no template around them writes. */

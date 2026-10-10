@@ -84,6 +84,15 @@
 // - A WordPress term's name where a page shows it (a menu item built from a
 //   term, an archive's heading, a list of categories): `term-<id>`, a string
 //   saved through wp_update_term(), its `shows` saying where else it shows.
+// - Added within version 4, so a page without it reads as before: a Drupal
+//   field's mark (`data-wl-field`, src/shared/live.ts LiveRegion.field, read
+//   by parseFieldMark()) ends in `vh`, after the page's content language: the
+//   first 16 hex of a sha256 of the field's stored words as the page rendered
+//   them, for the field types the helper's word saves handle; never the
+//   words. Where the mark carries neither a revision nor a changed time
+//   (content that keeps neither), `POST /_wanigan/save` takes the field still
+//   hashing to it as proof the content is as the page rendered it, and
+//   refuses another hash with 409.
 
 export const TRACE_VERSION = 1;
 

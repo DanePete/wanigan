@@ -13,7 +13,7 @@ import { readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { BrowserWindow, WebContentsView, ipcMain, session, shell, type IpcMainInvokeEvent, type NativeImage, type Session, type WebContents } from 'electron';
-import { liveUrl, movedTo, sameSite, sitePath, type LivePick, type LiveProblem, type LiveRegion } from '../shared/live.ts';
+import { liveUrl, movedTo, parseFieldMark, sameSite, sitePath, type LivePick, type LiveProblem, type LiveRegion } from '../shared/live.ts';
 import { cleanRegions, regionById, type LiveCapture, type LiveViewNow, type TimedProblem } from '../shared/live-agent.ts';
 import { certificateOf, failureKind, principal, type LiveFailure, type LivePresented } from '../shared/live-site.ts';
 import { loopbackAddress } from '../shared/live-envs.ts';
@@ -583,7 +583,9 @@ export function wireLiveView(options: {
   const helperSave = async (field: unknown, before: unknown, after: unknown, at?: SaveAt | null): Promise<HelperSaved | null> => {
     const site = local();
     if (!site) return null;
-    if (typeof field !== 'string' || !/^[a-z0-9_]+:[^:\s]{1,64}:[a-z0-9_]+/.test(field) || typeof before !== 'string' || typeof after !== 'string') return { ok: false, error: 'That is not a field Wanigan can save to.', label: null };
+    // The field's mark, read whole (shared/live.ts parseFieldMark()): every part, its hash among them, as the helper's
+    // save will check it.
+    if (!parseFieldMark(field) || typeof before !== 'string' || typeof after !== 'string') return { ok: false, error: 'That is not a field Wanigan can save to.', label: null };
     const name = /^[A-Za-z0-9_.:/@+-]{1,200}$/;
     if (at && (!name.test(at.uuid) || !/^[A-Za-z0-9_-]{1,32}$/.test(at.langcode) || (at.item !== null && !/^(?:ref:[A-Za-z0-9_.:/@+-]{1,200}|delta:\d{1,6})$/.test(at.item))
       || (at.confirm !== undefined && !/^[a-f0-9]{32}$/.test(at.confirm)))) {
