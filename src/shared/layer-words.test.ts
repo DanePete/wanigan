@@ -2,7 +2,7 @@
 // (acme); nothing real.
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { kindWords } from './layer-words.ts';
+import { fragileWhy, kindWords } from './layer-words.ts';
 import { kindKey, type PartIdentity, type TracePart } from './live-trace.ts';
 
 const words = (label: string, identity: PartIdentity, inner: string | null = null): string =>
@@ -28,4 +28,17 @@ test('a Drupal block is said by its plugin and where its instances are placed, a
     ['menu_link', 'menu_link_content', 'every menu_link_content menu_link'],
   ];
   for (const [type, plugin, said] of cases) assert.equal(words('Placed', config(type, plugin)), said, plugin);
+});
+
+test('fragile: a target kept by its place alone; guarded by its words it is orphaned, with none it lands on whatever is there', () => {
+  const path = { part: null, inner: null, selector: 'html > body > div:nth-of-type(2)' };
+  assert.match(fragileWhy({ ...path, textHash: '0123456789abcdef' }, 'this') ?? '', /orphaned rather than put on something else/);
+  assert.match(fragileWhy({ ...path, textHash: null }, 'this') ?? '', /lands on whatever is in that place now/);
+  const block: PartIdentity = { kind: 'block', store: 'tpl:acme//single', path: [2], name: 'core/group' };
+  assert.match(fragileWhy({ part: block, inner: null, selector: null, textHash: null }, 'this') ?? '', /WordPress keeps no id for a block/);
+  assert.equal(fragileWhy({ part: block, inner: null, selector: null, textHash: '0123456789abcdef' }, 'this'), null, 'its words guard it');
+  assert.equal(fragileWhy({ part: block, inner: null, selector: null, textHash: null }, 'kind'), null, 'every one of its kind, by name');
+  const card: PartIdentity = { kind: 'component', name: 'acme:card', within: null, nth: 0 };
+  assert.equal(fragileWhy({ part: card, inner: null, selector: null, textHash: null }, 'this'), null, 'a part the site names');
+  assert.equal(fragileWhy({ part: null, inner: null, selector: null, textHash: null }, 'site'), null, 'a token has no element');
 });

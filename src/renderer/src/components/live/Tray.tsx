@@ -24,7 +24,7 @@ import { ancestors } from '@shared/live-tree';
 import type { ProjectSummary } from '@shared/model';
 import { call, useQuery } from '../../lib/api';
 import {
-  STATE_DETAIL, STATE_WORDS, byPage, changeLines, differenceWords, failedWords, isFragile, noiseWords, orphanWhy, reachWords, redoLabel,
+  STATE_DETAIL, STATE_WORDS, byPage, changeLines, differenceWords, failedWords, fragileOf, noiseWords, orphanWhy, reachWords, redoLabel,
   templateOf, templateOffered, undoLabel, verdictHeadline,
 } from '../../lib/live-layer';
 import { liveBridge } from '../../lib/live';
@@ -138,7 +138,7 @@ function TrayEdit({ edit: e, here, ctx }: { edit: LayerEdit; here: boolean; ctx:
   const reach = reachWords(e, ctx.trace, layer.applied);
   // Words a template save wrote: the edit reaches every page that uses that template, not only this element.
   const inTemplate = templateOf(e, ctx.saved);
-  const fragile = isFragile(e);
+  const fragile = fragileOf(e);
   const name = `“${e.label}”`;
   // The regions on the page shown that are this edit's part, and what they sit in: what a note to an agent points at.
   const regions = useMemo(() => {
@@ -205,9 +205,7 @@ function TrayEdit({ edit: e, here, ctx }: { edit: LayerEdit; here: boolean; ctx:
           to this element. Verify compares this page only.
         </p>
       ) : <p className="small live-tray-reach">For {reach}.{e.by === 'agent' ? <span className="faint"> Made by an agent.</span> : null}</p>}
-      {fragile ? (
-        <p className="small live-layer-fragile">Fragile: no part of the site names its element, so it is kept by where it sits in the page.</p>
-      ) : null}
+      {fragile ? <p className="small live-layer-fragile">Fragile: {fragile}</p> : null}
       {e.state === 'orphaned' ? <p className="small live-tray-why">Orphaned: {orphanWhy(e, layer.applied)} It is not shown, and never put on whatever is there now.</p> : null}
       {written ? <TemplateWrittenNote written={written} /> : null}
       {e.verdict ? <Verdict verdict={e.verdict} /> : null}

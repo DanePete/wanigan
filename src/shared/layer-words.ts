@@ -5,7 +5,30 @@
 // - What `kind` reaches: "every Card component", "the Body field of every article", "the heading in every Card
 //   component", and a Drupal block by its plugin and where its instances are placed ("every card inline block placed
 //   in a layout", "every main menu block placed in a region", "this reusable block wherever it is placed in a region").
+// - Whether an edit's target is fragile, and what that means as the main process behaves (resolveLayer): a target
+//   keyed by its place alone is checked by its words when it had any, and is then orphaned rather than put on
+//   something else; with no words to check, it lands on whatever its place holds now.
+import type { LayerScope, LayerTarget } from './design-layer.ts';
 import type { TracePart } from './live-trace.ts';
+
+/**
+ * Why an edit's target is fragile, in words, or null when it is not. Fragile: no part names its element (it is kept by
+ * a document path), or, for one element, a WordPress block (identity kind `block`, named by its place in the stored
+ * markup, since WordPress keeps no id for one) with no words to guard it. Every instance of a block's kind is reached
+ * by its name, not its place, so that is not fragile; a token has no element.
+ */
+export function fragileWhy(target: LayerTarget, scope: LayerScope): string | null {
+  if (scope === 'site') return null;
+  if (!target.part) {
+    return target.textHash
+      ? 'No part of the site names this element, so the edit is kept by where it sits in the page. Its words guard it: if that place shows other words, the edit is set aside as orphaned rather than put on something else.'
+      : 'No part of the site names this element and it shows no words to check, so the edit is kept only by where it sits in the page: if the page around it changes, the edit lands on whatever is in that place now.';
+  }
+  if (scope === 'this' && target.part.kind === 'block' && !target.textHash) {
+    return 'WordPress keeps no id for a block, so this one is named by its place in the stored markup, and it shows no words to check: if the blocks are reordered, the edit lands on whatever block is in that place now.';
+  }
+  return null;
+}
 
 /**
  * What `kind` reaches for a Drupal block, in words, read from its plugin id for the plugin families core defines (the

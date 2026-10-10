@@ -3,7 +3,7 @@
   (components/live/Tray.tsx) and the Inspector's edits made in the layer
   (components/live/LayerEdits.tsx). A draft is the water accent (Wanigan's
   own); in the site and verified is green; a failed verification or an
-  orphaned edit is red. Amber is not used here: nothing in the tray is
+  orphaned edit is red; fragile is said on a neutral line. Amber is not used here: nothing in the tray is
   waiting on the owner the way "needs you" means.
 */
 
@@ -147,7 +147,12 @@
   color: var(--muted);
 }
 
-.live-layer-fragile,
+/* Fragile is a warning about how an edit is kept, not a failure: a neutral line. Red is for failed and orphaned. */
+.live-layer-fragile {
+  padding-left: var(--space-2);
+  border-left: 2px solid var(--line-strong);
+}
+
 .live-tray-why {
   padding-left: var(--space-2);
   border-left: 2px solid var(--red);

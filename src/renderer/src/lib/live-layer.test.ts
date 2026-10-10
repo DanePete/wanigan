@@ -7,7 +7,7 @@ import type { LayerApplied, LayerEdit, LayerImplemented, LayerSnapshot, LayerVer
 import type { LiveEdit } from '../../../shared/live.ts';
 import type { EditTarget, LiveTrace, PartIdentity } from '../../../shared/live-trace.ts';
 import {
-  NOTHING_HOLDS, byPage, changeLines, differenceWords, draftsOf, failedWords, heldInLayer, isFragile, madeOn, noiseWords, orphanWhy, ownTemplate,
+  NOTHING_HOLDS, byPage, changeLines, differenceWords, draftsOf, failedWords, fragileOf, heldInLayer, isFragile, madeOn, noiseWords, orphanWhy, ownTemplate,
   pagePath, placesOf, reachWords, redoLabel, sameTarget, sendsTyped, thisReach, templateOf, templateOffered, templateSaveRefused, undoLabel, verdictHeadline,
 } from './live-layer.ts';
 
@@ -71,10 +71,17 @@ test('before → after is a line per value, and what was not read says so', () =
   assert.deepEqual(changeLines(edit({ change: { type: 'token', name: '--accent', value: '#c0392b' }, before: {} })), [{ what: '--accent', before: 'not read', after: '#c0392b' }]);
 });
 
-test('a target no part names is fragile, and an orphaned edit says why', () => {
-  assert.ok(isFragile(edit({ target: { part: null, inner: null, selector: 'html > body > div:nth-of-type(2)', textHash: null } })));
+test('fragile is decided as the main process decides it and said as it behaves; an orphaned edit says why', () => {
+  const loose = (textHash: string | null) => edit({ target: { part: null, inner: null, selector: 'html > body > div:nth-of-type(2)', textHash } });
+  assert.match(fragileOf(loose(null)) ?? '', /lands on whatever is in that place now/, 'no words: nothing guards it');
+  assert.match(fragileOf(loose('0123456789abcdef')) ?? '', /set aside as orphaned rather than put on something else/, 'its words guard it');
   assert.ok(!isFragile(edit()));
-  assert.ok(!isFragile(edit({ target: { part: null, inner: null, selector: null, textHash: null }, change: { type: 'token', name: '--accent', value: 'red' } })), 'a token has no element');
+  assert.ok(!isFragile(edit({ scope: 'site', target: { part: null, inner: null, selector: null, textHash: null }, change: { type: 'token', name: '--accent', value: 'red' } })), 'a token has no element');
+  // A WordPress block is named by its place in the stored markup: with no words to check, it is fragile for one element.
+  const block: PartIdentity = { kind: 'block', store: 'tpl:acme//single', path: [2], name: 'core/group' };
+  assert.match(fragileOf(edit({ target: { part: block, inner: null, selector: null, textHash: null } })) ?? '', /named by its place in the stored markup/);
+  assert.ok(!isFragile(edit({ target: { part: block, inner: null, selector: null, textHash: '0123456789abcdef' } })), 'its words guard it');
+  assert.ok(!isFragile(edit({ scope: 'kind', target: { part: block, inner: null, selector: null, textHash: null } })), 'every one of its kind is reached by name, not place');
   const lost = edit({ id: 'lost', state: 'orphaned' });
   assert.equal(orphanWhy(lost, applied({ orphaned: [{ id: 'lost', why: 'Its element shows other words now.' }] })), 'Its element shows other words now.');
   assert.equal(orphanWhy(lost, applied()), 'Its element was not found on this page.');

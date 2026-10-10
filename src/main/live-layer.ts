@@ -54,7 +54,7 @@ import {
   type Bitmap, type ElementSnap, type WidthFindings, type Zone,
 } from '../shared/layer-verify.ts';
 import type { LiveEditSaved, LiveTraceAnswer } from '../shared/live-lens.ts';
-import { kindWords } from '../shared/layer-words.ts';
+import { fragileWhy, kindWords } from '../shared/layer-words.ts';
 import { TRACE_ID, identityKey, kindKey, type EditTarget, type LiveTrace, type PartIdentity, type TracePart } from '../shared/live-trace.ts';
 import { sameSite, type LiveSite } from '../shared/live.ts';
 import type { Method } from '../shared/protocol.ts';
@@ -692,13 +692,14 @@ export function wireLiveLayer(options: LiveLayerOptions): { hooks: LiveViewHooks
         }
         return {
           target: t, label: keyed.inner ? `${human} in ${partName}` : partName,
-          kindLabel: key ? kindWords(keyed.part, key, keyed.inner ? human : null) : null, kindCount, before, fragile: false,
+          // A WordPress block is named by its place: with no words to check, it is as fragile as a document path.
+          kindLabel: key ? kindWords(keyed.part, key, keyed.inner ? human : null) : null, kindCount, before, fragile: fragileWhy(t, 'this') !== null,
         };
       }
     }
     if (typeof pick.selector !== 'string') return null;
     const t: LayerTarget = { part: null, inner: null, selector: pick.selector, textHash };
-    return sound(t) ? { target: t, label: `${human} (no part names it)`, kindLabel: null, kindCount: 0, before, fragile: true } : null;
+    return sound(t) ? { target: t, label: `${human} (no part names it)`, kindLabel: null, kindCount: 0, before, fragile: fragileWhy(t, 'this') !== null } : null;
   };
 
   /* ── making an edit real ── */

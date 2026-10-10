@@ -10,10 +10,13 @@
 //   every instance of its kind (a component, a block type, a field), whose
 //   reach is said before it is chosen; a custom property is changed for the
 //   whole site, as a token.
-// - Markup no part of the site names is keyed by where it sits in the page:
-//   said plainly, as fragile, before the edit is made.
+// - Markup no part of the site names is keyed by where it sits in the page, and
+//   a WordPress block by its place in the stored markup: when no words guard it,
+//   that is said plainly, as fragile, before the edit is made, with what
+//   happens if the page changes (fragileWhy).
 import { useCallback, useEffect, useId, useState, type FormEvent, type KeyboardEvent } from 'react';
 import { layerValue, type LayerPickTarget, type LayerProperty, type LayerScope } from '@shared/design-layer';
+import { fragileWhy } from '@shared/layer-words';
 import type { LivePick } from '@shared/live';
 import type { LiveTrace } from '@shared/live-trace';
 import { changeLines, placesOf, sendsTyped, thisReach, type ChangeLine } from '../../lib/live-layer';
@@ -44,15 +47,10 @@ function useTarget(again: unknown): { target: LayerPickTarget | null; asked: boo
   return state;
 }
 
-/** The fragile warning, said before an edit is made to markup no part names. */
-function Fragile({ target }: { target: LayerPickTarget | null }) {
-  if (!target?.fragile) return null;
-  return (
-    <p className="small live-layer-fragile">
-      Fragile: no part of the site names this element, so the edit is kept by where it sits in the page. If the page around it changes, the edit is set
-      aside as orphaned rather than put on something else.
-    </p>
-  );
+/** The fragile warning, said before the edit is made (fragileWhy: the main process decides it the same way). */
+function Fragile({ target, scope }: { target: LayerPickTarget | null; scope: LayerScope }) {
+  const why = target ? fragileWhy(target.target, scope) : null;
+  return why ? <p className="small live-layer-fragile">Fragile: {why}</p> : null;
 }
 
 /** Retype the picked element's words: one element, shown on the page through the layer. */
@@ -91,7 +89,7 @@ export function RetypeWords({ pick, layer, page, trace, onAdded, onCancel }: {
           if (e.key === 'Enter' && !e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey) { e.preventDefault(); if (sends(e)) void submit(); }
           if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); onCancel(); }
         }} />
-      <Fragile target={target} />
+      <Fragile target={target} scope="this" />
       <div className="live-actions">
         <Button size="s" tone="primary" icon="check" type="submit" disabled={!changed}>Show it on the page</Button>
         <Button size="s" tone="quiet" onClick={onCancel}>Cancel</Button>
@@ -247,7 +245,7 @@ export function StyleEdit({ pick, layer, page, trace, onAdded, onDone }: {
           </label>
         ) : null}
       </fieldset>
-      <Fragile target={target} />
+      <Fragile target={target} scope={scope} />
       <div className="live-actions">
         <Button size="s" tone="primary" icon="check" type="submit" disabled={!chosen.length || !target}>Show it on the page</Button>
         <Button size="s" tone="quiet" icon="undo" onClick={() => setValues({})} disabled={!Object.keys(values).length}>Reset</Button>

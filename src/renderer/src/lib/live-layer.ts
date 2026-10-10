@@ -16,7 +16,7 @@
 import type {
   LayerApplied, LayerDifference, LayerEdit, LayerImplemented, LayerRect, LayerSnapshot, LayerState, LayerTarget, LayerVerdict, VerifyStep,
 } from '../../../shared/design-layer.ts';
-import { kindWords } from '../../../shared/layer-words.ts';
+import { fragileWhy, kindWords } from '../../../shared/layer-words.ts';
 import type { LiveEdit, LiveRegion } from '../../../shared/live.ts';
 import { identityKey, kindKey, type LiveTrace, type PartIdentity, type TracePart } from '../../../shared/live-trace.ts';
 
@@ -64,8 +64,9 @@ export const STATE_DETAIL: Record<LayerState, string> = {
   retired: 'Archived.',
 };
 
-/** A target no part of the site names: found by where it sits in the page, so a change around it can orphan it. */
-export const isFragile = (e: Pick<LayerEdit, 'target' | 'change'>): boolean => !e.target.part && e.change.type !== 'token';
+/** Why an edit is fragile, as the main process decides it when it keys a pick (src/shared/layer-words.ts fragileWhy), or null. */
+export const fragileOf = (e: Pick<LayerEdit, 'target' | 'scope'>): string | null => fragileWhy(e.target, e.scope);
+export const isFragile = (e: Pick<LayerEdit, 'target' | 'scope'>): boolean => fragileOf(e) !== null;
 
 /** A part of a kind, for its words: the trace's when the page shown has one, else the identity's own names. */
 function kindPart(identity: PartIdentity, trace: LiveTrace | null): Pick<TracePart, 'label' | 'identity'> {

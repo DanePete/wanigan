@@ -403,6 +403,19 @@ test('the picked element is keyed to the innermost part with an identity, with w
   } finally { w.done(); }
 });
 
+test('a WordPress block keyed only by its place is fragile when it shows no words to check, and not when it does', async () => {
+  const group: PartIdentity = { kind: 'block', store: 'tpl:acme//single', path: [2], name: 'core/group' };
+  const wp: LiveTrace = { ...trace(), platform: 'wordpress', parts: [{ id: 'w1', kind: 'block', label: 'Group', identity: group }] };
+  const w = wire({ trace: wp });
+  try {
+    w.page.pick = { parts: [{ part: 'w1', inner: null }], selector: 'html > body:nth-of-type(1) > div:nth-of-type(1)', text: null, tag: 'div', values: {} };
+    const empty = await w.target();
+    assert.deepEqual([empty?.target.part, empty?.target.textHash, empty?.fragile], [group, null, true], 'named by its place, nothing to guard it');
+    w.page.pick = { ...(w.page.pick as object), text: 'Spring paddling' };
+    assert.equal((await w.target())?.fragile, false, 'its words guard it: a reorder orphans the edit');
+  } finally { w.done(); }
+});
+
 test('a Layout Builder component’s kind is every component of its plugin in a layout, apart from the same block placed in a region, and each says which', async () => {
   const promo = 'block_content:0a1b2c3d-0000-4000-8000-0000000000e5';
   const inLayout = (uuid: string, plugin: string): PartIdentity => ({ kind: 'config', type: 'layout_builder_component', id: `node:0a1b2c3d-0000-4000-8000-000000000014/${uuid}`, plugin });
