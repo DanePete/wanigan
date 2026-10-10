@@ -1378,6 +1378,13 @@ try {
       if (await page.$('.live-inspector') || !(await page.$('.live-inspector-panel .live-tray'))) fail(t('layer: Edits did not take the Inspector’s place'));
       if (!/Edits/.test(await page.locator('.live-tray .live-side-title').innerText())) fail(t('layer: the tray has no title'));
       await rowsAre(5, 'five drafts');
+      // Leaving for another view of the project (a session, the board) and coming back finds Edits still open, and the
+      // Inspector on the part the page still has chosen.
+      await page.goto(`${base}#/p/NS/board`);
+      await page.waitForSelector('.card', { timeout: 8000 });
+      await page.goto(`${base}#/p/NS/live`);
+      await page.waitForSelector('.live-tray-edit', { timeout: 15_000 }).catch(() => fail(t('layer: coming back to the live view closed Edits')));
+      await rowsAre(5, 'five drafts, after coming back');
       if ((await page.locator('.live-tray-page .live-section-title').first().innerText()).toLowerCase() !== 'the front page, / · this page') fail(t('layer: the tray’s page is not named'));
       const want = [
         ['color', ['rgb(20, 20, 20)', '#c0392b', 'For this element.', 'Draft', 'Make it real hands it to an agent to put in the theme; once it is there, Verify finds it in the site.']],

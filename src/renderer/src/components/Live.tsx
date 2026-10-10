@@ -96,6 +96,9 @@ const PLATFORMS: readonly { value: LivePlatform; label: string; hint: string }[]
   { value: 'site', label: 'Another site', hint: 'Any address: it reloads as the agents edit' },
 ];
 
+/** Whether Edits was open, per project, while the window is open. */
+const trayOpen = new Map<string, boolean>();
+
 export function LivePane({ project, follow = null, card = null, compact = false, outlineFirst = null }: {
   project: ProjectSummary;
   /** Follow only this session's edits (a session's split view); null follows the whole project. */
@@ -331,6 +334,15 @@ function LiveShown({ site, url, project, follow, card, compact, following, shots
   const [view, setView] = useState<LiveViewState | null>(null);
   const [regions, setRegions] = useState<LiveRegion[]>([]);
   const [selection, setSelection] = useState<Selection | null>(null);
+  // Opened again on a page that still has a part chosen (the view went to a session and came back): the Inspector
+  // shows that part, as the page does, rather than "Nothing chosen" under an outlined part.
+  const restored = useRef(false);
+  useEffect(() => {
+    if (restored.current || !regions.length) return;
+    restored.current = true;
+    if (selection) return;
+    void live.picked().then((p) => { if (p?.regions.length) setSelection((s) => s ?? { region: p.regions[0] ?? null, pick: p, how: 'pick' }); }).catch(() => {});
+  }, [regions, selection, live]);
   const [picking, setPicking] = useState(false);
   const [hasScript, setHasScript] = useState(true);
   const [tab, setTab] = useState<Tab>('layers');
@@ -363,7 +375,11 @@ function LiveShown({ site, url, project, follow, card, compact, following, shots
   // own live view records; a session's split beside its terminal has no Record.)
   useEffect(() => () => { if (recording.current) void liveBridge()?.recordStop(); }, []);
   /** The design layer's edits (the Edits panel) take the Inspector's place while open. */
-  const [tray, setTray] = useState(false);
+  // Kept per project while the window is open: the view left for a session and came back with Edits closed.
+  // A session's split view keeps its own.
+  const trayKey = compact ? `${project.id}:split` : project.id;
+  const [tray, setTrayShown] = useState(() => trayOpen.get(trayKey) ?? false);
+  const setTray = useCallback((open: boolean) => { trayOpen.set(trayKey, open); setTrayShown(open); }, [trayKey]);
   /** The side panels: Structure is the owner's to close (kept on this computer); the Inspector closes until a part is chosen. */
   const liveRef = useRef<HTMLDivElement>(null);
   const narrow = useNarrow(liveRef);
