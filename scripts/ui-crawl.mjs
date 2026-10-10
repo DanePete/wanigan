@@ -748,7 +748,7 @@ function keyChecks(w) {
       { standIn: 'live', at: live, ready: '.live-tree', keys: ['['], expect: tabIs('Add') },
       { standIn: 'live', at: live, ready: '.live-tree', keys: [']'], expect: tabIs('Add') },
     ],
-    'Previous or next tab of the dock beneath the page (code, notes, problems, request)': [
+    'Previous or next tab of the dock beneath the page (code, notes, problems, request, DevTools)': [
       { standIn: 'live', at: live, ready: '.live-tree', setup: dockWas, keys: ['Shift+BracketLeft'], expect: dockMoved },
       { standIn: 'live', at: live, ready: '.live-tree', setup: dockWas, keys: ['Shift+BracketRight'], expect: dockMoved },
     ],
@@ -768,6 +768,13 @@ function keyChecks(w) {
     // A content item: taken out at once, so the site was asked (the stand-in plays it).
     'Take the chosen part out of the page': [{ standIn: 'live', at: live, ready: '.live-tree', setup: choose('Quote paragraph'), keys: ['Shift+X'],
       expect: focused(() => window.__wgLive.calls.includes('remove {"collection":"c-paras","item":"p-para-1"}')) }],
+    // The page's DevTools: Chrome's chord (this window says it is a Mac: ⌥⌘I) opens its tab in the dock, and closes it;
+    // ⇧D points it at the chosen part (the stand-in records where).
+    'The page’s DevTools, in the dock beneath it: open or close': [
+      { standIn: 'live', at: live, ready: '.live-tree', keys: ['Meta+Alt+KeyI'], expect: shows('.editor-drawer:not([hidden]) .live-docked[data-tab="devtools"]') },
+    ],
+    'Show the chosen part, or the row of the tree, in DevTools': [{ standIn: 'live', at: live, ready: '.live-tree', setup: choose('Search'), keys: ['Shift+D'],
+      expect: focused(() => window.__wgLive.calls.some((c) => c.startsWith('devtoolsInspect '))) }],
     'Add the note to the notes (in the note box)': [{ standIn: 'live', at: live, ready: '.live-tree', setup: noting, keys: ['Meta+Enter'], expect: shows('.dock-tabs button:has-text("Notes 1")') }],
     'Send the note now, or the notes waiting': [{ standIn: 'live', at: live, ready: '.live-tree', setup: noting, keys: ['Meta+Shift+Enter'], expect: shows('.toast:has-text("Sent to")') }],
     // Compare, opened from the live view. It starts on the slider, at the first change, at the view's 1440 px.

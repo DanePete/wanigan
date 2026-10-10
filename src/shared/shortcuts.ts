@@ -7,11 +7,17 @@
 // ⌘ never reaches a terminal program. Control is left alone on a Mac, so
 // Ctrl-K and Ctrl-T keep their meaning in a shell, an agent's prompt and a text
 // field. Single keys work only when nothing is being typed into.
+//
+// `Mod` is ⌘ on a Mac and Ctrl on Windows and Linux. A chord that is another
+// program's own on each platform (Chrome's DevTools: ⌥⌘I on a Mac, Ctrl+Shift+I
+// elsewhere) names its keys for Windows and Linux in `elsewhere`; `keysOn()` is
+// the one place that chooses, and the sheet, the menu and the key handler all
+// read it.
 import { PROJECT_VIEWS, type ProjectView } from './views.ts';
 
 export type CommandId =
   | 'palette' | 'new-session' | 'new-card' | 'shortcuts' | 'settings' | 'close-card' | 'history' | 'toggle-rail'
-  | 'quick-open' | 'toggle-editor' | 'live-goto'
+  | 'quick-open' | 'toggle-editor' | 'live-goto' | 'live-devtools'
   | 'go-needs' | 'go-running' | 'go-accounts' | 'go-settings'
   | `go-${ProjectView}`
   | `project-${1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9}`
@@ -39,6 +45,8 @@ export interface Shortcut {
   group: ShortcutGroup;
   /** Keys as written, `Mod` for ⌘ (Ctrl elsewhere). Several keys pressed together form one chord. */
   keys: string[];
+  /** Its keys on Windows and Linux, when they are not `keys` with Ctrl for ⌘ (Chrome's DevTools chord differs by platform). */
+  elsewhere?: string[];
   /** Pressed one after the other, not together (G then N). */
   sequence?: boolean;
   /** Other keys that do the same. */
@@ -109,7 +117,7 @@ export const SHORTCUTS: readonly Shortcut[] = [
   { id: null, label: 'Colour the page by a lens', group: 'In the live view', keys: ['Shift', 'L'] },
   { id: null, label: 'Phone, tablet or full width', group: 'In the live view', keys: ['1'], alt: [['2'], ['3']] },
   { id: null, label: 'Previous or next tab of the side panel', group: 'In the live view', keys: ['['], alt: [[']']] },
-  { id: null, label: 'Previous or next tab of the dock beneath the page (code, notes, problems, request)', group: 'In the live view', keys: ['Shift', '['], alt: [['Shift', ']']] },
+  { id: null, label: 'Previous or next tab of the dock beneath the page (code, notes, problems, request, DevTools)', group: 'In the live view', keys: ['Shift', '['], alt: [['Shift', ']']] },
   { id: null, label: 'Compare Local with a hosted environment', group: 'In the live view', keys: ['Shift', 'C'] },
   { id: null, label: 'The site’s component library', group: 'In the live view', keys: ['Shift', 'B'] },
   { id: null, label: 'Your edits to the page, in the design layer', group: 'In the live view', keys: ['Shift', 'E'] },
@@ -121,6 +129,10 @@ export const SHORTCUTS: readonly Shortcut[] = [
   { id: null, label: 'Take the chosen part out of the page', group: 'In the live view', keys: ['Shift', 'X'] },
   { id: null, label: 'Add the note to the notes (in the note box)', group: 'In the live view', keys: ['Mod', 'Enter'] },
   { id: null, label: 'Send the note now, or the notes waiting', group: 'In the live view', keys: ['Mod', 'Shift', 'Enter'] },
+  // The page's own Chromium DevTools, in the dock (components/live/DevTools.tsx): Chrome's chord on each platform, from
+  // anywhere in a project (elsewhere it goes to the project's live view first), from the page and from DevTools itself.
+  { id: 'live-devtools', label: 'The page’s DevTools, in the dock beneath it: open or close', group: 'In the live view', keys: ['Alt', 'Mod', 'I'], elsewhere: ['Mod', 'Shift', 'I'] },
+  { id: null, label: 'Show the chosen part, or the row of the tree, in DevTools', group: 'In the live view', keys: ['Shift', 'D'] },
   // And the live view's Compare (components/live/CompareViewer.tsx, keys from shared/live-compare.ts compareKey).
   { id: null, label: 'Show Local, or the hosted page', group: 'Comparing pages', keys: ['←'], alt: [['→']] },
   { id: null, label: 'Flip to the other', group: 'Comparing pages', keys: ['Space'] },
@@ -152,10 +164,23 @@ export function keyLabel(key: string, mac: boolean): string {
   return key;
 }
 
+/** A shortcut's keys on this platform: its own for Windows and Linux when it has them. */
+export function keysOn(s: Shortcut, mac: boolean): string[] {
+  return !mac && s.elsewhere ? s.elsewhere : s.keys;
+}
+
+/** Every set of keys that does it on this platform: its keys, then the other keys that do the same. */
+export const keySets = (s: Shortcut, mac: boolean): string[][] => [keysOn(s, mac), ...(s.alt ?? [])];
+
 /** One line of text for a shortcut, for search and for a menu's sublabel. */
 export function shortcutText(s: Shortcut, mac: boolean): string {
   const one = (keys: string[]): string => keys.map((k) => keyLabel(k, mac)).join(s.sequence ? ' then ' : mac ? '' : '+');
-  return [s.keys, ...(s.alt ?? [])].map(one).join(' or ');
+  return keySets(s, mac).map(one).join(' or ');
+}
+
+/** Keys as `aria-keyshortcuts` writes them (`Alt+Meta+I`, `Control+Shift+I`). */
+export function ariaKeys(keys: readonly string[], mac: boolean): string {
+  return keys.map((k) => (k === 'Mod' ? (mac ? 'Meta' : 'Control') : k === 'Ctrl' ? 'Control' : k)).join('+');
 }
 
 export interface KeyInput {
@@ -180,12 +205,22 @@ export interface KeyState {
 
 export type KeyMatch = { id: CommandId } | { pending: 'g' } | null;
 
+/**
+ * Chrome's DevTools chord, on this platform: ⌥⌘I on a Mac, Ctrl+Shift+I on Windows and Linux. By the key's code:
+ * ⌥ turns I into a dead key on a Mac keyboard.
+ */
+export function isDevtoolsKey(e: KeyInput, mac: boolean): boolean {
+  const i = e.code ? e.code === 'KeyI' : e.key.toLowerCase() === 'i';
+  return i && (mac ? e.metaKey && e.altKey && !e.ctrlKey && !e.shiftKey : e.ctrlKey && e.shiftKey && !e.altKey && !e.metaKey);
+}
+
 /** What a key press means, given where focus is. Null is "not ours": let it through. */
 export function matchKey(e: KeyInput, state: KeyState): KeyMatch {
   const mod = state.mac ? e.metaKey && !e.ctrlKey : e.ctrlKey && !e.metaKey;
   // ⌥ turns P into π on a Mac keyboard: the key itself says which letter it was.
   const letter = e.code && /^Key[A-Z]$/.test(e.code) ? e.code.slice(3).toLowerCase() : e.key.toLowerCase();
   if (mod && e.altKey && !e.shiftKey && letter === 'p') return { id: 'git-push' };
+  if (isDevtoolsKey(e, state.mac)) return { id: 'live-devtools' };
   if (mod && !e.altKey) {
     const k = e.key.toLowerCase();
     if (k === 'k' && !e.shiftKey) return { id: 'palette' };
@@ -230,18 +265,22 @@ export function shortcutFor(id: CommandId): Shortcut | undefined {
   return SHORTCUTS.find((s) => s.id === id);
 }
 
-/** The Electron accelerator for a command, when it has a chord. */
-export function menuAccelerator(id: CommandId): string | undefined {
+/** Whether a process runs on a Mac, where there is a process to ask (the main process, the tests); the window asks its bridge. */
+const onMac = (): boolean => (globalThis as { process?: { platform?: string } }).process?.platform === 'darwin';
+
+/** The Electron accelerator for a command on a platform, when it has a chord. */
+export function menuAccelerator(id: CommandId, mac = onMac()): string | undefined {
   const s = SHORTCUTS.find((x) => x.id === id);
   if (id.startsWith('project-')) return `CmdOrCtrl+${id.slice('project-'.length)}`;
-  if (!s || s.sequence || s.keys[0] !== 'Mod') return undefined;
-  return `CmdOrCtrl+${s.keys.slice(1).join('+')}`;
+  const keys = s ? keysOn(s, mac) : [];
+  if (!s || s.sequence || !keys.includes('Mod')) return undefined;
+  return keys.map((k) => (k === 'Mod' ? 'CmdOrCtrl' : k)).join('+');
 }
 
 /** The sequence a command is reached by, for a menu item's sublabel ("G then N"). */
 export function menuSequence(id: CommandId, mac: boolean): string | undefined {
   const s = SHORTCUTS.find((x) => x.id === id);
-  return s && (s.sequence || s.keys[0] !== 'Mod') ? shortcutText(s, mac) : undefined;
+  return s && (s.sequence || !keysOn(s, mac).includes('Mod')) ? shortcutText(s, mac) : undefined;
 }
 
 /** Commands the menu may send to the window. Anything else from IPC is ignored. */

@@ -253,6 +253,23 @@ export function showDock(id: string): void {
 }
 
 /**
+ * A tab's own key (the live view's DevTools: ⌥⌘I, Ctrl+Shift+I elsewhere): open the dock on it, or, when the dock shows
+ * it already, hide the dock, as ⌘J does for Code.
+ */
+export function toggleDock(id: string): void {
+  if (state.open && dockShows() === id) { set({ open: false }); return; }
+  showDock(id);
+}
+
+/**
+ * Open the dock on a tab of a view that is not on screen yet (the window is going there): it steps aside until that
+ * view adds the tab, then shows it.
+ */
+export function wantDock(id: string): void {
+  set({ open: true, shows: id });
+}
+
+/**
  * ⇧[ and ⇧] in the live view: closed, the dock opens on the tab it showed (Code when that tab is not here);
  * open, it goes to the previous or next tab.
  */

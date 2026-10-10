@@ -6,7 +6,7 @@ import {
 } from 'react';
 import { createPortal } from 'react-dom';
 import type { CardType, Priority, SessionState } from '@shared/model';
-import { keyLabel, type Shortcut } from '@shared/shortcuts';
+import { keyLabel, keysOn, type Shortcut } from '@shared/shortcuts';
 import { STATE_LABEL, TYPE_LABEL } from '../lib/format';
 import { Icon, type IconName } from './icons';
 import { useCoversLive } from '../lib/live';
@@ -158,7 +158,7 @@ export function ProjectMark({ projectKey, size = 'm' }: { projectKey: string; si
 export function KeyCaps({ shortcut, mac }: { shortcut: Shortcut; mac: boolean }) {
   return (
     <span className="keycaps">
-      {shortcut.keys.map((k, i) => (
+      {keysOn(shortcut, mac).map((k, i) => (
         <Fragment key={`${i}-${k}`}>
           {i && shortcut.sequence ? <span className="keycaps-then">then</span> : null}
           <kbd>{keyLabel(k, mac)}</kbd>

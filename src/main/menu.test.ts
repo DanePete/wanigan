@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { MenuItemConstructorOptions } from 'electron';
-import { menuTemplate } from './menu.ts';
+import { WANIGAN_DEVTOOLS, menuTemplate } from './menu.ts';
 
 function build(projects = [{ key: 'NS', name: 'Northstar' }, { key: 'OA', name: 'Orbit API' }], updates = true) {
   const sent: string[] = [];
@@ -107,4 +107,22 @@ test('Check for Updates… sits under About, and is absent where the app never c
   assert.deepEqual(sent, ['check for updates']);
   const demo = build(undefined, false);
   assert.equal(demo.menu('App').some((i) => i.label === 'Check for Updates…'), false, 'the demo never asks the network');
+});
+
+test('View › Page DevTools is Chrome’s chord on each platform; Wanigan’s own DevTools moves to another', () => {
+  const { menu, find, click, sent } = build();
+  const page = find('Page DevTools', menu('View'));
+  assert.equal(page.accelerator, 'Alt+CmdOrCtrl+I', '⌥⌘I on a Mac');
+  click(page);
+  assert.deepEqual(sent, ['command live-devtools']);
+  const windows = menuTemplate([], { command: () => {}, go: () => {} }, false);
+  const view = windows.find((m) => m.label === 'View')?.submenu as MenuItemConstructorOptions[];
+  assert.equal(view.find((i) => i.label === 'Page DevTools')?.accelerator, 'CmdOrCtrl+Shift+I', 'Ctrl+Shift+I on Windows and Linux');
+  // Electron gives the role Chrome's chord (⌥⌘I, Ctrl+Shift+I) unless told otherwise: it is told.
+  for (const items of [menu('View'), view]) {
+    const own = items.find((i) => i.role === 'toggleDevTools');
+    assert.equal(own?.accelerator, WANIGAN_DEVTOOLS);
+    assert.equal(own?.label, 'Wanigan’s Developer Tools');
+  }
+  assert.equal(WANIGAN_DEVTOOLS, 'CmdOrCtrl+Alt+Shift+I');
 });

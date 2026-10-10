@@ -3,12 +3,16 @@
 // details beside the tree, which marks it (however it was chosen) and brings
 // it into view. Folded, the tree shows only the way down to the chosen part;
 // unfolded again it is as it was. Arrow keys walk the tree as in any tree
-// (WAI-ARIA tree pattern).
+// (WAI-ARIA tree pattern). Show in DevTools stands beside the row pointed at
+// or walked to (one button, after the tree, so the tree holds only its rows):
+// ⇧D on a row does the same.
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent } from 'react';
 import type { LiveComponent, LiveRegion } from '@shared/live';
+import { liveKey } from '@shared/live-keys';
 import { nameOf, type LiveKind } from '@shared/live-names';
 import { layersOf, pathTo, type Layer } from '@shared/live-tree';
 import { Icon, type IconName } from '../icons';
+import { IconButton } from '../ui';
 
 export const KIND_ICON: Record<LiveKind, IconName> = {
   component: 'pieces', content: 'content', field: 'field', block: 'block', region: 'region', view: 'list', menu: 'menu',
@@ -42,7 +46,7 @@ function reveal(row: HTMLElement): void {
   else if (r.bottom > b.bottom) box.scrollTop += r.bottom - b.bottom;
 }
 
-export function Layers({ regions, components, selected, fold = false, changed, onHover, onSelect, partName }: {
+export function Layers({ regions, components, selected, fold = false, changed, onHover, onSelect, partName, onDevtools }: {
   regions: LiveRegion[];
   components: Map<string, LiveComponent>;
   /** The chosen part, by index: marked, opened to and scrolled to. */
@@ -56,6 +60,8 @@ export function Layers({ regions, components, selected, fold = false, changed, o
   onSelect: (region: LiveRegion) => void;
   /** The site helper's label and kind for a part id, from the page's trace. */
   partName?: (id: string) => { label: string; kind: string } | null;
+  /** Show a row's part in the page's DevTools (its Elements panel on it). */
+  onDevtools?: (region: LiveRegion) => void;
 }) {
   const [all, setAll] = useState(readAll);
   const layers = useMemo(() => layersOf(regions, { all, componentName: (id) => components.get(id)?.name ?? null, partName }), [regions, all, components, partName]);
@@ -114,6 +120,15 @@ export function Layers({ regions, components, selected, fold = false, changed, o
     return keys;
   }, [changed, layers]);
   const current = focus && rows.some((r) => r.layer.key === focus) ? focus : rows[0]?.layer.key ?? null;
+  // The row Show in DevTools stands beside: the one pointed at last, else the one the keyboard is on.
+  const [pointedKey, setPointedKey] = useState<string | null>(null);
+  const actKey = pointedKey && rows.some((r) => r.layer.key === pointedKey) ? pointedKey : current;
+  const actRow = rows.find((r) => r.layer.key === actKey) ?? null;
+  const [actAt, setActAt] = useState<{ top: number; height: number } | null>(null);
+  useLayoutEffect(() => {
+    const row = actKey ? tree.current?.querySelector<HTMLElement>(`[data-key="${CSS.escape(actKey)}"]`) : null;
+    setActAt(row ? { top: row.offsetTop, height: row.offsetHeight } : null);
+  }, [actKey, rows]);
 
   const toggleAll = (): void => {
     setAll((v) => {
@@ -143,6 +158,8 @@ export function Layers({ regions, components, selected, fold = false, changed, o
     const row = rows[at];
     if (!row) return;
     const { layer } = row;
+    // ⇧D: this row's part in DevTools (the live view's ⇧D shows the chosen part; here the row with the keyboard is it).
+    if (onDevtools && liveKey(e) === 'devtools-show') { e.preventDefault(); onDevtools(layer.region); return; }
     switch (e.key) {
       case 'ArrowDown': move(rows[Math.min(rows.length - 1, at + 1)]?.layer.key ?? null); break;
       case 'ArrowUp': move(rows[Math.max(0, at - 1)]?.layer.key ?? null); break;
@@ -167,7 +184,7 @@ export function Layers({ regions, components, selected, fold = false, changed, o
 
   if (!layers.length) return null;
   return (
-    <div className="live-layers">
+    <div className={`live-layers${onDevtools ? ' with-act' : ''}`}>
       <ul className="live-tree" role="tree" aria-label="Parts of this page" ref={tree} onKeyDown={keys}
         onMouseMove={(e) => { pointer.current = { x: e.clientX, y: e.clientY }; }} onMouseLeave={() => { pointer.current = null; onHover(null, null); }}>
         {rows.map(({ layer, depth }) => {
@@ -180,8 +197,8 @@ export function Layers({ regions, components, selected, fold = false, changed, o
               aria-expanded={layer.children.length ? isOpen : undefined} tabIndex={layer.key === current ? 0 : -1} data-key={layer.key}
               className={`live-layer${chosen ? ' on' : ''}${theirs ? ' theirs' : ''}`} style={{ '--depth': depth } as CSSProperties}
               title={layer.merged.length ? layer.merged.map((m) => nameOf(m).title).join(' › ') : undefined}
-              onFocus={() => setFocus(layer.key)}
-              onMouseEnter={(e) => { if (pointed(e)) onHover(layer.regions, label); }}
+              onFocus={() => { setFocus(layer.key); setPointedKey(null); }}
+              onMouseEnter={(e) => { if (pointed(e)) { onHover(layer.regions, label); setPointedKey(layer.key); } }}
               onClick={() => { setFocus(layer.key); onSelect(layer.region); }}>
               {layer.children.length ? (
                 <span className={`live-layer-twist${isOpen ? ' open' : ''}`} aria-hidden="true"
@@ -197,6 +214,12 @@ export function Layers({ regions, components, selected, fold = false, changed, o
           );
         })}
       </ul>
+      {onDevtools && actRow && actAt ? (
+        <span className="live-layer-act" style={{ top: actAt.top, height: actAt.height }}>
+          <IconButton icon="devtools" label={`Show ${actRow.layer.name.title} in DevTools (⇧D)`} aria-keyshortcuts="Shift+D"
+            onClick={() => onDevtools(actRow.layer.region)} />
+        </span>
+      ) : null}
       <label className="live-layers-all small">
         <input type="checkbox" checked={all} onChange={toggleAll} />
         Show icons, images and form fields too

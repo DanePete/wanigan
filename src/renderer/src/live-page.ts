@@ -822,6 +822,41 @@ export function livePage(): void {
     return box ? { x: Math.round(box.left), y: Math.round(box.top), width: Math.round(box.width), height: Math.round(box.height) } : null;
   }
 
+  /**
+   * A part's box in the view, the page scrolled to it first when none of it is on screen: a region from the last scan,
+   * or the picked element (null), with the viewport's size it was measured in. Show in DevTools points DevTools'
+   * inspector at the centre of what of it is on screen. Scrolled instantly, never smoothly: a site's smooth scrolling
+   * would leave the box where it was when it is read.
+   */
+  function reveal(index: number | null): (Rect & { viewWidth: number; viewHeight: number }) | null {
+    const r = index === null ? null : regions[index];
+    if (index !== null && !r) return null;
+    const box = (): DOMRect | null => {
+      if (r) return viewRect(r);
+      const b = target()?.getBoundingClientRect();
+      return b && (b.width >= 1 || b.height >= 1) ? b : null;
+    };
+    let b = box();
+    if (!b) return null;
+    if (b.bottom <= 0 || b.top >= innerHeight || b.right <= 0 || b.left >= innerWidth) {
+      // Its first element (a part marked by comments is the nodes between them), which scrolls any box it sits in.
+      let el: Element | null = r ? r.el : target();
+      if (!el && r?.range) {
+        let n: Node | null = r.range.startContainer.childNodes[r.range.startOffset] ?? r.range.startContainer;
+        while (n && !(n instanceof Element) && r.range.isPointInRange(n, 0)) n = n.nextSibling;
+        el = n instanceof Element ? n : r.range.startContainer instanceof Element ? r.range.startContainer : r.range.startContainer.parentElement;
+      }
+      el?.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'instant' });
+      b = box();
+      if (b && (b.bottom <= 0 || b.top >= innerHeight)) {
+        scrollBy({ top: b.top + b.height / 2 - innerHeight / 2, behavior: 'instant' });
+        b = box();
+      }
+      if (!b) return null;
+    }
+    return { x: Math.round(b.left), y: Math.round(b.top), width: Math.round(b.width), height: Math.round(b.height), viewWidth: innerWidth, viewHeight: innerHeight };
+  }
+
   function outline(indexes: number[], label: string | null, tone: Tone = 'edit'): number {
     shown = { indexes, label, tone };
     const drawn = indexes.filter((i) => { const r = regions[i]; return !!r && !!viewRect(r); });
@@ -1806,7 +1841,7 @@ export function livePage(): void {
   }
 
   w.__wl = {
-    scan, outline, clear, pick, cancelPick, choose, css, problems, texts, fingerprints, styleOf, paint, where, arrange, disarm, preview, unpreview,
+    scan, outline, clear, pick, cancelPick, choose, css, problems, texts, fingerprints, styleOf, paint, where, reveal, arrange, disarm, preview, unpreview,
     layerFind, layerSet, layerPick, layerSnap, layerOf, layerAreas, layerPage, layerLate, layerType, layerTry, retypeAt,
     /** End typing on the page from the window: keep the words typed so far, or put back what was there. */
     layerTypeEnd: (keep: unknown) => endTyping(keep === true),

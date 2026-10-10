@@ -87,6 +87,8 @@ const paths = {
   takeOut: 'M3.5 3.5h13v13h-13zM6.5 10h7',
   undo: 'M7.5 6 4 9.5 7.5 13M4.5 9.5H12a4 4 0 0 1 0 8h-2',
   code: 'M7 6 3 10l4 4M13 6l4 4-4 4M11.2 4.5l-2.4 11',
+  // DevTools' own inspector: an element's corner, and the pointer choosing it.
+  devtools: 'M8 15.5H4.5v-11h11V8M9.5 9.5l7 2.6-3 1.4-1.4 3z',
   save: 'M4 3.5h9.5l2.5 2.5v10.5H4zM7 3.5v4h6v-4M7 16.5v-5h6v5',
   forward: 'M8 5.5l4.5 4.5L8 14.5',
   down: 'M5.5 8l4.5 4.5L14.5 8',

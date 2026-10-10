@@ -16,8 +16,11 @@
 // (components/live/Tray.tsx): the page's edits, made real and verified there.
 //
 // The side panel's Layers tab keeps the tree beside a chosen part's details
-// (components/live/LayersPane.tsx). Notes, Problems and Request are tabs of
-// the dock beneath the page, beside the code editor (components/live/Dock.tsx).
+// (components/live/LayersPane.tsx). Notes, Problems, Request and the page's own
+// DevTools are tabs of the dock beneath the page, beside the code editor
+// (components/live/Dock.tsx, components/live/DevTools.tsx); the bar's DevTools
+// and Chrome's own chord (⌥⌘I on a Mac, Ctrl+Shift+I elsewhere) open and close
+// that tab, and Show in DevTools (⇧D) points it at a chosen part or a row.
 // Compare is drawn in the stage, where the page is (components/live/Compare.tsx).
 // Design: docs/design/2026-10-08-live-view.md.
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent, type ReactNode, type RefObject } from 'react';
@@ -52,6 +55,7 @@ import { HelperOffer, HelperSettings } from './live/Helper';
 import { Layers } from './live/Layers';
 import { LayersPane, focusTree, useTreeBeside } from './live/LayersPane';
 import { LiveDock, type LiveDockTab } from './live/Dock';
+import { DevtoolsTab } from './live/DevTools';
 import { EditsList, NoteComposer, NotesTab, draftFor, useNotesSender } from './live/Notes';
 import { useNotes, type LiveNote } from './live/note-store';
 import { ProblemsTab } from './live/Problems';
@@ -68,7 +72,8 @@ import { SiteTrouble, useSiteStatus } from './live/SiteTrouble';
 import { useWriteChecks } from './live/write-checks';
 import { Button, Empty, IconButton, Segmented, useToast } from './ui';
 import { openInEditor, relativeTo } from '../editor/EditButton';
-import { stepDock } from '../editor/store';
+import { dockShows, stepDock, useEditor } from '../editor/store';
+import { DEVTOOLS_TAB, devtoolsChord, showInDevtools, toggleDevtoolsTab } from '../lib/live-devtools';
 import '../styles/live.css';
 
 const PLATFORMS: readonly { value: LivePlatform; label: string; hint: string }[] = [
@@ -674,6 +679,21 @@ function LiveShown({ site, url, project, follow, card, compact, following, shots
     return () => showingOrigin(project.id, null);
   }, [project.id, env]);
 
+  // The page's own DevTools: its tab in the dock, Chrome's chord for this platform, and pointing it at a part.
+  const editor = useEditor();
+  const devtoolsShown = editor.open && dockShows(editor) === DEVTOOLS_TAB;
+  const chord = devtoolsChord(bridge().platform === 'darwin');
+  /** Show in DevTools: a region from the last scan, or the picked element (null); DevTools' inspector at its centre. */
+  const inspectIn = async (target: number | null): Promise<void> => {
+    const why = await showInDevtools(live, target);
+    if (why) toast(why);
+  };
+  const inspectChosen = (): void => {
+    const s = selected.current;
+    if (!s) { toast('Choose a part first: P picks one on the page, or choose it in Layers.'); return; }
+    void inspectIn(s.pick ? null : s.region?.index ?? null);
+  };
+
   const errors = problems?.length ?? 0;
   /** The view shows one piece alone (the helper's page), and which kind. */
   const alone = (() => {
@@ -689,6 +709,7 @@ function LiveShown({ site, url, project, follow, card, compact, following, shots
     { id: 'notes', label: notes.length ? `Notes ${notes.length}` : 'Notes' },
     { id: 'problems', label: errors ? `Problems ${errors}` : 'Problems' },
     ...(helperSite ? [{ id: 'request' as const, label: 'Request', hint: 'The hooks, queries, assets and logs behind this page' }] : []),
+    { id: 'devtools', label: 'DevTools', hint: `The page’s own DevTools: elements, console, network, sources, application, performance (${chord.text})` },
   ];
   const cms = site.platform === 'wordpress' ? 'WordPress' : 'Drupal';
   const compare = envs.length
@@ -733,6 +754,8 @@ function LiveShown({ site, url, project, follow, card, compact, following, shots
       case 'compare': if (!compact) { if (comparing) setComparing(false); else openCompare(); } return;
       case 'library': if (!compact) { setTray(false); setLibrary(!library); } return;
       case 'edits': if (!compact) openTray(!tray); return;
+      // ⇧D: the chosen part in DevTools (a row of the tree with the keyboard takes it first: Layers.tsx).
+      case 'devtools-show': if (!compact) inspectChosen(); return;
       case 'edit':
       case 'move':
       case 'code':
@@ -830,7 +853,7 @@ function LiveShown({ site, url, project, follow, card, compact, following, shots
     : comparing && envs.length && !compact ? [[['J', 'K'], 'changes'], [['S', 'O', 'D', 'T'], 'how'], [['1', '2', '3'], 'width'], [['Esc'], 'back to the page']]
     : library && !compact ? [[['P'], 'pick'], [['Esc'], 'back'], [['⇧', 'B'], 'close the library']]
     : tray && !compact ? [[['P'], 'pick'], [['Esc'], 'back'], [['⇧', 'E'], 'close the edits']]
-    : selection && shownTab === 'layers' && !compact ? [[['E'], 'edit'], [['M'], 'move'], [['.'], 'code'], [['⇧', 'A'], 'alone'], [['⇧', 'X'], 'take out'], [['P'], 'pick'], [['Esc'], 'back']]
+    : selection && shownTab === 'layers' && !compact ? [[['E'], 'edit'], [['M'], 'move'], [['.'], 'code'], [['⇧', 'A'], 'alone'], [['⇧', 'X'], 'take out'], [['⇧', 'D'], 'DevTools'], [['P'], 'pick'], [['Esc'], 'back']]
       : [[['P'], 'pick'], [['⇧', 'Space'], 'go to'], [['⇧', 'L'], 'lens'], [['1', '2', '3'], 'width'], [['[', ']'], 'tabs'], [['⇧', '[', ']'], 'dock'], [['?'], 'all keys']];
 
   return (
@@ -871,6 +894,13 @@ function LiveShown({ site, url, project, follow, card, compact, following, shots
               aria-label={`Edits${layer.drafts ? `, ${layer.drafts} ${layer.drafts === 1 ? 'draft' : 'drafts'}` : ''}: the design layer (⇧E)`}
               title="Your edits to the page, kept in Wanigan’s design layer: made real in the site and verified from here (⇧E)">
               <span className="live-tool-name">Edits</span>{layer.drafts ? <span className="live-layer-count" aria-hidden="true">{layer.drafts}</span> : null}<kbd className="live-key" aria-hidden="true">⇧E</kbd>
+            </Button>
+          ) : null}
+          {!compact ? (
+            // The page's own DevTools, in the dock beneath it: Chrome's chord on this platform opens and closes it too.
+            <Button size="s" tone={devtoolsShown ? 'primary' : 'quiet'} icon="devtools" onClick={toggleDevtoolsTab} aria-keyshortcuts={chord.aria} aria-pressed={devtoolsShown}
+              aria-label={`DevTools (${chord.text})`} title={`The page’s own DevTools in the dock beneath it: elements, console, network, sources (${chord.text})`}>
+              <span className="live-tool-name">DevTools</span><kbd className="live-key" aria-hidden="true">{chord.text}</kbd>
             </Button>
           ) : null}
           <MoreMenu compact={compact} arrangeOn={arrangeOn} canArrange={hasScript} onArrange={flipArrange} onBrowser={() => void live.open()} shot={shot} />
@@ -929,13 +959,13 @@ function LiveShown({ site, url, project, follow, card, compact, following, shots
                   <Inspector project={project} platform={site.platform} selection={selection} regions={regions} components={components} docroot={siteParts.data?.docroot ?? null}
                     theme={theme} page={view?.url ?? url} prefer={follow} helper={!!site.helper && !env} readOnly={!!env} onSelect={select} onClose={backToTree}
                     site={site} answer={env ? null : trace} trace={env ? null : traceData} parts={parts} arrange={arrange} onEdit={openEdit} verbs={verbs}
-                    siteAi={env ? null : siteAi} onSiteAiRefresh={readSiteAi} layer={layer} onTray={() => openTray(true)} />
+                    siteAi={env ? null : siteAi} onSiteAiRefresh={readSiteAi} layer={layer} onTray={() => openTray(true)} onDevtools={inspectChosen} />
                 ) : null}
                 // A helper another Wanigan set up ignores this one: said first, where the owner looks, with the way out.
                 before={!env && trace?.state === 'other' ? <TraceNote answer={trace} site={site} project={project} /> : null}
                 tree={regions.length ? (
                   <Layers regions={regions} components={components} selected={selection?.region?.index ?? null} fold={!!selection && !treeBeside}
-                    changed={changed} onHover={hover} onSelect={select} partName={partName} />
+                    changed={changed} onHover={hover} onSelect={select} partName={partName} onDevtools={(r) => void inspectIn(r.index)} />
                 ) : (
                   <NothingMarked platform={env ? null : site.platform} loading={!!view?.loading} hosted={!!env} />
                 )}
@@ -947,7 +977,7 @@ function LiveShown({ site, url, project, follow, card, compact, following, shots
           </aside>
         )}
       </div>
-      {/* Notes, Problems and Request, in the dock beneath the page beside the code editor. */}
+      {/* Notes, Problems, Request and the page's DevTools, in the dock beneath the page beside the code editor. */}
       {!compact ? (
         <LiveDock tabs={docked}>
           {(t) => (t === 'notes' ? (
@@ -957,6 +987,8 @@ function LiveShown({ site, url, project, follow, card, compact, following, shots
             </>
           ) : t === 'problems' ? (
             <ProblemsTab problems={problems} project={project} url={view?.url ?? url} onRefresh={() => void refreshProblems()} />
+          ) : t === 'devtools' ? (
+            <DevtoolsTab project={project} keyed={!env && !!site.token} />
           ) : (
             <RequestTab answer={trace} site={site} project={project} parts={parts} onPoint={point} />
           ))}

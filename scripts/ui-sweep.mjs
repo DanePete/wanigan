@@ -2139,7 +2139,7 @@ async function liveSiteStates() {
           show: async (projectId, url) => { shown = { projectId, url }; report(); return true; },
           bounds: () => {}, hide: async () => {}, cover: nothing,
           reload: async () => { report(); },
-          css: async () => 0, go: async () => true, back: async () => {}, forward: async () => {}, open: async () => {}, devtools: async () => {},
+          css: async () => 0, go: async () => true, back: async () => {}, forward: async () => {}, open: async () => {}, devtoolsShow: async () => 'closed', devtoolsBounds: () => {}, devtoolsHide: async () => null, devtoolsClose: async () => {}, devtoolsDetach: async () => false, devtoolsInspect: async () => false, onDevtools: () => () => {}, reveal: async () => null,
           scan: async () => [], outline: async () => 0, clear: async () => {}, pick: nothing, choose: nothing, cancelPick: async () => {}, capture: nothing,
           problems: async () => [], mutations: async () => 0, picked: nothing,
           helperChanged: nothing, helperSave: async () => ({ ok: false, error: null, label: null }), hasScript: async () => true,
