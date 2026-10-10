@@ -16,7 +16,7 @@ import { createHash } from 'node:crypto';
 import type { BrowserWindow, IpcMain, IpcMainInvokeEvent, Session } from 'electron';
 import { FIND_LIMIT, parseFind, samePath, type FindResult } from '../shared/live-find.ts';
 import { idsFromClasses, idsFromPath, pageTitle, type KnownPage, type LiveFindAnswer, type LiveHere } from '../shared/live-goto.ts';
-import { LIVE_KEYS, LIVE_PAGE_KEYS, isLiveKeyId, type LiveKeyId } from '../shared/live-keys.ts';
+import { LIVE_KEYS, LIVE_PAGE_KEYS, isLiveGesture, isLiveKeyId, type LiveGesture, type LiveKeyId } from '../shared/live-keys.ts';
 import { sameSite, type LivePlatform, type LiveSite } from '../shared/live.ts';
 import type { Method } from '../shared/protocol.ts';
 import { liveFor, type AppSettings } from '../shared/settings.ts';
@@ -267,12 +267,14 @@ export function wireLiveFind(options: {
 
   // Shift+Space in the page, and the live view's own keys (P picks, 1 2 3 widths…), the way a pick is answered: the
   // window waits, the page script answers which.
-  ipc.handle('live:awaitGoto', async (event): Promise<'goto' | LiveKeyId | null> => {
+  ipc.handle('live:awaitGoto', async (event): Promise<'goto' | LiveKeyId | LiveGesture | null> => {
     if (!ok(event)) return null;
     supersede?.();
     const replaced = new Promise<null>((resolve) => { supersede = () => resolve(null); });
     const take = JSON.stringify(LIVE_PAGE_KEYS);
     const got = await Promise.race([options.run<unknown>(`window.__wl && window.__wl.awaitGoto ? window.__wl.awaitGoto(${take}) : null`, null), replaced]);
+    // A double-click on the chosen part's words types on them: the page keeps the keyboard (layerType gives it there).
+    if (isLiveGesture(got)) return got;
     if (got !== 'goto' && !isLiveKeyId(got)) return null;
     // The launcher (or a list, or Compare) opens in the window: it takes the keyboard from the page. A pick, a width or a
     // tab leaves it there.

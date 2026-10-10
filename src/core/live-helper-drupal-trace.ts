@@ -3,10 +3,13 @@
 // (src/shared/live-trace.ts). PHP source, written into the module folder by
 // live-helper-drupal.ts. Every interception point is a core API or a subclass
 // of a core service whose method it extends, named in a comment at the point
-// with the 11.4 file and function it relies on; WaniganLiveServiceProvider
-// checks each core signature before swapping a class in, and leaves core's
-// own class when it differs. Nothing here acts unless Recorder::$on is set,
-// which only TraceSubscriber does, and only for a token request.
+// with the core file and function it relies on; core's classes changed shape
+// across the releases the helper supports (10.3 to 11.4), so each service has
+// a class per shape, and WaniganLiveServiceProvider puts in place the one
+// whose core signatures are exactly the running core's, or none. Without the
+// theme side's, parts are found through hooks (PartsByHooks). Nothing here
+// acts unless Recorder::$on is set, which only TraceSubscriber does, and only
+// for a token request.
 // The map of every point, and its edge cases: docs/research/2026-10-09-drupal-core-live-trace.md.
 
 const RECORDER = String.raw`<?php
@@ -68,9 +71,20 @@ final class Recorder {
   public array $enabledEvents = [];
 
   /**
-   * Placeholders being rendered now (TraceRenderer::doRenderPlaceholder()).
+   * Placeholders being rendered now (TracesElements::doRenderPlaceholder()).
    */
   public int $placeholders = 0;
+
+  /**
+   * Whether the page's parts are found through hooks (PartsByHooks): the
+   * theme side of the trace's classes is not in place on this core.
+   */
+  public bool $byHooks = FALSE;
+
+  /**
+   * What the trace lacks on this core, said in its log (TraceBuilder).
+   */
+  public array $notes = [];
 
   private \WeakMap $fibers;
   private FiberState $main;
@@ -82,6 +96,34 @@ final class Recorder {
     $this->startNs = hrtime(TRUE);
     $this->fibers = new \WeakMap();
     $this->main = new FiberState();
+  }
+
+  /**
+   * Which of the trace's classes this site runs (WaniganLiveServiceProvider
+   * puts in place those written against its core), so how the page's parts
+   * are found, and what the trace lacks without the others.
+   */
+  public function sense(): void {
+    $this->byHooks = PartsByHooks::needed();
+    $notes = [];
+    try {
+      if (!\Drupal::moduleHandler() instanceof HookListeners) {
+        $notes[] = 'Modules’ hook implementations are not timed: this Drupal’s module handler is not one the helper knows.';
+      }
+      if (!\Drupal::theme() instanceof HookListeners) {
+        $notes[] = 'Themes’ alter hooks are not timed: this Drupal’s theme manager is not one the helper knows.';
+      }
+      if ($this->byHooks) {
+        $notes[] = 'The helper does not know how this Drupal renders templates, so it found this page’s parts through hooks: a template and its wrappers are one part, the preprocess steps that shaped a template are not listed, a part’s cache metadata is its own (not what its contents added), and something rendered outside the page’s render arrays is not a part.';
+      }
+      elseif (!\Drupal::service('renderer') instanceof TraceRenderer && !\Drupal::service('renderer') instanceof TraceRenderer103) {
+        $notes[] = 'Parts have no cost, cache or asset details: this Drupal’s renderer is not one the helper knows.';
+      }
+    }
+    catch (\Throwable) {
+      // Services that cannot be asked: nothing to say about them.
+    }
+    $this->notes = $notes;
   }
 
   /**
@@ -125,6 +167,28 @@ final class Recorder {
         return;
       }
     }
+  }
+
+  /**
+   * An element frame PartsByHooks opened in the Fiber running now, by its
+   * number, while it is open.
+   */
+  public function openFrame(int $number): ?Frame {
+    foreach ($this->state()->frames as $frame) {
+      if (($frame->info['hooked'] ?? NULL) === $number) {
+        return $frame;
+      }
+    }
+    return NULL;
+  }
+
+  /**
+   * The template TraceThemeManager103 is rendering now in this Fiber (before
+   * 11.3), or NULL.
+   */
+  public function pendingTemplate(): ?PendingTemplate {
+    $templates = $this->state()->templates;
+    return $templates ? $templates[array_key_last($templates)] : NULL;
   }
 
   /**
@@ -225,17 +289,19 @@ final class Recorder {
   }
 
   /**
-   * A template's render begins: ThemeManager::render() calls its 'initial
-   * preprocess' first (TracedRuntime puts this there).
+   * A template's render begins, with its first preprocess callback
+   * (TracedRuntime, or PartsByHooks::open()). Its element is the element
+   * frame it opens in; through hooks, the nearest open one, since a template
+   * frame stays open until its element ends.
    */
-  public function beginTheme(string $hook, array $info, array $variables): Frame {
+  public function beginTheme(string $hook, array $info, array $variables, bool $nearest = FALSE): Frame {
     $top = $this->top();
     $frame = new Frame('T', [
       'hook' => $hook,
       'original' => (string) ($variables['theme_hook_original'] ?? $hook),
       'base' => (string) ($info['base hook'] ?? $hook),
       'key' => $info['render element'] ?? NULL,
-      'element' => ($top !== NULL && $top->type === 'R') ? $top : NULL,
+      'element' => $nearest ? $this->nearestElement() : (($top !== NULL && $top->type === 'R') ? $top : NULL),
     ]);
     $frame->steps = $this->takeSuggestions();
     return $this->push($frame);
@@ -253,7 +319,8 @@ final class Recorder {
   }
 
   /**
-   * A template rendered (TraceThemeEngine): its output becomes a part.
+   * A template rendered (TraceThemeEngine, TraceThemeManager103): its output
+   * becomes a part.
    */
   public function themePart(Frame $frame, string $file, array $variables, string|MarkupInterface $output): string|MarkupInterface {
     $this->pop($frame);
@@ -284,7 +351,7 @@ final class Recorder {
   }
 
   /**
-   * An element rendered (TraceRenderer): its bubbled metadata, and a part of
+   * An element rendered (TracesElements): its bubbled metadata, and a part of
    * its own when it shows an entity that has no template.
    */
   public function leaveElement(Frame $frame, array &$elements, string|MarkupInterface $markup): string|MarkupInterface {
@@ -337,6 +404,49 @@ final class Recorder {
       }
     }
     return $markup;
+  }
+
+  /**
+   * An element rendered while parts are found through hooks
+   * (PartsByHooks::postRender()): the part of its own template, or else of
+   * its outermost wrapper, around all of its markup; then as ::leaveElement().
+   */
+  public function leaveByHooks(Frame $frame, array $elements, string|MarkupInterface $markup): string|MarkupInterface {
+    $this->pop($frame);
+    $own = (array) ($elements['#theme'] ?? []);
+    $wrappers = [];
+    foreach ((array) ($elements['#theme_wrappers'] ?? []) as $key => $value) {
+      $wrappers[] = is_string($key) ? $key : $value;
+    }
+    $template = NULL;
+    foreach ($frame->info['templates'] ?? [] as $candidate) {
+      if (in_array($candidate->info['original'], $own, TRUE)) {
+        $template = $candidate;
+        break;
+      }
+      if (in_array($candidate->info['original'], $wrappers, TRUE)) {
+        $template = $candidate;
+      }
+    }
+    $text = (string) $markup;
+    if ($template !== NULL && $template->info['base'] !== 'html' && trim($text) !== '' && !isset($elements['#attached']['placeholders'][$text])) {
+      $id = $this->newPart();
+      if ($id !== NULL) {
+        $variables = $template->info['variables'] ?? [];
+        $template->part = $id;
+        $frame->part = $id;
+        $frame->info['themed'] = TRUE;
+        $frame->children[] = $id;
+        $this->parts[$id] = ['id' => $id, 'frame' => $template] + Describe::theme($template, (string) ($template->info['file'] ?? ''), is_array($variables) ? $variables : []);
+        $markup = Markup::create(self::open($id) . $text . self::close($id));
+      }
+    }
+    // The templates' variables were references to core's: let go.
+    foreach ($frame->info['templates'] ?? [] as $candidate) {
+      unset($candidate->info['variables']);
+    }
+    unset($frame->info['templates']);
+    return $this->leaveElement($frame, $elements, $markup);
   }
 
   /**
@@ -436,6 +546,12 @@ final class FiberState {
   public array $frames = [];
   public ?Frame $base = NULL;
   public array $suggestions = [];
+
+  /**
+   * Templates TraceThemeManager103 is rendering, innermost last (before
+   * 11.3).
+   */
+  public array $templates = [];
 
 }
 `;
@@ -579,6 +695,11 @@ final class Source {
     if (is_array($callable) && !(isset($callable[0], $callable[1]) && is_string($callable[1]))) {
       return ['name' => 'callable'];
     }
+    // A function named from the root namespace, as core's hook listeners
+    // name some (11.1, 11.2).
+    if (is_string($callable)) {
+      $callable = ltrim($callable, '\\');
+    }
     $key = is_string($callable) ? $callable : (is_array($callable) && count($callable) === 2 ? (is_object($callable[0]) ? get_class($callable[0]) : (string) $callable[0]) . '::' . $callable[1] : NULL);
     if ($key !== NULL && isset(self::$callables[$key])) {
       return self::$callables[$key];
@@ -588,7 +709,12 @@ final class Source {
       if ($callable instanceof \Closure) {
         $reflection = new \ReflectionFunction($callable);
         $class = $reflection->getClosureScopeClass();
-        $out['name'] = $class ? $class->getName() . '::{closure}' : '{closure}';
+        // A closure made of a function or method (Closure::fromCallable(), as
+        // core's module handler hands its listeners before 11.1) is named for
+        // it.
+        $name = $reflection->getName();
+        $named = !str_starts_with($name, '{closure');
+        $out['name'] = $class ? $class->getName() . '::' . ($named ? $name : '{closure}') : ($named ? $name : '{closure}');
       }
       elseif (is_string($callable) && str_contains($callable, '::')) {
         $reflection = new \ReflectionMethod($callable);

@@ -1,0 +1,2267 @@
+{
+ "//": "Drupal core as the live view helper's trace extends it (src/core/live-helper-drupal-intercept.ts): every method of the classes the trace subclasses or reads, with its signature as WaniganLiveServiceProvider::signature() writes it and its declaration, and every property, read by reflection (PHP 8.5) from the release tarball of the latest patch of each minor version the helper supports (core_version_requirement ^10.3 || ^11), plus the Twig engine's functions (core/themes/engines/twig/twig.engine). A class is kept once for the run of versions it is identical in; null: the class is not in that version.",
+ "versions": {
+  "10.3.14": {
+   "classes": {
+    "Drupal\\Core\\Extension\\ModuleHandler": "ModuleHandler 10.3.14–11.0.13",
+    "Drupal\\Core\\Theme\\ThemeManager": "ThemeManager 10.3.14–11.1.10",
+    "Drupal\\Core\\Theme\\Registry": "Registry 10.3.14–10.6.18",
+    "Drupal\\Core\\Utility\\ThemeRegistry": "ThemeRegistry 10.3.14–10.6.18",
+    "Drupal\\Core\\Render\\Renderer": "Renderer 10.3.14–10.4.10",
+    "Drupal\\Core\\Template\\TwigThemeEngine": null,
+    "Drupal\\Core\\Hook\\ImplementationList": null
+   },
+   "functions": {
+    "twig_render_template": "($template_file, array $variables)",
+    "twig_extension": "()",
+    "twig_init": null,
+    "twig_theme": "($existing, $type, $theme, $path)"
+   }
+  },
+  "10.4.10": {
+   "classes": {
+    "Drupal\\Core\\Extension\\ModuleHandler": "ModuleHandler 10.3.14–11.0.13",
+    "Drupal\\Core\\Theme\\ThemeManager": "ThemeManager 10.3.14–11.1.10",
+    "Drupal\\Core\\Theme\\Registry": "Registry 10.3.14–10.6.18",
+    "Drupal\\Core\\Utility\\ThemeRegistry": "ThemeRegistry 10.3.14–10.6.18",
+    "Drupal\\Core\\Render\\Renderer": "Renderer 10.3.14–10.4.10",
+    "Drupal\\Core\\Template\\TwigThemeEngine": null,
+    "Drupal\\Core\\Hook\\ImplementationList": null
+   },
+   "functions": {
+    "twig_render_template": "($template_file, array $variables)",
+    "twig_extension": "()",
+    "twig_init": null,
+    "twig_theme": "($existing, $type, $theme, $path)"
+   }
+  },
+  "10.5.12": {
+   "classes": {
+    "Drupal\\Core\\Extension\\ModuleHandler": "ModuleHandler 10.3.14–11.0.13",
+    "Drupal\\Core\\Theme\\ThemeManager": "ThemeManager 10.3.14–11.1.10",
+    "Drupal\\Core\\Theme\\Registry": "Registry 10.3.14–10.6.18",
+    "Drupal\\Core\\Utility\\ThemeRegistry": "ThemeRegistry 10.3.14–10.6.18",
+    "Drupal\\Core\\Render\\Renderer": "Renderer 10.5.12–10.6.18",
+    "Drupal\\Core\\Template\\TwigThemeEngine": null,
+    "Drupal\\Core\\Hook\\ImplementationList": null
+   },
+   "functions": {
+    "twig_render_template": "($template_file, array $variables)",
+    "twig_extension": "()",
+    "twig_init": null,
+    "twig_theme": "($existing, $type, $theme, $path)"
+   }
+  },
+  "10.6.18": {
+   "classes": {
+    "Drupal\\Core\\Extension\\ModuleHandler": "ModuleHandler 10.3.14–11.0.13",
+    "Drupal\\Core\\Theme\\ThemeManager": "ThemeManager 10.3.14–11.1.10",
+    "Drupal\\Core\\Theme\\Registry": "Registry 10.3.14–10.6.18",
+    "Drupal\\Core\\Utility\\ThemeRegistry": "ThemeRegistry 10.3.14–10.6.18",
+    "Drupal\\Core\\Render\\Renderer": "Renderer 10.5.12–10.6.18",
+    "Drupal\\Core\\Template\\TwigThemeEngine": null,
+    "Drupal\\Core\\Hook\\ImplementationList": null
+   },
+   "functions": {
+    "twig_render_template": "($template_file, array $variables)",
+    "twig_extension": "()",
+    "twig_init": null,
+    "twig_theme": "($existing, $type, $theme, $path)"
+   }
+  },
+  "11.0.13": {
+   "classes": {
+    "Drupal\\Core\\Extension\\ModuleHandler": "ModuleHandler 10.3.14–11.0.13",
+    "Drupal\\Core\\Theme\\ThemeManager": "ThemeManager 10.3.14–11.1.10",
+    "Drupal\\Core\\Theme\\Registry": "Registry 11.0.13–11.1.10",
+    "Drupal\\Core\\Utility\\ThemeRegistry": "ThemeRegistry 11.0.13–11.1.10",
+    "Drupal\\Core\\Render\\Renderer": "Renderer 11.0.13–11.1.10",
+    "Drupal\\Core\\Template\\TwigThemeEngine": null,
+    "Drupal\\Core\\Hook\\ImplementationList": null
+   },
+   "functions": {
+    "twig_render_template": "($template_file, array $variables)",
+    "twig_extension": "()",
+    "twig_init": null,
+    "twig_theme": "($existing, $type, $theme, $path)"
+   }
+  },
+  "11.1.10": {
+   "classes": {
+    "Drupal\\Core\\Extension\\ModuleHandler": "ModuleHandler 11.1.10",
+    "Drupal\\Core\\Theme\\ThemeManager": "ThemeManager 10.3.14–11.1.10",
+    "Drupal\\Core\\Theme\\Registry": "Registry 11.0.13–11.1.10",
+    "Drupal\\Core\\Utility\\ThemeRegistry": "ThemeRegistry 11.0.13–11.1.10",
+    "Drupal\\Core\\Render\\Renderer": "Renderer 11.0.13–11.1.10",
+    "Drupal\\Core\\Template\\TwigThemeEngine": null,
+    "Drupal\\Core\\Hook\\ImplementationList": null
+   },
+   "functions": {
+    "twig_render_template": "($template_file, array $variables)",
+    "twig_extension": "()",
+    "twig_init": null,
+    "twig_theme": "($existing, $type, $theme, $path): array"
+   }
+  },
+  "11.2.14": {
+   "classes": {
+    "Drupal\\Core\\Extension\\ModuleHandler": "ModuleHandler 11.2.14",
+    "Drupal\\Core\\Theme\\ThemeManager": "ThemeManager 11.2.14",
+    "Drupal\\Core\\Theme\\Registry": "Registry 11.2.14",
+    "Drupal\\Core\\Utility\\ThemeRegistry": "ThemeRegistry 11.2.14",
+    "Drupal\\Core\\Render\\Renderer": "Renderer 11.2.14–11.4.9",
+    "Drupal\\Core\\Template\\TwigThemeEngine": null,
+    "Drupal\\Core\\Hook\\ImplementationList": null
+   },
+   "functions": {
+    "twig_render_template": "($template_file, array $variables): Drupal\\Component\\Render\\MarkupInterface|string",
+    "twig_extension": "(): string",
+    "twig_init": null,
+    "twig_theme": "($existing, $type, $theme, $path): array"
+   }
+  },
+  "11.3.18": {
+   "classes": {
+    "Drupal\\Core\\Extension\\ModuleHandler": "ModuleHandler 11.3.18–11.4.9",
+    "Drupal\\Core\\Theme\\ThemeManager": "ThemeManager 11.3.18–11.4.9",
+    "Drupal\\Core\\Theme\\Registry": "Registry 11.3.18–11.4.9",
+    "Drupal\\Core\\Utility\\ThemeRegistry": "ThemeRegistry 11.3.18–11.4.9",
+    "Drupal\\Core\\Render\\Renderer": "Renderer 11.2.14–11.4.9",
+    "Drupal\\Core\\Template\\TwigThemeEngine": "TwigThemeEngine 11.3.18–11.4.9",
+    "Drupal\\Core\\Hook\\ImplementationList": "ImplementationList 11.3.18–11.4.9"
+   },
+   "functions": {
+    "twig_render_template": "($template_file, array $variables): Drupal\\Component\\Render\\MarkupInterface|string",
+    "twig_extension": "(): string",
+    "twig_init": null,
+    "twig_theme": "($existing, $type, $theme, $path): array"
+   }
+  },
+  "11.4.9": {
+   "classes": {
+    "Drupal\\Core\\Extension\\ModuleHandler": "ModuleHandler 11.3.18–11.4.9",
+    "Drupal\\Core\\Theme\\ThemeManager": "ThemeManager 11.3.18–11.4.9",
+    "Drupal\\Core\\Theme\\Registry": "Registry 11.3.18–11.4.9",
+    "Drupal\\Core\\Utility\\ThemeRegistry": "ThemeRegistry 11.3.18–11.4.9",
+    "Drupal\\Core\\Render\\Renderer": "Renderer 11.2.14–11.4.9",
+    "Drupal\\Core\\Template\\TwigThemeEngine": "TwigThemeEngine 11.3.18–11.4.9",
+    "Drupal\\Core\\Hook\\ImplementationList": "ImplementationList 11.3.18–11.4.9"
+   },
+   "functions": {
+    "twig_render_template": "($template_file, array $variables): Drupal\\Component\\Render\\MarkupInterface|string",
+    "twig_extension": "(): string",
+    "twig_init": null,
+    "twig_theme": "($existing, $type, $theme, $path): array"
+   }
+  }
+ },
+ "classes": {
+  "ModuleHandler 10.3.14–11.0.13": {
+   "class": "Drupal\\Core\\Extension\\ModuleHandler",
+   "parent": null,
+   "methods": {
+    "__construct": {
+     "signature": "($root, array $module_list, Drupal\\Core\\Cache\\CacheBackendInterface $cache_backend)",
+     "declaration": "public function __construct($root, array $module_list, \\Drupal\\Core\\Cache\\CacheBackendInterface $cache_backend)"
+    },
+    "add": {
+     "signature": "($type, $name, $path)",
+     "declaration": "protected function add($type, $name, $path)"
+    },
+    "addModule": {
+     "signature": "($name, $path)",
+     "declaration": "public function addModule($name, $path)"
+    },
+    "addProfile": {
+     "signature": "($name, $path)",
+     "declaration": "public function addProfile($name, $path)"
+    },
+    "alter": {
+     "signature": "($type, &$data, &$context1, &$context2)",
+     "declaration": "public function alter($type, &$data, &$context1 = NULL, &$context2 = NULL)"
+    },
+    "alterDeprecated": {
+     "signature": "($description, $type, &$data, &$context1, &$context2)",
+     "declaration": "public function alterDeprecated($description, $type, &$data, &$context1 = NULL, &$context2 = NULL)"
+    },
+    "buildHookInfo": {
+     "signature": "()",
+     "declaration": "protected function buildHookInfo()"
+    },
+    "buildImplementationInfo": {
+     "signature": "($hook)",
+     "declaration": "protected function buildImplementationInfo($hook)"
+    },
+    "buildModuleDependencies": {
+     "signature": "(array $modules)",
+     "declaration": "public function buildModuleDependencies(array $modules)"
+    },
+    "destruct": {
+     "signature": "()",
+     "declaration": "public function destruct()"
+    },
+    "getHookInfo": {
+     "signature": "()",
+     "declaration": "public function getHookInfo()"
+    },
+    "getImplementationInfo": {
+     "signature": "($hook)",
+     "declaration": "protected function getImplementationInfo($hook)"
+    },
+    "getModule": {
+     "signature": "($name)",
+     "declaration": "public function getModule($name)"
+    },
+    "getModuleDirectories": {
+     "signature": "()",
+     "declaration": "public function getModuleDirectories()"
+    },
+    "getModuleList": {
+     "signature": "()",
+     "declaration": "public function getModuleList()"
+    },
+    "getName": {
+     "signature": "($module)",
+     "declaration": "public function getName($module)"
+    },
+    "hasImplementations": {
+     "signature": "(string $hook, $modules): bool",
+     "declaration": "public function hasImplementations(string $hook, $modules = NULL): bool"
+    },
+    "invoke": {
+     "signature": "($module, $hook, array $args)",
+     "declaration": "public function invoke($module, $hook, array $args = [])"
+    },
+    "invokeAll": {
+     "signature": "($hook, array $args)",
+     "declaration": "public function invokeAll($hook, array $args = [])"
+    },
+    "invokeAllDeprecated": {
+     "signature": "($description, $hook, array $args)",
+     "declaration": "public function invokeAllDeprecated($description, $hook, array $args = [])"
+    },
+    "invokeAllWith": {
+     "signature": "(string $hook, callable $callback): void",
+     "declaration": "public function invokeAllWith(string $hook, callable $callback): void"
+    },
+    "invokeDeprecated": {
+     "signature": "($description, $module, $hook, array $args)",
+     "declaration": "public function invokeDeprecated($description, $module, $hook, array $args = [])"
+    },
+    "isLoaded": {
+     "signature": "()",
+     "declaration": "public function isLoaded()"
+    },
+    "load": {
+     "signature": "($name)",
+     "declaration": "public function load($name)"
+    },
+    "loadAll": {
+     "signature": "()",
+     "declaration": "public function loadAll()"
+    },
+    "loadAllIncludes": {
+     "signature": "($type, $name)",
+     "declaration": "public function loadAllIncludes($type, $name = NULL)"
+    },
+    "loadInclude": {
+     "signature": "($module, $type, $name)",
+     "declaration": "public function loadInclude($module, $type, $name = NULL)"
+    },
+    "moduleExists": {
+     "signature": "($module)",
+     "declaration": "public function moduleExists($module)"
+    },
+    "reload": {
+     "signature": "()",
+     "declaration": "public function reload()"
+    },
+    "resetImplementations": {
+     "signature": "()",
+     "declaration": "public function resetImplementations()"
+    },
+    "setModuleList": {
+     "signature": "(array $module_list)",
+     "declaration": "public function setModuleList(array $module_list = [])"
+    },
+    "triggerDeprecationError": {
+     "signature": "($description, $hook)",
+     "declaration": "private function triggerDeprecationError($description, $hook)"
+    },
+    "verifyImplementations": {
+     "signature": "(&$implementations, $hook)",
+     "declaration": "protected function verifyImplementations(&$implementations, $hook)"
+    },
+    "writeCache": {
+     "signature": "()",
+     "declaration": "public function writeCache()"
+    }
+   },
+   "properties": {
+    "alterFunctions": "protected",
+    "cacheBackend": "protected",
+    "cacheNeedsWriting": "protected",
+    "hookInfo": "protected",
+    "implementations": "protected",
+    "includeFileKeys": "protected",
+    "loaded": "protected",
+    "loadedFiles": "protected",
+    "moduleList": "protected",
+    "root": "protected",
+    "verified": "protected"
+   },
+   "versions": [
+    "10.3.14",
+    "10.4.10",
+    "10.5.12",
+    "10.6.18",
+    "11.0.13"
+   ]
+  },
+  "ModuleHandler 11.1.10": {
+   "class": "Drupal\\Core\\Extension\\ModuleHandler",
+   "parent": null,
+   "methods": {
+    "__construct": {
+     "signature": "($root, array $module_list, Symfony\\Component\\EventDispatcher\\EventDispatcherInterface $eventDispatcher, array $hookImplementationsMap, array $groupIncludes)",
+     "declaration": "public function __construct($root, array $module_list, \\Symfony\\Component\\EventDispatcher\\EventDispatcherInterface $eventDispatcher, array $hookImplementationsMap, array $groupIncludes = [])"
+    },
+    "add": {
+     "signature": "($type, $name, $path)",
+     "declaration": "protected function add($type, $name, $path)"
+    },
+    "addModule": {
+     "signature": "($name, $path)",
+     "declaration": "public function addModule($name, $path)"
+    },
+    "addProfile": {
+     "signature": "($name, $path)",
+     "declaration": "public function addProfile($name, $path)"
+    },
+    "alter": {
+     "signature": "($type, &$data, &$context1, &$context2)",
+     "declaration": "public function alter($type, &$data, &$context1 = NULL, &$context2 = NULL)"
+    },
+    "alterDeprecated": {
+     "signature": "($description, $type, &$data, &$context1, &$context2)",
+     "declaration": "public function alterDeprecated($description, $type, &$data, &$context1 = NULL, &$context2 = NULL)"
+    },
+    "buildModuleDependencies": {
+     "signature": "(array $modules)",
+     "declaration": "public function buildModuleDependencies(array $modules)"
+    },
+    "getHookInfo": {
+     "signature": "()",
+     "declaration": "public function getHookInfo()"
+    },
+    "getHookListeners": {
+     "signature": "(string $hook): array",
+     "declaration": "protected function getHookListeners(string $hook): array"
+    },
+    "getModule": {
+     "signature": "($name)",
+     "declaration": "public function getModule($name)"
+    },
+    "getModuleDirectories": {
+     "signature": "()",
+     "declaration": "public function getModuleDirectories()"
+    },
+    "getModuleList": {
+     "signature": "()",
+     "declaration": "public function getModuleList()"
+    },
+    "getName": {
+     "signature": "($module)",
+     "declaration": "public function getName($module)"
+    },
+    "hasImplementations": {
+     "signature": "(string $hook, $modules): bool",
+     "declaration": "public function hasImplementations(string $hook, $modules = NULL): bool"
+    },
+    "invoke": {
+     "signature": "($module, $hook, array $args)",
+     "declaration": "public function invoke($module, $hook, array $args = [])"
+    },
+    "invokeAll": {
+     "signature": "($hook, array $args)",
+     "declaration": "public function invokeAll($hook, array $args = [])"
+    },
+    "invokeAllDeprecated": {
+     "signature": "($description, $hook, array $args)",
+     "declaration": "public function invokeAllDeprecated($description, $hook, array $args = [])"
+    },
+    "invokeAllWith": {
+     "signature": "(string $hook, callable $callback): void",
+     "declaration": "public function invokeAllWith(string $hook, callable $callback): void"
+    },
+    "invokeDeprecated": {
+     "signature": "($description, $module, $hook, array $args)",
+     "declaration": "public function invokeDeprecated($description, $module, $hook, array $args = [])"
+    },
+    "isLoaded": {
+     "signature": "()",
+     "declaration": "public function isLoaded()"
+    },
+    "legacyInvoke": {
+     "signature": "($module, $hook, array $args)",
+     "declaration": "protected function legacyInvoke($module, $hook, array $args = [])"
+    },
+    "load": {
+     "signature": "($name)",
+     "declaration": "public function load($name)"
+    },
+    "loadAll": {
+     "signature": "()",
+     "declaration": "public function loadAll()"
+    },
+    "loadAllIncludes": {
+     "signature": "($type, $name)",
+     "declaration": "public function loadAllIncludes($type, $name = NULL)"
+    },
+    "loadInclude": {
+     "signature": "($module, $type, $name)",
+     "declaration": "public function loadInclude($module, $type, $name = NULL)"
+    },
+    "moduleExists": {
+     "signature": "($module)",
+     "declaration": "public function moduleExists($module)"
+    },
+    "reOrderModulesForAlter": {
+     "signature": "(array $modules, string $hook): array",
+     "declaration": "protected function reOrderModulesForAlter(array $modules, string $hook): array"
+    },
+    "reload": {
+     "signature": "()",
+     "declaration": "public function reload()"
+    },
+    "resetImplementations": {
+     "signature": "()",
+     "declaration": "public function resetImplementations()"
+    },
+    "setModuleList": {
+     "signature": "(array $module_list)",
+     "declaration": "public function setModuleList(array $module_list = [])"
+    },
+    "triggerDeprecationError": {
+     "signature": "($description, $hook)",
+     "declaration": "private function triggerDeprecationError($description, $hook)"
+    },
+    "writeCache": {
+     "signature": "()",
+     "declaration": "public function writeCache()"
+    }
+   },
+   "properties": {
+    "alterEventListeners": "protected array",
+    "eventDispatcher": "protected Symfony\\Component\\EventDispatcher\\EventDispatcherInterface",
+    "groupIncludes": "protected array",
+    "hookImplementationsMap": "protected array",
+    "includeFileKeys": "protected",
+    "invokeMap": "protected array",
+    "loaded": "protected",
+    "loadedFiles": "protected",
+    "moduleList": "protected",
+    "root": "protected"
+   },
+   "versions": [
+    "11.1.10"
+   ]
+  },
+  "ModuleHandler 11.2.14": {
+   "class": "Drupal\\Core\\Extension\\ModuleHandler",
+   "parent": null,
+   "methods": {
+    "__construct": {
+     "signature": "($root, array $module_list, Symfony\\Component\\EventDispatcher\\EventDispatcherInterface $eventDispatcher, array $hookImplementationsMap, array $groupIncludes, array $packedOrderOperations)",
+     "declaration": "public function __construct($root, array $module_list, \\Symfony\\Component\\EventDispatcher\\EventDispatcherInterface $eventDispatcher, array $hookImplementationsMap, array $groupIncludes = [], array $packedOrderOperations = [])"
+    },
+    "add": {
+     "signature": "($type, $name, $path)",
+     "declaration": "protected function add($type, $name, $path)"
+    },
+    "addModule": {
+     "signature": "($name, $path)",
+     "declaration": "public function addModule($name, $path)"
+    },
+    "addProfile": {
+     "signature": "($name, $path)",
+     "declaration": "public function addProfile($name, $path)"
+    },
+    "alter": {
+     "signature": "($type, &$data, &$context1, &$context2)",
+     "declaration": "public function alter($type, &$data, &$context1 = NULL, &$context2 = NULL)"
+    },
+    "alterDeprecated": {
+     "signature": "($description, $type, &$data, &$context1, &$context2)",
+     "declaration": "public function alterDeprecated($description, $type, &$data, &$context1 = NULL, &$context2 = NULL)"
+    },
+    "buildModuleDependencies": {
+     "signature": "(array $modules)",
+     "declaration": "public function buildModuleDependencies(array $modules)"
+    },
+    "getCombinedListeners": {
+     "signature": "(array $hooks): array",
+     "declaration": "protected function getCombinedListeners(array $hooks): array"
+    },
+    "getFlatHookListeners": {
+     "signature": "(string $hook): array",
+     "declaration": "protected function getFlatHookListeners(string $hook): array"
+    },
+    "getHookInfo": {
+     "signature": "()",
+     "declaration": "public function getHookInfo()"
+    },
+    "getHookListeners": {
+     "signature": "(string $hook): array",
+     "declaration": "protected function getHookListeners(string $hook): array"
+    },
+    "getHookOrderingRules": {
+     "signature": "(string $hook): array",
+     "declaration": "protected function getHookOrderingRules(string $hook): array"
+    },
+    "getModule": {
+     "signature": "($name)",
+     "declaration": "public function getModule($name)"
+    },
+    "getModuleDirectories": {
+     "signature": "()",
+     "declaration": "public function getModuleDirectories()"
+    },
+    "getModuleList": {
+     "signature": "()",
+     "declaration": "public function getModuleList()"
+    },
+    "getName": {
+     "signature": "($module)",
+     "declaration": "public function getName($module)"
+    },
+    "hasImplementations": {
+     "signature": "(string $hook, $modules): bool",
+     "declaration": "public function hasImplementations(string $hook, $modules = NULL): bool"
+    },
+    "invoke": {
+     "signature": "($module, $hook, array $args)",
+     "declaration": "public function invoke($module, $hook, array $args = [])"
+    },
+    "invokeAll": {
+     "signature": "($hook, array $args)",
+     "declaration": "public function invokeAll($hook, array $args = [])"
+    },
+    "invokeAllDeprecated": {
+     "signature": "($description, $hook, array $args)",
+     "declaration": "public function invokeAllDeprecated($description, $hook, array $args = [])"
+    },
+    "invokeAllWith": {
+     "signature": "(string $hook, callable $callback): void",
+     "declaration": "public function invokeAllWith(string $hook, callable $callback): void"
+    },
+    "invokeDeprecated": {
+     "signature": "($description, $module, $hook, array $args)",
+     "declaration": "public function invokeDeprecated($description, $module, $hook, array $args = [])"
+    },
+    "isLoaded": {
+     "signature": "()",
+     "declaration": "public function isLoaded()"
+    },
+    "legacyInvoke": {
+     "signature": "($module, $hook, array $args)",
+     "declaration": "protected function legacyInvoke($module, $hook, array $args = [])"
+    },
+    "load": {
+     "signature": "($name)",
+     "declaration": "public function load($name)"
+    },
+    "loadAll": {
+     "signature": "()",
+     "declaration": "public function loadAll()"
+    },
+    "loadAllIncludes": {
+     "signature": "($type, $name)",
+     "declaration": "public function loadAllIncludes($type, $name = NULL)"
+    },
+    "loadInclude": {
+     "signature": "($module, $type, $name)",
+     "declaration": "public function loadInclude($module, $type, $name = NULL)"
+    },
+    "moduleExists": {
+     "signature": "($module)",
+     "declaration": "public function moduleExists($module)"
+    },
+    "reOrderModulesForAlter": {
+     "signature": "(array $modules, string $hook): array",
+     "declaration": "protected function reOrderModulesForAlter(array $modules, string $hook): array"
+    },
+    "reload": {
+     "signature": "()",
+     "declaration": "public function reload()"
+    },
+    "resetImplementations": {
+     "signature": "()",
+     "declaration": "public function resetImplementations()"
+    },
+    "setModuleList": {
+     "signature": "(array $module_list)",
+     "declaration": "public function setModuleList(array $module_list = [])"
+    },
+    "triggerDeprecationError": {
+     "signature": "($description, $hook)",
+     "declaration": "private function triggerDeprecationError($description, $hook)"
+    },
+    "triggerErrorForDuplicateAlterHookListener": {
+     "signature": "(array $hooks, string $module, string $other_module, callable $listener, string $identifier): void",
+     "declaration": "protected function triggerErrorForDuplicateAlterHookListener(array $hooks, string $module, string $other_module, callable $listener, string $identifier): void"
+    },
+    "writeCache": {
+     "signature": "()",
+     "declaration": "public function writeCache()"
+    }
+   },
+   "properties": {
+    "alterEventListeners": "protected array",
+    "eventDispatcher": "protected Symfony\\Component\\EventDispatcher\\EventDispatcherInterface",
+    "groupIncludes": "protected array",
+    "hookImplementationsMap": "protected array",
+    "includeFileKeys": "protected",
+    "invokeMap": "protected array",
+    "listenersByHook": "protected array",
+    "loaded": "protected",
+    "loadedFiles": "protected",
+    "moduleList": "protected",
+    "modulesByHook": "protected array",
+    "orderingRules": "protected array",
+    "packedOrderOperations": "protected array",
+    "root": "protected"
+   },
+   "versions": [
+    "11.2.14"
+   ]
+  },
+  "ModuleHandler 11.3.18–11.4.9": {
+   "class": "Drupal\\Core\\Extension\\ModuleHandler",
+   "parent": null,
+   "methods": {
+    "__construct": {
+     "signature": "($root, array $module_list, Drupal\\Core\\KeyValueStore\\KeyValueFactoryInterface $keyValueFactory, Drupal\\Core\\Utility\\CallableResolver $callableResolver, Drupal\\Core\\Cache\\CacheBackendInterface $cache)",
+     "declaration": "public function __construct($root, array $module_list, \\Drupal\\Core\\KeyValueStore\\KeyValueFactoryInterface $keyValueFactory, \\Drupal\\Core\\Utility\\CallableResolver $callableResolver, \\Drupal\\Core\\Cache\\CacheBackendInterface $cache)"
+    },
+    "add": {
+     "signature": "($type, $name, $path)",
+     "declaration": "protected function add($type, $name, $path)"
+    },
+    "addModule": {
+     "signature": "($name, $path)",
+     "declaration": "public function addModule($name, $path)"
+    },
+    "addProfile": {
+     "signature": "($name, $path)",
+     "declaration": "public function addProfile($name, $path)"
+    },
+    "alter": {
+     "signature": "($type, &$data, &$context1, &$context2)",
+     "declaration": "public function alter($type, &$data, &$context1 = NULL, &$context2 = NULL)"
+    },
+    "alterDeprecated": {
+     "signature": "($description, $type, &$data, &$context1, &$context2)",
+     "declaration": "public function alterDeprecated($description, $type, &$data, &$context1 = NULL, &$context2 = NULL)"
+    },
+    "buildModuleDependencies": {
+     "signature": "(array $modules)",
+     "declaration": "public function buildModuleDependencies(array $modules)"
+    },
+    "getCombinedListeners": {
+     "signature": "(array $hooks): array",
+     "declaration": "protected function getCombinedListeners(array $hooks): array"
+    },
+    "getHookImplementationList": {
+     "signature": "(string $hook): Drupal\\Core\\Hook\\ImplementationList",
+     "declaration": "protected function getHookImplementationList(string $hook): \\Drupal\\Core\\Hook\\ImplementationList"
+    },
+    "getHookInfo": {
+     "signature": "()",
+     "declaration": "public function getHookInfo()"
+    },
+    "getHookOrderingRules": {
+     "signature": "(string $hook): array",
+     "declaration": "protected function getHookOrderingRules(string $hook): array"
+    },
+    "getModule": {
+     "signature": "($name)",
+     "declaration": "public function getModule($name)"
+    },
+    "getModuleDirectories": {
+     "signature": "()",
+     "declaration": "public function getModuleDirectories()"
+    },
+    "getModuleList": {
+     "signature": "()",
+     "declaration": "public function getModuleList()"
+    },
+    "getName": {
+     "signature": "($module)",
+     "declaration": "public function getName($module)"
+    },
+    "hasImplementations": {
+     "signature": "(string $hook, $modules): bool",
+     "declaration": "public function hasImplementations(string $hook, $modules = NULL): bool"
+    },
+    "invoke": {
+     "signature": "($module, $hook, array $args)",
+     "declaration": "public function invoke($module, $hook, array $args = [])"
+    },
+    "invokeAll": {
+     "signature": "($hook, array $args)",
+     "declaration": "public function invokeAll($hook, array $args = [])"
+    },
+    "invokeAllDeprecated": {
+     "signature": "($description, $hook, array $args)",
+     "declaration": "public function invokeAllDeprecated($description, $hook, array $args = [])"
+    },
+    "invokeAllWith": {
+     "signature": "(string $hook, callable $callback): void",
+     "declaration": "public function invokeAllWith(string $hook, callable $callback): void"
+    },
+    "invokeDeprecated": {
+     "signature": "($description, $module, $hook, array $args)",
+     "declaration": "public function invokeDeprecated($description, $module, $hook, array $args = [])"
+    },
+    "isLoaded": {
+     "signature": "()",
+     "declaration": "public function isLoaded()"
+    },
+    "legacyInvoke": {
+     "signature": "($module, $hook, array $args)",
+     "declaration": "protected function legacyInvoke($module, $hook, array $args = [])"
+    },
+    "load": {
+     "signature": "($name)",
+     "declaration": "public function load($name)"
+    },
+    "loadAll": {
+     "signature": "()",
+     "declaration": "public function loadAll()"
+    },
+    "loadAllIncludes": {
+     "signature": "($type, $name)",
+     "declaration": "public function loadAllIncludes($type, $name = NULL)"
+    },
+    "loadInclude": {
+     "signature": "($module, $type, $name)",
+     "declaration": "public function loadInclude($module, $type, $name = NULL)"
+    },
+    "moduleExists": {
+     "signature": "($module)",
+     "declaration": "public function moduleExists($module)"
+    },
+    "reOrderModulesForAlter": {
+     "signature": "(array $modules, string $hook): array",
+     "declaration": "protected function reOrderModulesForAlter(array $modules, string $hook): array"
+    },
+    "reload": {
+     "signature": "()",
+     "declaration": "public function reload()"
+    },
+    "resetImplementations": {
+     "signature": "()",
+     "declaration": "public function resetImplementations()"
+    },
+    "setModuleList": {
+     "signature": "(array $module_list)",
+     "declaration": "public function setModuleList(array $module_list = [])"
+    },
+    "triggerDeprecationError": {
+     "signature": "($description, $hook)",
+     "declaration": "private function triggerDeprecationError($description, $hook)"
+    },
+    "triggerErrorForDuplicateAlterHookListener": {
+     "signature": "(array $hooks, string $module, string $other_module, callable $listener, string $identifier): void",
+     "declaration": "protected function triggerErrorForDuplicateAlterHookListener(array $hooks, string $module, string $other_module, callable $listener, string $identifier): void"
+    },
+    "writeCache": {
+     "signature": "()",
+     "declaration": "public function writeCache()"
+    }
+   },
+   "properties": {
+    "alterHookListeners": "protected array",
+    "cache": "protected readonly Drupal\\Core\\Cache\\CacheBackendInterface",
+    "callableResolver": "protected readonly Drupal\\Core\\Utility\\CallableResolver",
+    "hookGroupIncludes": "protected array",
+    "hookImplementationLists": "protected array",
+    "hookIncludes": "protected array",
+    "hookLists": "protected array",
+    "includeFileKeys": "protected",
+    "keyValueFactory": "protected readonly Drupal\\Core\\KeyValueStore\\KeyValueFactoryInterface",
+    "loaded": "protected",
+    "loadedFiles": "protected",
+    "moduleList": "protected",
+    "orderingRules": "protected array",
+    "packedOrderOperations": "protected array",
+    "root": "protected"
+   },
+   "versions": [
+    "11.3.18",
+    "11.4.9"
+   ]
+  },
+  "ThemeManager 10.3.14–11.1.10": {
+   "class": "Drupal\\Core\\Theme\\ThemeManager",
+   "parent": null,
+   "methods": {
+    "__construct": {
+     "signature": "($root, Drupal\\Core\\Theme\\ThemeNegotiatorInterface $theme_negotiator, Drupal\\Core\\Theme\\ThemeInitializationInterface $theme_initialization, Drupal\\Core\\Extension\\ModuleHandlerInterface $module_handler)",
+     "declaration": "public function __construct($root, \\Drupal\\Core\\Theme\\ThemeNegotiatorInterface $theme_negotiator, \\Drupal\\Core\\Theme\\ThemeInitializationInterface $theme_initialization, \\Drupal\\Core\\Extension\\ModuleHandlerInterface $module_handler)"
+    },
+    "alter": {
+     "signature": "($type, &$data, &$context1, &$context2)",
+     "declaration": "public function alter($type, &$data, &$context1 = NULL, &$context2 = NULL)"
+    },
+    "alterForTheme": {
+     "signature": "(Drupal\\Core\\Theme\\ActiveTheme $theme, $type, &$data, &$context1, &$context2)",
+     "declaration": "public function alterForTheme(\\Drupal\\Core\\Theme\\ActiveTheme $theme, $type, &$data, &$context1 = NULL, &$context2 = NULL)"
+    },
+    "buildThemeHookSuggestions": {
+     "signature": "(string $hook, string $info_base_hook, array &$variables): array",
+     "declaration": "protected function buildThemeHookSuggestions(string $hook, string $info_base_hook, array &$variables): array"
+    },
+    "getActiveTheme": {
+     "signature": "(Drupal\\Core\\Routing\\RouteMatchInterface $route_match)",
+     "declaration": "public function getActiveTheme(?\\Drupal\\Core\\Routing\\RouteMatchInterface $route_match = NULL)"
+    },
+    "hasActiveTheme": {
+     "signature": "()",
+     "declaration": "public function hasActiveTheme()"
+    },
+    "initTheme": {
+     "signature": "(Drupal\\Core\\Routing\\RouteMatchInterface $route_match)",
+     "declaration": "protected function initTheme(?\\Drupal\\Core\\Routing\\RouteMatchInterface $route_match = NULL)"
+    },
+    "render": {
+     "signature": "($hook, array $variables)",
+     "declaration": "public function render($hook, array $variables)"
+    },
+    "resetActiveTheme": {
+     "signature": "()",
+     "declaration": "public function resetActiveTheme()"
+    },
+    "setActiveTheme": {
+     "signature": "(Drupal\\Core\\Theme\\ActiveTheme $active_theme)",
+     "declaration": "public function setActiveTheme(\\Drupal\\Core\\Theme\\ActiveTheme $active_theme)"
+    },
+    "setThemeRegistry": {
+     "signature": "(Drupal\\Core\\Theme\\Registry $theme_registry)",
+     "declaration": "public function setThemeRegistry(\\Drupal\\Core\\Theme\\Registry $theme_registry)"
+    }
+   },
+   "properties": {
+    "activeTheme": "protected",
+    "moduleHandler": "protected",
+    "root": "protected",
+    "themeInitialization": "protected",
+    "themeNegotiator": "protected",
+    "themeRegistry": "protected"
+   },
+   "versions": [
+    "10.3.14",
+    "10.4.10",
+    "10.5.12",
+    "10.6.18",
+    "11.0.13",
+    "11.1.10"
+   ]
+  },
+  "ThemeManager 11.2.14": {
+   "class": "Drupal\\Core\\Theme\\ThemeManager",
+   "parent": null,
+   "methods": {
+    "__construct": {
+     "signature": "($root, Drupal\\Core\\Theme\\ThemeNegotiatorInterface $theme_negotiator, Drupal\\Core\\Theme\\ThemeInitializationInterface $theme_initialization, Drupal\\Core\\Extension\\ModuleHandlerInterface $module_handler, Drupal\\Core\\Utility\\CallableResolver $callableResolver)",
+     "declaration": "public function __construct($root, \\Drupal\\Core\\Theme\\ThemeNegotiatorInterface $theme_negotiator, \\Drupal\\Core\\Theme\\ThemeInitializationInterface $theme_initialization, \\Drupal\\Core\\Extension\\ModuleHandlerInterface $module_handler, \\Drupal\\Core\\Utility\\CallableResolver $callableResolver)"
+    },
+    "alter": {
+     "signature": "($type, &$data, &$context1, &$context2)",
+     "declaration": "public function alter($type, &$data, &$context1 = NULL, &$context2 = NULL)"
+    },
+    "alterForTheme": {
+     "signature": "(Drupal\\Core\\Theme\\ActiveTheme $theme, $type, &$data, &$context1, &$context2)",
+     "declaration": "public function alterForTheme(\\Drupal\\Core\\Theme\\ActiveTheme $theme, $type, &$data, &$context1 = NULL, &$context2 = NULL)"
+    },
+    "buildThemeHookSuggestions": {
+     "signature": "(string $hook, string $info_base_hook, array &$variables): array",
+     "declaration": "protected function buildThemeHookSuggestions(string $hook, string $info_base_hook, array &$variables): array"
+    },
+    "getActiveTheme": {
+     "signature": "(Drupal\\Core\\Routing\\RouteMatchInterface $route_match)",
+     "declaration": "public function getActiveTheme(?\\Drupal\\Core\\Routing\\RouteMatchInterface $route_match = NULL)"
+    },
+    "getDefaultTemplateVariables": {
+     "signature": "(): array",
+     "declaration": "public function getDefaultTemplateVariables(): array"
+    },
+    "hasActiveTheme": {
+     "signature": "()",
+     "declaration": "public function hasActiveTheme()"
+    },
+    "initTheme": {
+     "signature": "(Drupal\\Core\\Routing\\RouteMatchInterface $route_match)",
+     "declaration": "protected function initTheme(?\\Drupal\\Core\\Routing\\RouteMatchInterface $route_match = NULL)"
+    },
+    "render": {
+     "signature": "($hook, array $variables)",
+     "declaration": "public function render($hook, array $variables)"
+    },
+    "resetActiveTheme": {
+     "signature": "()",
+     "declaration": "public function resetActiveTheme()"
+    },
+    "setActiveTheme": {
+     "signature": "(Drupal\\Core\\Theme\\ActiveTheme $active_theme)",
+     "declaration": "public function setActiveTheme(\\Drupal\\Core\\Theme\\ActiveTheme $active_theme)"
+    },
+    "setThemeRegistry": {
+     "signature": "(Drupal\\Core\\Theme\\Registry $theme_registry)",
+     "declaration": "public function setThemeRegistry(\\Drupal\\Core\\Theme\\Registry $theme_registry)"
+    }
+   },
+   "properties": {
+    "activeTheme": "protected",
+    "callableResolver": "protected Drupal\\Core\\Utility\\CallableResolver",
+    "defaultVariables": "protected array",
+    "moduleHandler": "protected",
+    "root": "protected",
+    "themeInitialization": "protected",
+    "themeNegotiator": "protected",
+    "themeRegistry": "protected"
+   },
+   "versions": [
+    "11.2.14"
+   ]
+  },
+  "ThemeManager 11.3.18–11.4.9": {
+   "class": "Drupal\\Core\\Theme\\ThemeManager",
+   "parent": null,
+   "methods": {
+    "__construct": {
+     "signature": "(string $root, Drupal\\Core\\Theme\\ThemeNegotiatorInterface $themeNegotiator, Drupal\\Core\\Theme\\ThemeInitializationInterface $themeInitialization, Drupal\\Core\\Extension\\ModuleHandlerInterface $moduleHandler, Drupal\\Core\\Utility\\CallableResolver $callableResolver, Symfony\\Contracts\\Service\\ServiceCollectionInterface $themeEngines, Drupal\\Core\\KeyValueStore\\KeyValueFactoryInterface $keyValueFactory, Drupal\\Core\\Cache\\CacheBackendInterface $cache)",
+     "declaration": "public function __construct(string $root, \\Drupal\\Core\\Theme\\ThemeNegotiatorInterface $themeNegotiator, \\Drupal\\Core\\Theme\\ThemeInitializationInterface $themeInitialization, \\Drupal\\Core\\Extension\\ModuleHandlerInterface $moduleHandler, \\Drupal\\Core\\Utility\\CallableResolver $callableResolver, \\Symfony\\Contracts\\Service\\ServiceCollectionInterface $themeEngines, ?\\Drupal\\Core\\KeyValueStore\\KeyValueFactoryInterface $keyValueFactory = NULL, ?\\Drupal\\Core\\Cache\\CacheBackendInterface $cache = NULL)"
+    },
+    "alter": {
+     "signature": "($type, &$data, &$context1, &$context2)",
+     "declaration": "public function alter($type, &$data, &$context1 = NULL, &$context2 = NULL)"
+    },
+    "alterForTheme": {
+     "signature": "(Drupal\\Core\\Theme\\ActiveTheme $theme, $type, &$data, &$context1, &$context2)",
+     "declaration": "public function alterForTheme(\\Drupal\\Core\\Theme\\ActiveTheme $theme, $type, &$data, &$context1 = NULL, &$context2 = NULL)"
+    },
+    "buildThemeHookSuggestions": {
+     "signature": "(string $hook, string $info_base_hook, array &$variables): array",
+     "declaration": "protected function buildThemeHookSuggestions(string $hook, string $info_base_hook, array &$variables): array"
+    },
+    "getActiveTheme": {
+     "signature": "(Drupal\\Core\\Routing\\RouteMatchInterface $route_match)",
+     "declaration": "public function getActiveTheme(?\\Drupal\\Core\\Routing\\RouteMatchInterface $route_match = NULL)"
+    },
+    "getDefaultTemplateVariables": {
+     "signature": "(): array",
+     "declaration": "public function getDefaultTemplateVariables(): array"
+    },
+    "getImplementationsForTheme": {
+     "signature": "(string $theme_key, string $hook): array",
+     "declaration": "protected function getImplementationsForTheme(string $theme_key, string $hook): array"
+    },
+    "getThemeChain": {
+     "signature": "(Drupal\\Core\\Theme\\ActiveTheme $active_theme): array",
+     "declaration": "protected function getThemeChain(\\Drupal\\Core\\Theme\\ActiveTheme $active_theme): array"
+    },
+    "getThemeEngine": {
+     "signature": "(string $name): Drupal\\Core\\Theme\\ThemeEngineInterface",
+     "declaration": "public function getThemeEngine(string $name): ?\\Drupal\\Core\\Theme\\ThemeEngineInterface"
+    },
+    "hasActiveTheme": {
+     "signature": "()",
+     "declaration": "public function hasActiveTheme()"
+    },
+    "initTheme": {
+     "signature": "(Drupal\\Core\\Routing\\RouteMatchInterface $route_match)",
+     "declaration": "protected function initTheme(?\\Drupal\\Core\\Routing\\RouteMatchInterface $route_match = NULL)"
+    },
+    "invoke": {
+     "signature": "(string $theme, string $hook, array $args)",
+     "declaration": "public function invoke(string $theme, string $hook, array $args = [])"
+    },
+    "invokeAllWith": {
+     "signature": "(string $hook, callable $callback): void",
+     "declaration": "public function invokeAllWith(string $hook, callable $callback): void"
+    },
+    "render": {
+     "signature": "($hook, array $variables)",
+     "declaration": "public function render($hook, array $variables)"
+    },
+    "resetActiveTheme": {
+     "signature": "()",
+     "declaration": "public function resetActiveTheme()"
+    },
+    "setActiveTheme": {
+     "signature": "(Drupal\\Core\\Theme\\ActiveTheme $active_theme)",
+     "declaration": "public function setActiveTheme(\\Drupal\\Core\\Theme\\ActiveTheme $active_theme)"
+    },
+    "setThemeRegistry": {
+     "signature": "(Drupal\\Core\\Theme\\Registry $theme_registry)",
+     "declaration": "public function setThemeRegistry(\\Drupal\\Core\\Theme\\Registry $theme_registry)"
+    }
+   },
+   "properties": {
+    "activeTheme": "protected",
+    "allHookImplementations": "protected array",
+    "cache": "protected Drupal\\Core\\Cache\\CacheBackendInterface",
+    "callableResolver": "protected Drupal\\Core\\Utility\\CallableResolver",
+    "defaultVariables": "protected array",
+    "keyValueFactory": "protected Drupal\\Core\\KeyValueStore\\KeyValueFactoryInterface",
+    "moduleHandler": "protected Drupal\\Core\\Extension\\ModuleHandlerInterface",
+    "root": "protected string",
+    "themeEngines": "protected Symfony\\Contracts\\Service\\ServiceCollectionInterface",
+    "themeHookImplementations": "protected array",
+    "themeInitialization": "protected Drupal\\Core\\Theme\\ThemeInitializationInterface",
+    "themeNegotiator": "protected Drupal\\Core\\Theme\\ThemeNegotiatorInterface",
+    "themeRegistry": "protected"
+   },
+   "versions": [
+    "11.3.18",
+    "11.4.9"
+   ]
+  },
+  "Registry 10.3.14–10.6.18": {
+   "class": "Drupal\\Core\\Theme\\Registry",
+   "parent": null,
+   "methods": {
+    "__construct": {
+     "signature": "($root, Drupal\\Core\\Cache\\CacheBackendInterface $cache, Drupal\\Core\\Lock\\LockBackendInterface $lock, Drupal\\Core\\Extension\\ModuleHandlerInterface $module_handler, Drupal\\Core\\Extension\\ThemeHandlerInterface $theme_handler, Drupal\\Core\\Theme\\ThemeInitializationInterface $theme_initialization, Drupal\\Core\\Cache\\CacheBackendInterface $runtime_cache, Drupal\\Core\\Extension\\ModuleExtensionList $module_list, Symfony\\Component\\HttpKernel\\HttpKernelInterface $kernel, $theme_name)",
+     "declaration": "public function __construct($root, \\Drupal\\Core\\Cache\\CacheBackendInterface $cache, \\Drupal\\Core\\Lock\\LockBackendInterface $lock, \\Drupal\\Core\\Extension\\ModuleHandlerInterface $module_handler, \\Drupal\\Core\\Extension\\ThemeHandlerInterface $theme_handler, \\Drupal\\Core\\Theme\\ThemeInitializationInterface $theme_initialization, \\Drupal\\Core\\Cache\\CacheBackendInterface $runtime_cache, \\Drupal\\Core\\Extension\\ModuleExtensionList $module_list, ?\\Symfony\\Component\\HttpKernel\\HttpKernelInterface $kernel = NULL, $theme_name = NULL)"
+    },
+    "build": {
+     "signature": "()",
+     "declaration": "protected function build()"
+    },
+    "cacheGet": {
+     "signature": "(): array",
+     "declaration": "protected function cacheGet(): ?array"
+    },
+    "completeSuggestion": {
+     "signature": "($hook, array &$cache)",
+     "declaration": "protected function completeSuggestion($hook, array &$cache)"
+    },
+    "destruct": {
+     "signature": "()",
+     "declaration": "public function destruct()"
+    },
+    "get": {
+     "signature": "()",
+     "declaration": "public function get()"
+    },
+    "getBaseHook": {
+     "signature": "($hook)",
+     "declaration": "public function getBaseHook($hook)"
+    },
+    "getPrefixGroupedUserFunctions": {
+     "signature": "($prefixes)",
+     "declaration": "public function getPrefixGroupedUserFunctions($prefixes = [])"
+    },
+    "getRuntime": {
+     "signature": "()",
+     "declaration": "public function getRuntime()"
+    },
+    "init": {
+     "signature": "($theme_name)",
+     "declaration": "protected function init($theme_name = NULL)"
+    },
+    "mergePreprocessFunctions": {
+     "signature": "($destination_hook_name, $source_hook_name, $parent_hook, array &$cache)",
+     "declaration": "protected function mergePreprocessFunctions($destination_hook_name, $source_hook_name, $parent_hook, array &$cache)"
+    },
+    "postProcessExtension": {
+     "signature": "(array &$cache, Drupal\\Core\\Theme\\ActiveTheme $theme)",
+     "declaration": "protected function postProcessExtension(array &$cache, \\Drupal\\Core\\Theme\\ActiveTheme $theme)"
+    },
+    "processExtension": {
+     "signature": "(array &$cache, $name, $type, $theme, $path)",
+     "declaration": "protected function processExtension(array &$cache, $name, $type, $theme, $path)"
+    },
+    "reset": {
+     "signature": "()",
+     "declaration": "public function reset()"
+    },
+    "setCache": {
+     "signature": "()",
+     "declaration": "protected function setCache()"
+    },
+    "setThemeManager": {
+     "signature": "(Drupal\\Core\\Theme\\ThemeManagerInterface $theme_manager)",
+     "declaration": "public function setThemeManager(\\Drupal\\Core\\Theme\\ThemeManagerInterface $theme_manager)"
+    }
+   },
+   "properties": {
+    "cache": "protected",
+    "initialized": "protected",
+    "kernel": "protected Symfony\\Component\\HttpKernel\\HttpKernelInterface",
+    "lock": "protected",
+    "moduleHandler": "protected",
+    "moduleList": "protected",
+    "registry": "protected",
+    "root": "protected",
+    "runtimeCache": "protected",
+    "runtimeRegistry": "protected",
+    "theme": "protected",
+    "themeHandler": "protected",
+    "themeInitialization": "protected",
+    "themeManager": "protected",
+    "themeName": "protected"
+   },
+   "versions": [
+    "10.3.14",
+    "10.4.10",
+    "10.5.12",
+    "10.6.18"
+   ]
+  },
+  "Registry 11.0.13–11.1.10": {
+   "class": "Drupal\\Core\\Theme\\Registry",
+   "parent": null,
+   "methods": {
+    "__construct": {
+     "signature": "($root, Drupal\\Core\\Cache\\CacheBackendInterface $cache, Drupal\\Core\\Lock\\LockBackendInterface $lock, Drupal\\Core\\Extension\\ModuleHandlerInterface $module_handler, Drupal\\Core\\Extension\\ThemeHandlerInterface $theme_handler, Drupal\\Core\\Theme\\ThemeInitializationInterface $theme_initialization, Drupal\\Core\\Cache\\CacheBackendInterface $runtime_cache, Drupal\\Core\\Extension\\ModuleExtensionList $module_list, Symfony\\Component\\HttpKernel\\HttpKernelInterface $kernel, $theme_name)",
+     "declaration": "public function __construct($root, \\Drupal\\Core\\Cache\\CacheBackendInterface $cache, \\Drupal\\Core\\Lock\\LockBackendInterface $lock, \\Drupal\\Core\\Extension\\ModuleHandlerInterface $module_handler, \\Drupal\\Core\\Extension\\ThemeHandlerInterface $theme_handler, \\Drupal\\Core\\Theme\\ThemeInitializationInterface $theme_initialization, \\Drupal\\Core\\Cache\\CacheBackendInterface $runtime_cache, \\Drupal\\Core\\Extension\\ModuleExtensionList $module_list, \\Symfony\\Component\\HttpKernel\\HttpKernelInterface $kernel, $theme_name = NULL)"
+    },
+    "build": {
+     "signature": "()",
+     "declaration": "protected function build()"
+    },
+    "cacheGet": {
+     "signature": "(): array",
+     "declaration": "protected function cacheGet(): ?array"
+    },
+    "completeSuggestion": {
+     "signature": "($hook, array &$cache)",
+     "declaration": "protected function completeSuggestion($hook, array &$cache)"
+    },
+    "destruct": {
+     "signature": "()",
+     "declaration": "public function destruct()"
+    },
+    "get": {
+     "signature": "()",
+     "declaration": "public function get()"
+    },
+    "getBaseHook": {
+     "signature": "($hook)",
+     "declaration": "public function getBaseHook($hook)"
+    },
+    "getPrefixGroupedUserFunctions": {
+     "signature": "($prefixes)",
+     "declaration": "public function getPrefixGroupedUserFunctions($prefixes = [])"
+    },
+    "getRuntime": {
+     "signature": "()",
+     "declaration": "public function getRuntime()"
+    },
+    "init": {
+     "signature": "($theme_name)",
+     "declaration": "protected function init($theme_name = NULL)"
+    },
+    "mergePreprocessFunctions": {
+     "signature": "($destination_hook_name, $source_hook_name, $parent_hook, array &$cache)",
+     "declaration": "protected function mergePreprocessFunctions($destination_hook_name, $source_hook_name, $parent_hook, array &$cache)"
+    },
+    "postProcessExtension": {
+     "signature": "(array &$cache, Drupal\\Core\\Theme\\ActiveTheme $theme)",
+     "declaration": "protected function postProcessExtension(array &$cache, \\Drupal\\Core\\Theme\\ActiveTheme $theme)"
+    },
+    "processExtension": {
+     "signature": "(array &$cache, $name, $type, $theme, $path)",
+     "declaration": "protected function processExtension(array &$cache, $name, $type, $theme, $path)"
+    },
+    "reset": {
+     "signature": "()",
+     "declaration": "public function reset()"
+    },
+    "setCache": {
+     "signature": "()",
+     "declaration": "protected function setCache()"
+    },
+    "setThemeManager": {
+     "signature": "(Drupal\\Core\\Theme\\ThemeManagerInterface $theme_manager)",
+     "declaration": "public function setThemeManager(\\Drupal\\Core\\Theme\\ThemeManagerInterface $theme_manager)"
+    }
+   },
+   "properties": {
+    "cache": "protected",
+    "initialized": "protected",
+    "kernel": "protected Symfony\\Component\\HttpKernel\\HttpKernelInterface",
+    "lock": "protected",
+    "moduleHandler": "protected",
+    "moduleList": "protected",
+    "registry": "protected",
+    "root": "protected",
+    "runtimeCache": "protected",
+    "runtimeRegistry": "protected",
+    "theme": "protected",
+    "themeHandler": "protected",
+    "themeInitialization": "protected",
+    "themeManager": "protected",
+    "themeName": "protected"
+   },
+   "versions": [
+    "11.0.13",
+    "11.1.10"
+   ]
+  },
+  "Registry 11.2.14": {
+   "class": "Drupal\\Core\\Theme\\Registry",
+   "parent": null,
+   "methods": {
+    "__construct": {
+     "signature": "($root, Drupal\\Core\\Cache\\CacheBackendInterface $cache, Drupal\\Core\\Lock\\LockBackendInterface $lock, Drupal\\Core\\Extension\\ModuleHandlerInterface $module_handler, Drupal\\Core\\Extension\\ThemeHandlerInterface $theme_handler, Drupal\\Core\\Theme\\ThemeInitializationInterface $theme_initialization, Drupal\\Core\\Cache\\CacheBackendInterface $runtime_cache, Drupal\\Core\\Extension\\ModuleExtensionList $module_list, Symfony\\Component\\HttpKernel\\HttpKernelInterface $kernel, $theme_name, array $preprocess_for_suggestions)",
+     "declaration": "public function __construct($root, \\Drupal\\Core\\Cache\\CacheBackendInterface $cache, \\Drupal\\Core\\Lock\\LockBackendInterface $lock, \\Drupal\\Core\\Extension\\ModuleHandlerInterface $module_handler, \\Drupal\\Core\\Extension\\ThemeHandlerInterface $theme_handler, \\Drupal\\Core\\Theme\\ThemeInitializationInterface $theme_initialization, \\Drupal\\Core\\Cache\\CacheBackendInterface $runtime_cache, \\Drupal\\Core\\Extension\\ModuleExtensionList $module_list, \\Symfony\\Component\\HttpKernel\\HttpKernelInterface $kernel, $theme_name = NULL, array $preprocess_for_suggestions = [])"
+    },
+    "addFixedPreprocessFunctions": {
+     "signature": "(array &$cache, array $fixed_preprocess_functions, array $old_cache): void",
+     "declaration": "protected function addFixedPreprocessFunctions(array &$cache, array $fixed_preprocess_functions, array $old_cache = []): void"
+    },
+    "build": {
+     "signature": "()",
+     "declaration": "protected function build()"
+    },
+    "cacheGet": {
+     "signature": "(): array",
+     "declaration": "protected function cacheGet(): ?array"
+    },
+    "collectModulePreprocess": {
+     "signature": "(array &$cache, string $hook): array",
+     "declaration": "protected function collectModulePreprocess(array &$cache, string $hook): array"
+    },
+    "completeSuggestion": {
+     "signature": "($hook, array &$cache)",
+     "declaration": "protected function completeSuggestion($hook, array &$cache)"
+    },
+    "destruct": {
+     "signature": "()",
+     "declaration": "public function destruct()"
+    },
+    "get": {
+     "signature": "()",
+     "declaration": "public function get()"
+    },
+    "getBaseHook": {
+     "signature": "($hook)",
+     "declaration": "public function getBaseHook($hook)"
+    },
+    "getPrefixGroupedUserFunctions": {
+     "signature": "($prefixes)",
+     "declaration": "public function getPrefixGroupedUserFunctions($prefixes = [])"
+    },
+    "getRuntime": {
+     "signature": "()",
+     "declaration": "public function getRuntime()"
+    },
+    "init": {
+     "signature": "($theme_name)",
+     "declaration": "protected function init($theme_name = NULL)"
+    },
+    "mergePreprocessFunctions": {
+     "signature": "($destination_hook_name, $source_hook_name, $parent_hook, array &$cache)",
+     "declaration": "protected function mergePreprocessFunctions($destination_hook_name, $source_hook_name, $parent_hook, array &$cache)"
+    },
+    "postProcessExtension": {
+     "signature": "(array &$cache, Drupal\\Core\\Theme\\ActiveTheme $theme)",
+     "declaration": "protected function postProcessExtension(array &$cache, \\Drupal\\Core\\Theme\\ActiveTheme $theme)"
+    },
+    "processExtension": {
+     "signature": "(array &$cache, $name, $type, $theme, $path)",
+     "declaration": "protected function processExtension(array &$cache, $name, $type, $theme, $path)"
+    },
+    "reset": {
+     "signature": "()",
+     "declaration": "public function reset()"
+    },
+    "setCache": {
+     "signature": "()",
+     "declaration": "protected function setCache()"
+    },
+    "setThemeManager": {
+     "signature": "(Drupal\\Core\\Theme\\ThemeManagerInterface $theme_manager)",
+     "declaration": "public function setThemeManager(\\Drupal\\Core\\Theme\\ThemeManagerInterface $theme_manager)"
+    }
+   },
+   "properties": {
+    "cache": "protected",
+    "initialized": "protected",
+    "kernel": "protected Symfony\\Component\\HttpKernel\\HttpKernelInterface",
+    "lock": "protected",
+    "moduleHandler": "protected",
+    "moduleList": "protected",
+    "preprocessForSuggestions": "protected array",
+    "registry": "protected",
+    "root": "protected",
+    "runtimeCache": "protected",
+    "runtimeRegistry": "protected",
+    "theme": "protected",
+    "themeHandler": "protected",
+    "themeInitialization": "protected",
+    "themeManager": "protected",
+    "themeName": "protected"
+   },
+   "versions": [
+    "11.2.14"
+   ]
+  },
+  "Registry 11.3.18–11.4.9": {
+   "class": "Drupal\\Core\\Theme\\Registry",
+   "parent": null,
+   "methods": {
+    "__construct": {
+     "signature": "($root, Drupal\\Core\\Cache\\CacheBackendInterface $cache, Drupal\\Core\\Lock\\LockBackendInterface $lock, Drupal\\Core\\Extension\\ModuleHandlerInterface $module_handler, Drupal\\Core\\Extension\\ThemeHandlerInterface $theme_handler, Drupal\\Core\\Theme\\ThemeInitializationInterface $theme_initialization, Drupal\\Core\\Cache\\CacheBackendInterface $runtime_cache, Drupal\\Core\\Extension\\ModuleExtensionList $module_list, Symfony\\Component\\HttpKernel\\HttpKernelInterface $kernel, $theme_name, Drupal\\Core\\KeyValueStore\\KeyValueFactoryInterface $key_value_factory)",
+     "declaration": "public function __construct($root, \\Drupal\\Core\\Cache\\CacheBackendInterface $cache, \\Drupal\\Core\\Lock\\LockBackendInterface $lock, \\Drupal\\Core\\Extension\\ModuleHandlerInterface $module_handler, \\Drupal\\Core\\Extension\\ThemeHandlerInterface $theme_handler, \\Drupal\\Core\\Theme\\ThemeInitializationInterface $theme_initialization, \\Drupal\\Core\\Cache\\CacheBackendInterface $runtime_cache, \\Drupal\\Core\\Extension\\ModuleExtensionList $module_list, \\Symfony\\Component\\HttpKernel\\HttpKernelInterface $kernel, $theme_name = NULL, ?\\Drupal\\Core\\KeyValueStore\\KeyValueFactoryInterface $key_value_factory = NULL)"
+    },
+    "build": {
+     "signature": "()",
+     "declaration": "protected function build()"
+    },
+    "cacheGet": {
+     "signature": "(): array",
+     "declaration": "protected function cacheGet(): ?array"
+    },
+    "collectModulePreprocess": {
+     "signature": "(array &$cache, string $hook): array",
+     "declaration": "protected function collectModulePreprocess(array &$cache, string $hook): array"
+    },
+    "completeSuggestion": {
+     "signature": "($hook, array &$cache)",
+     "declaration": "protected function completeSuggestion($hook, array &$cache)"
+    },
+    "destruct": {
+     "signature": "()",
+     "declaration": "public function destruct()"
+    },
+    "get": {
+     "signature": "()",
+     "declaration": "public function get()"
+    },
+    "getBaseHook": {
+     "signature": "($hook)",
+     "declaration": "public function getBaseHook($hook)"
+    },
+    "getPrefixGroupedUserFunctions": {
+     "signature": "($prefixes)",
+     "declaration": "public function getPrefixGroupedUserFunctions($prefixes = [])"
+    },
+    "getPreprocessForSuggestions": {
+     "signature": "(): array",
+     "declaration": "protected function getPreprocessForSuggestions(): array"
+    },
+    "getRuntime": {
+     "signature": "()",
+     "declaration": "public function getRuntime()"
+    },
+    "hasThemeHookImplementation": {
+     "signature": "(string $theme, string $hook): bool",
+     "declaration": "protected function hasThemeHookImplementation(string $theme, string $hook): bool"
+    },
+    "init": {
+     "signature": "($theme_name)",
+     "declaration": "protected function init($theme_name = NULL)"
+    },
+    "mergePreprocessFunctions": {
+     "signature": "($destination_hook_name, $source_hook_name, $parent_hook, array &$cache)",
+     "declaration": "protected function mergePreprocessFunctions($destination_hook_name, $source_hook_name, $parent_hook, array &$cache)"
+    },
+    "postProcessExtension": {
+     "signature": "(array &$cache, Drupal\\Core\\Theme\\ActiveTheme $theme)",
+     "declaration": "protected function postProcessExtension(array &$cache, \\Drupal\\Core\\Theme\\ActiveTheme $theme)"
+    },
+    "processExtension": {
+     "signature": "(array &$cache, $name, $type, $theme, $path)",
+     "declaration": "protected function processExtension(array &$cache, $name, $type, $theme, $path)"
+    },
+    "reset": {
+     "signature": "()",
+     "declaration": "public function reset()"
+    },
+    "setCache": {
+     "signature": "()",
+     "declaration": "protected function setCache()"
+    },
+    "setThemeManager": {
+     "signature": "(Drupal\\Core\\Theme\\ThemeManagerInterface $theme_manager)",
+     "declaration": "public function setThemeManager(\\Drupal\\Core\\Theme\\ThemeManagerInterface $theme_manager)"
+    }
+   },
+   "properties": {
+    "cache": "protected",
+    "initialized": "protected",
+    "kernel": "protected Symfony\\Component\\HttpKernel\\HttpKernelInterface",
+    "keyValueFactory": "protected",
+    "lock": "protected",
+    "moduleHandler": "protected",
+    "moduleList": "protected",
+    "preprocessForSuggestions": "protected array",
+    "registry": "protected",
+    "root": "protected",
+    "runtimeCache": "protected",
+    "runtimeRegistry": "protected",
+    "theme": "protected",
+    "themeHandler": "protected",
+    "themeHookList": "protected array",
+    "themeInitialization": "protected",
+    "themeManager": "protected",
+    "themeName": "protected"
+   },
+   "versions": [
+    "11.3.18",
+    "11.4.9"
+   ]
+  },
+  "ThemeRegistry 10.3.14–10.6.18": {
+   "class": "Drupal\\Core\\Utility\\ThemeRegistry",
+   "parent": "Drupal\\Core\\Cache\\CacheCollector",
+   "methods": {
+    "__construct": {
+     "signature": "($cid, Drupal\\Core\\Cache\\CacheBackendInterface $cache, Drupal\\Core\\Lock\\LockBackendInterface $lock, $tags, $modules_loaded)",
+     "declaration": "public function __construct($cid, \\Drupal\\Core\\Cache\\CacheBackendInterface $cache, \\Drupal\\Core\\Lock\\LockBackendInterface $lock, $tags = [], $modules_loaded = FALSE)"
+    },
+    "clear": {
+     "signature": "()",
+     "declaration": "public function clear()"
+    },
+    "delete": {
+     "signature": "($key)",
+     "declaration": "public function delete($key)"
+    },
+    "destruct": {
+     "signature": "()",
+     "declaration": "public function destruct()"
+    },
+    "get": {
+     "signature": "($key)",
+     "declaration": "public function get($key)"
+    },
+    "getCid": {
+     "signature": "()",
+     "declaration": "protected function getCid()"
+    },
+    "has": {
+     "signature": "($key)",
+     "declaration": "public function has($key)"
+    },
+    "initializeRegistry": {
+     "signature": "()",
+     "declaration": "public function initializeRegistry()"
+    },
+    "invalidateCache": {
+     "signature": "()",
+     "declaration": "protected function invalidateCache()"
+    },
+    "lazyLoadCache": {
+     "signature": "()",
+     "declaration": "protected function lazyLoadCache()"
+    },
+    "normalizeLockName": {
+     "signature": "($cid)",
+     "declaration": "protected function normalizeLockName($cid)"
+    },
+    "persist": {
+     "signature": "($key, $persist)",
+     "declaration": "protected function persist($key, $persist = TRUE)"
+    },
+    "reset": {
+     "signature": "()",
+     "declaration": "public function reset()"
+    },
+    "resolveCacheMiss": {
+     "signature": "($key)",
+     "declaration": "public function resolveCacheMiss($key)"
+    },
+    "set": {
+     "signature": "($key, $value)",
+     "declaration": "public function set($key, $value)"
+    },
+    "updateCache": {
+     "signature": "($lock)",
+     "declaration": "protected function updateCache($lock = TRUE)"
+    }
+   },
+   "properties": {
+    "cache": "protected",
+    "cacheCreated": "protected",
+    "cacheInvalidated": "protected",
+    "cacheLoaded": "protected",
+    "cid": "protected",
+    "completeRegistry": "protected",
+    "keysToPersist": "protected",
+    "keysToRemove": "protected",
+    "lock": "protected",
+    "persistable": "protected",
+    "storage": "protected",
+    "tags": "protected"
+   },
+   "versions": [
+    "10.3.14",
+    "10.4.10",
+    "10.5.12",
+    "10.6.18"
+   ]
+  },
+  "ThemeRegistry 11.0.13–11.1.10": {
+   "class": "Drupal\\Core\\Utility\\ThemeRegistry",
+   "parent": "Drupal\\Core\\Cache\\CacheCollector",
+   "methods": {
+    "__construct": {
+     "signature": "($cid, Drupal\\Core\\Cache\\CacheBackendInterface $cache, Drupal\\Core\\Lock\\LockBackendInterface $lock, $tags, $modules_loaded)",
+     "declaration": "public function __construct($cid, \\Drupal\\Core\\Cache\\CacheBackendInterface $cache, \\Drupal\\Core\\Lock\\LockBackendInterface $lock, $tags = [], $modules_loaded = FALSE)"
+    },
+    "clear": {
+     "signature": "()",
+     "declaration": "public function clear()"
+    },
+    "delete": {
+     "signature": "($key)",
+     "declaration": "public function delete($key)"
+    },
+    "destruct": {
+     "signature": "()",
+     "declaration": "public function destruct()"
+    },
+    "get": {
+     "signature": "($key)",
+     "declaration": "public function get($key)"
+    },
+    "getCid": {
+     "signature": "()",
+     "declaration": "protected function getCid()"
+    },
+    "has": {
+     "signature": "($key)",
+     "declaration": "public function has($key)"
+    },
+    "initializeRegistry": {
+     "signature": "()",
+     "declaration": "public function initializeRegistry()"
+    },
+    "invalidateCache": {
+     "signature": "()",
+     "declaration": "protected function invalidateCache()"
+    },
+    "lazyLoadCache": {
+     "signature": "()",
+     "declaration": "protected function lazyLoadCache()"
+    },
+    "persist": {
+     "signature": "($key, $persist)",
+     "declaration": "protected function persist($key, $persist = TRUE)"
+    },
+    "reset": {
+     "signature": "()",
+     "declaration": "public function reset()"
+    },
+    "resolveCacheMiss": {
+     "signature": "($key)",
+     "declaration": "public function resolveCacheMiss($key)"
+    },
+    "set": {
+     "signature": "($key, $value)",
+     "declaration": "public function set($key, $value)"
+    },
+    "updateCache": {
+     "signature": "($lock)",
+     "declaration": "protected function updateCache($lock = TRUE)"
+    }
+   },
+   "properties": {
+    "cache": "protected",
+    "cacheCreated": "protected",
+    "cacheInvalidated": "protected",
+    "cacheLoaded": "protected",
+    "cid": "protected",
+    "completeRegistry": "protected",
+    "keysToPersist": "protected",
+    "keysToRemove": "protected",
+    "lock": "protected",
+    "persistable": "protected",
+    "storage": "protected",
+    "tags": "protected"
+   },
+   "versions": [
+    "11.0.13",
+    "11.1.10"
+   ]
+  },
+  "ThemeRegistry 11.2.14": {
+   "class": "Drupal\\Core\\Utility\\ThemeRegistry",
+   "parent": "Drupal\\Core\\Cache\\CacheCollector",
+   "methods": {
+    "__construct": {
+     "signature": "($cid, Drupal\\Core\\Cache\\CacheBackendInterface $cache, Drupal\\Core\\Lock\\LockBackendInterface $lock, $tags, $modules_loaded)",
+     "declaration": "public function __construct($cid, \\Drupal\\Core\\Cache\\CacheBackendInterface $cache, \\Drupal\\Core\\Lock\\LockBackendInterface $lock, $tags = [], $modules_loaded = FALSE)"
+    },
+    "clear": {
+     "signature": "()",
+     "declaration": "public function clear()"
+    },
+    "delete": {
+     "signature": "($key)",
+     "declaration": "public function delete($key)"
+    },
+    "destruct": {
+     "signature": "()",
+     "declaration": "public function destruct()"
+    },
+    "get": {
+     "signature": "($key)",
+     "declaration": "public function get($key)"
+    },
+    "getCid": {
+     "signature": "()",
+     "declaration": "protected function getCid()"
+    },
+    "getPreprocessInvokes": {
+     "signature": "()",
+     "declaration": "public function getPreprocessInvokes()"
+    },
+    "has": {
+     "signature": "($key)",
+     "declaration": "public function has($key)"
+    },
+    "initializeRegistry": {
+     "signature": "()",
+     "declaration": "public function initializeRegistry()"
+    },
+    "invalidateCache": {
+     "signature": "()",
+     "declaration": "protected function invalidateCache()"
+    },
+    "lazyLoadCache": {
+     "signature": "()",
+     "declaration": "protected function lazyLoadCache()"
+    },
+    "persist": {
+     "signature": "($key, $persist)",
+     "declaration": "protected function persist($key, $persist = TRUE)"
+    },
+    "reset": {
+     "signature": "()",
+     "declaration": "public function reset()"
+    },
+    "resolveCacheMiss": {
+     "signature": "($key)",
+     "declaration": "public function resolveCacheMiss($key)"
+    },
+    "set": {
+     "signature": "($key, $value)",
+     "declaration": "public function set($key, $value)"
+    },
+    "updateCache": {
+     "signature": "($lock)",
+     "declaration": "protected function updateCache($lock = TRUE)"
+    }
+   },
+   "properties": {
+    "cache": "protected",
+    "cacheCreated": "protected",
+    "cacheInvalidated": "protected",
+    "cacheLoaded": "protected",
+    "cid": "protected",
+    "completeRegistry": "protected",
+    "keysToPersist": "protected",
+    "keysToRemove": "protected",
+    "lock": "protected",
+    "persistable": "protected",
+    "storage": "protected",
+    "tags": "protected"
+   },
+   "versions": [
+    "11.2.14"
+   ]
+  },
+  "ThemeRegistry 11.3.18–11.4.9": {
+   "class": "Drupal\\Core\\Utility\\ThemeRegistry",
+   "parent": "Drupal\\Core\\Cache\\CacheCollector",
+   "methods": {
+    "__construct": {
+     "signature": "($cid, Drupal\\Core\\Cache\\CacheBackendInterface $cache, Drupal\\Core\\Lock\\LockBackendInterface $lock, $tags, $modules_loaded)",
+     "declaration": "public function __construct($cid, \\Drupal\\Core\\Cache\\CacheBackendInterface $cache, \\Drupal\\Core\\Lock\\LockBackendInterface $lock, $tags = [], $modules_loaded = FALSE)"
+    },
+    "clear": {
+     "signature": "()",
+     "declaration": "public function clear()"
+    },
+    "delete": {
+     "signature": "($key)",
+     "declaration": "public function delete($key)"
+    },
+    "destruct": {
+     "signature": "()",
+     "declaration": "public function destruct()"
+    },
+    "get": {
+     "signature": "($key)",
+     "declaration": "public function get($key)"
+    },
+    "getCid": {
+     "signature": "()",
+     "declaration": "protected function getCid()"
+    },
+    "getGlobalPreprocess": {
+     "signature": "(): array",
+     "declaration": "public function getGlobalPreprocess(): array"
+    },
+    "getPreprocessInvokes": {
+     "signature": "(): array",
+     "declaration": "public function getPreprocessInvokes(): array"
+    },
+    "has": {
+     "signature": "($key)",
+     "declaration": "public function has($key)"
+    },
+    "initializeRegistry": {
+     "signature": "()",
+     "declaration": "public function initializeRegistry()"
+    },
+    "invalidateCache": {
+     "signature": "()",
+     "declaration": "protected function invalidateCache()"
+    },
+    "lazyLoadCache": {
+     "signature": "()",
+     "declaration": "protected function lazyLoadCache()"
+    },
+    "persist": {
+     "signature": "($key, $persist)",
+     "declaration": "protected function persist($key, $persist = TRUE)"
+    },
+    "reset": {
+     "signature": "()",
+     "declaration": "public function reset()"
+    },
+    "resolveCacheMiss": {
+     "signature": "($key)",
+     "declaration": "public function resolveCacheMiss($key)"
+    },
+    "set": {
+     "signature": "($key, $value)",
+     "declaration": "public function set($key, $value)"
+    },
+    "updateCache": {
+     "signature": "($lock)",
+     "declaration": "protected function updateCache($lock = TRUE)"
+    }
+   },
+   "properties": {
+    "cache": "protected",
+    "cacheCreated": "protected",
+    "cacheInvalidated": "protected",
+    "cacheLoaded": "protected",
+    "cid": "protected",
+    "completeRegistry": "protected",
+    "keysToPersist": "protected",
+    "keysToRemove": "protected",
+    "lock": "protected",
+    "persistable": "protected",
+    "storage": "protected",
+    "tags": "protected"
+   },
+   "versions": [
+    "11.3.18",
+    "11.4.9"
+   ]
+  },
+  "Renderer 10.3.14–10.4.10": {
+   "class": "Drupal\\Core\\Render\\Renderer",
+   "parent": null,
+   "methods": {
+    "__construct": {
+     "signature": "(Drupal\\Core\\Controller\\ControllerResolverInterface|Drupal\\Core\\Utility\\CallableResolver $callable_resolver, Drupal\\Core\\Theme\\ThemeManagerInterface $theme, Drupal\\Core\\Render\\ElementInfoManagerInterface $element_info, Drupal\\Core\\Render\\PlaceholderGeneratorInterface $placeholder_generator, Drupal\\Core\\Render\\RenderCacheInterface $render_cache, Symfony\\Component\\HttpFoundation\\RequestStack $request_stack, array $renderer_config)",
+     "declaration": "public function __construct(\\Drupal\\Core\\Controller\\ControllerResolverInterface|\\Drupal\\Core\\Utility\\CallableResolver $callable_resolver, \\Drupal\\Core\\Theme\\ThemeManagerInterface $theme, \\Drupal\\Core\\Render\\ElementInfoManagerInterface $element_info, \\Drupal\\Core\\Render\\PlaceholderGeneratorInterface $placeholder_generator, \\Drupal\\Core\\Render\\RenderCacheInterface $render_cache, \\Symfony\\Component\\HttpFoundation\\RequestStack $request_stack, array $renderer_config)"
+    },
+    "addCacheableDependency": {
+     "signature": "(array &$elements, $dependency)",
+     "declaration": "public function addCacheableDependency(array &$elements, $dependency)"
+    },
+    "addDebugOutput": {
+     "signature": "(array $elements, bool $is_cache_hit, array $pre_bubbling_elements, float $render_time)",
+     "declaration": "protected function addDebugOutput(array $elements, bool $is_cache_hit, array $pre_bubbling_elements = [], float $render_time = 0.0)"
+    },
+    "doCallback": {
+     "signature": "($callback_type, $callback, array $args)",
+     "declaration": "protected function doCallback($callback_type, $callback, array $args)"
+    },
+    "doRender": {
+     "signature": "(&$elements, $is_root_call)",
+     "declaration": "protected function doRender(&$elements, $is_root_call = FALSE)"
+    },
+    "doRenderPlaceholder": {
+     "signature": "(array &$placeholder_element): Drupal\\Component\\Render\\MarkupInterface|string",
+     "declaration": "protected function doRenderPlaceholder(array &$placeholder_element): \\Drupal\\Component\\Render\\MarkupInterface|string"
+    },
+    "doReplacePlaceholder": {
+     "signature": "(string $placeholder, Drupal\\Component\\Render\\MarkupInterface|string $markup, array $elements, array $placeholder_element): array",
+     "declaration": "protected function doReplacePlaceholder(string $placeholder, \\Drupal\\Component\\Render\\MarkupInterface|string $markup, array $elements, array $placeholder_element): array"
+    },
+    "doTrustedCallback": {
+     "signature": "(callable $callback, array $args, $message, $error_type, $extra_trusted_interface)",
+     "declaration": "public function doTrustedCallback(callable $callback, array $args, $message, $error_type = \\Drupal\\Core\\Security\\TrustedCallbackInterface::THROW_EXCEPTION, $extra_trusted_interface = NULL)"
+    },
+    "ensureMarkupIsSafe": {
+     "signature": "(array $elements)",
+     "declaration": "protected function ensureMarkupIsSafe(array $elements)"
+    },
+    "executeInRenderContext": {
+     "signature": "(Drupal\\Core\\Render\\RenderContext $context, callable $callable)",
+     "declaration": "public function executeInRenderContext(\\Drupal\\Core\\Render\\RenderContext $context, callable $callable)"
+    },
+    "getCurrentRenderContext": {
+     "signature": "()",
+     "declaration": "protected function getCurrentRenderContext()"
+    },
+    "hasRenderContext": {
+     "signature": "()",
+     "declaration": "public function hasRenderContext()"
+    },
+    "mergeBubbleableMetadata": {
+     "signature": "(array $a, array $b)",
+     "declaration": "public function mergeBubbleableMetadata(array $a, array $b)"
+    },
+    "render": {
+     "signature": "(&$elements, $is_root_call)",
+     "declaration": "public function render(&$elements, $is_root_call = FALSE)"
+    },
+    "renderInIsolation": {
+     "signature": "(&$elements)",
+     "declaration": "public function renderInIsolation(&$elements)"
+    },
+    "renderPlaceholder": {
+     "signature": "($placeholder, array $elements)",
+     "declaration": "public function renderPlaceholder($placeholder, array $elements)"
+    },
+    "renderPlain": {
+     "signature": "(&$elements)",
+     "declaration": "public function renderPlain(&$elements)"
+    },
+    "renderRoot": {
+     "signature": "(&$elements)",
+     "declaration": "public function renderRoot(&$elements)"
+    },
+    "replacePlaceholders": {
+     "signature": "(array &$elements)",
+     "declaration": "protected function replacePlaceholders(array &$elements)"
+    },
+    "setCurrentRenderContext": {
+     "signature": "(Drupal\\Core\\Render\\RenderContext $context)",
+     "declaration": "protected function setCurrentRenderContext(?\\Drupal\\Core\\Render\\RenderContext $context = NULL)"
+    },
+    "xssFilterAdminIfUnsafe": {
+     "signature": "($string)",
+     "declaration": "protected function xssFilterAdminIfUnsafe($string)"
+    }
+   },
+   "properties": {
+    "callableResolver": "protected Drupal\\Core\\Utility\\CallableResolver",
+    "contextCollection": "protected static",
+    "elementInfo": "protected",
+    "isRenderingRoot": "protected",
+    "placeholderGenerator": "protected",
+    "renderCache": "protected",
+    "rendererConfig": "protected",
+    "requestStack": "protected",
+    "theme": "protected"
+   },
+   "versions": [
+    "10.3.14",
+    "10.4.10"
+   ]
+  },
+  "Renderer 10.5.12–10.6.18": {
+   "class": "Drupal\\Core\\Render\\Renderer",
+   "parent": null,
+   "methods": {
+    "__construct": {
+     "signature": "(Drupal\\Core\\Controller\\ControllerResolverInterface|Drupal\\Core\\Utility\\CallableResolver $callable_resolver, Drupal\\Core\\Theme\\ThemeManagerInterface $theme, Drupal\\Core\\Render\\ElementInfoManagerInterface $element_info, Drupal\\Core\\Render\\PlaceholderGeneratorInterface $placeholder_generator, Drupal\\Core\\Render\\RenderCacheInterface $render_cache, Symfony\\Component\\HttpFoundation\\RequestStack $request_stack, array $renderer_config)",
+     "declaration": "public function __construct(\\Drupal\\Core\\Controller\\ControllerResolverInterface|\\Drupal\\Core\\Utility\\CallableResolver $callable_resolver, \\Drupal\\Core\\Theme\\ThemeManagerInterface $theme, \\Drupal\\Core\\Render\\ElementInfoManagerInterface $element_info, \\Drupal\\Core\\Render\\PlaceholderGeneratorInterface $placeholder_generator, \\Drupal\\Core\\Render\\RenderCacheInterface $render_cache, \\Symfony\\Component\\HttpFoundation\\RequestStack $request_stack, array $renderer_config)"
+    },
+    "addCacheableDependency": {
+     "signature": "(array &$elements, $dependency)",
+     "declaration": "public function addCacheableDependency(array &$elements, $dependency)"
+    },
+    "addDebugOutput": {
+     "signature": "(array $elements, bool $is_cache_hit, array $pre_bubbling_elements, float $render_time)",
+     "declaration": "protected function addDebugOutput(array $elements, bool $is_cache_hit, array $pre_bubbling_elements = [], float $render_time = 0.0)"
+    },
+    "doCallback": {
+     "signature": "($callback_type, $callback, array $args)",
+     "declaration": "protected function doCallback($callback_type, $callback, array $args)"
+    },
+    "doRender": {
+     "signature": "(&$elements, $is_root_call)",
+     "declaration": "protected function doRender(&$elements, $is_root_call = FALSE)"
+    },
+    "doRenderPlaceholder": {
+     "signature": "(array &$placeholder_element): Drupal\\Component\\Render\\MarkupInterface|string",
+     "declaration": "protected function doRenderPlaceholder(array &$placeholder_element): \\Drupal\\Component\\Render\\MarkupInterface|string"
+    },
+    "doReplacePlaceholder": {
+     "signature": "(string $placeholder, Drupal\\Component\\Render\\MarkupInterface|string $markup, array $elements, array $placeholder_element): array",
+     "declaration": "protected function doReplacePlaceholder(string $placeholder, \\Drupal\\Component\\Render\\MarkupInterface|string $markup, array $elements, array $placeholder_element): array"
+    },
+    "doTrustedCallback": {
+     "signature": "(callable $callback, array $args, $message, $error_type, $extra_trusted_interface)",
+     "declaration": "public function doTrustedCallback(callable $callback, array $args, $message, $error_type = \\Drupal\\Core\\Security\\TrustedCallbackInterface::THROW_EXCEPTION, $extra_trusted_interface = NULL)"
+    },
+    "ensureMarkupIsSafe": {
+     "signature": "(array $elements)",
+     "declaration": "protected function ensureMarkupIsSafe(array $elements)"
+    },
+    "executeInRenderContext": {
+     "signature": "(Drupal\\Core\\Render\\RenderContext $context, callable $callable)",
+     "declaration": "public function executeInRenderContext(\\Drupal\\Core\\Render\\RenderContext $context, callable $callable)"
+    },
+    "getCurrentRenderContext": {
+     "signature": "()",
+     "declaration": "protected function getCurrentRenderContext()"
+    },
+    "hasRenderContext": {
+     "signature": "()",
+     "declaration": "public function hasRenderContext()"
+    },
+    "loadElementDefaults": {
+     "signature": "(array &$element): void",
+     "declaration": "protected function loadElementDefaults(array &$element): void"
+    },
+    "mergeBubbleableMetadata": {
+     "signature": "(array $a, array $b)",
+     "declaration": "public function mergeBubbleableMetadata(array $a, array $b)"
+    },
+    "render": {
+     "signature": "(&$elements, $is_root_call)",
+     "declaration": "public function render(&$elements, $is_root_call = FALSE)"
+    },
+    "renderInIsolation": {
+     "signature": "(&$elements)",
+     "declaration": "public function renderInIsolation(&$elements)"
+    },
+    "renderPlaceholder": {
+     "signature": "($placeholder, array $elements)",
+     "declaration": "public function renderPlaceholder($placeholder, array $elements)"
+    },
+    "renderPlain": {
+     "signature": "(&$elements)",
+     "declaration": "public function renderPlain(&$elements)"
+    },
+    "renderRoot": {
+     "signature": "(&$elements)",
+     "declaration": "public function renderRoot(&$elements)"
+    },
+    "replacePlaceholders": {
+     "signature": "(array &$elements)",
+     "declaration": "protected function replacePlaceholders(array &$elements)"
+    },
+    "setCurrentRenderContext": {
+     "signature": "(Drupal\\Core\\Render\\RenderContext $context)",
+     "declaration": "protected function setCurrentRenderContext(?\\Drupal\\Core\\Render\\RenderContext $context = NULL)"
+    },
+    "xssFilterAdminIfUnsafe": {
+     "signature": "($string)",
+     "declaration": "protected function xssFilterAdminIfUnsafe($string)"
+    }
+   },
+   "properties": {
+    "callableResolver": "protected Drupal\\Core\\Utility\\CallableResolver",
+    "contextCollection": "protected static",
+    "elementInfo": "protected",
+    "isRenderingRoot": "protected",
+    "placeholderGenerator": "protected",
+    "renderCache": "protected",
+    "rendererConfig": "protected",
+    "requestStack": "protected",
+    "theme": "protected"
+   },
+   "versions": [
+    "10.5.12",
+    "10.6.18"
+   ]
+  },
+  "Renderer 11.0.13–11.1.10": {
+   "class": "Drupal\\Core\\Render\\Renderer",
+   "parent": null,
+   "methods": {
+    "__construct": {
+     "signature": "(Drupal\\Core\\Utility\\CallableResolver $callableResolver, Drupal\\Core\\Theme\\ThemeManagerInterface $theme, Drupal\\Core\\Render\\ElementInfoManagerInterface $elementInfo, Drupal\\Core\\Render\\PlaceholderGeneratorInterface $placeholderGenerator, Drupal\\Core\\Render\\RenderCacheInterface $renderCache, Symfony\\Component\\HttpFoundation\\RequestStack $requestStack, array $renderer_config)",
+     "declaration": "public function __construct(\\Drupal\\Core\\Utility\\CallableResolver $callableResolver, \\Drupal\\Core\\Theme\\ThemeManagerInterface $theme, \\Drupal\\Core\\Render\\ElementInfoManagerInterface $elementInfo, \\Drupal\\Core\\Render\\PlaceholderGeneratorInterface $placeholderGenerator, \\Drupal\\Core\\Render\\RenderCacheInterface $renderCache, \\Symfony\\Component\\HttpFoundation\\RequestStack $requestStack, array $renderer_config)"
+    },
+    "addCacheableDependency": {
+     "signature": "(array &$elements, $dependency)",
+     "declaration": "public function addCacheableDependency(array &$elements, $dependency)"
+    },
+    "addDebugOutput": {
+     "signature": "(array $elements, bool $is_cache_hit, array $pre_bubbling_elements, float $render_time)",
+     "declaration": "protected function addDebugOutput(array $elements, bool $is_cache_hit, array $pre_bubbling_elements = [], float $render_time = 0.0)"
+    },
+    "doCallback": {
+     "signature": "($callback_type, $callback, array $args)",
+     "declaration": "protected function doCallback($callback_type, $callback, array $args)"
+    },
+    "doRender": {
+     "signature": "(&$elements, $is_root_call)",
+     "declaration": "protected function doRender(&$elements, $is_root_call = FALSE)"
+    },
+    "doRenderPlaceholder": {
+     "signature": "(array &$placeholder_element): Drupal\\Component\\Render\\MarkupInterface|string",
+     "declaration": "protected function doRenderPlaceholder(array &$placeholder_element): \\Drupal\\Component\\Render\\MarkupInterface|string"
+    },
+    "doReplacePlaceholder": {
+     "signature": "(string $placeholder, Drupal\\Component\\Render\\MarkupInterface|string $markup, array $elements, array $placeholder_element): array",
+     "declaration": "protected function doReplacePlaceholder(string $placeholder, \\Drupal\\Component\\Render\\MarkupInterface|string $markup, array $elements, array $placeholder_element): array"
+    },
+    "doTrustedCallback": {
+     "signature": "(callable $callback, array $args, $message, $error_type, $extra_trusted_interface)",
+     "declaration": "public function doTrustedCallback(callable $callback, array $args, $message, $error_type = \\Drupal\\Core\\Security\\TrustedCallbackInterface::THROW_EXCEPTION, $extra_trusted_interface = NULL)"
+    },
+    "ensureMarkupIsSafe": {
+     "signature": "(array $elements)",
+     "declaration": "protected function ensureMarkupIsSafe(array $elements)"
+    },
+    "executeInRenderContext": {
+     "signature": "(Drupal\\Core\\Render\\RenderContext $context, callable $callable)",
+     "declaration": "public function executeInRenderContext(\\Drupal\\Core\\Render\\RenderContext $context, callable $callable)"
+    },
+    "getCurrentRenderContext": {
+     "signature": "()",
+     "declaration": "protected function getCurrentRenderContext()"
+    },
+    "hasRenderContext": {
+     "signature": "()",
+     "declaration": "public function hasRenderContext()"
+    },
+    "mergeBubbleableMetadata": {
+     "signature": "(array $a, array $b)",
+     "declaration": "public function mergeBubbleableMetadata(array $a, array $b)"
+    },
+    "render": {
+     "signature": "(&$elements, $is_root_call)",
+     "declaration": "public function render(&$elements, $is_root_call = FALSE)"
+    },
+    "renderInIsolation": {
+     "signature": "(&$elements)",
+     "declaration": "public function renderInIsolation(&$elements)"
+    },
+    "renderPlaceholder": {
+     "signature": "($placeholder, array $elements)",
+     "declaration": "public function renderPlaceholder($placeholder, array $elements)"
+    },
+    "renderPlain": {
+     "signature": "(&$elements)",
+     "declaration": "public function renderPlain(&$elements)"
+    },
+    "renderRoot": {
+     "signature": "(&$elements)",
+     "declaration": "public function renderRoot(&$elements)"
+    },
+    "replacePlaceholders": {
+     "signature": "(array &$elements)",
+     "declaration": "protected function replacePlaceholders(array &$elements)"
+    },
+    "setCurrentRenderContext": {
+     "signature": "(Drupal\\Core\\Render\\RenderContext $context)",
+     "declaration": "protected function setCurrentRenderContext(?\\Drupal\\Core\\Render\\RenderContext $context = NULL)"
+    },
+    "xssFilterAdminIfUnsafe": {
+     "signature": "($string)",
+     "declaration": "protected function xssFilterAdminIfUnsafe($string)"
+    }
+   },
+   "properties": {
+    "callableResolver": "protected Drupal\\Core\\Utility\\CallableResolver",
+    "contextCollection": "protected static",
+    "elementInfo": "protected Drupal\\Core\\Render\\ElementInfoManagerInterface",
+    "isRenderingRoot": "protected",
+    "placeholderGenerator": "protected Drupal\\Core\\Render\\PlaceholderGeneratorInterface",
+    "renderCache": "protected Drupal\\Core\\Render\\RenderCacheInterface",
+    "rendererConfig": "protected",
+    "requestStack": "protected Symfony\\Component\\HttpFoundation\\RequestStack",
+    "theme": "protected Drupal\\Core\\Theme\\ThemeManagerInterface"
+   },
+   "versions": [
+    "11.0.13",
+    "11.1.10"
+   ]
+  },
+  "Renderer 11.2.14–11.4.9": {
+   "class": "Drupal\\Core\\Render\\Renderer",
+   "parent": null,
+   "methods": {
+    "__construct": {
+     "signature": "(Drupal\\Core\\Utility\\CallableResolver $callableResolver, Drupal\\Core\\Theme\\ThemeManagerInterface $theme, Drupal\\Core\\Render\\ElementInfoManagerInterface $elementInfo, Drupal\\Core\\Render\\PlaceholderGeneratorInterface $placeholderGenerator, Drupal\\Core\\Render\\RenderCacheInterface $renderCache, Symfony\\Component\\HttpFoundation\\RequestStack $requestStack, array $renderer_config)",
+     "declaration": "public function __construct(\\Drupal\\Core\\Utility\\CallableResolver $callableResolver, \\Drupal\\Core\\Theme\\ThemeManagerInterface $theme, \\Drupal\\Core\\Render\\ElementInfoManagerInterface $elementInfo, \\Drupal\\Core\\Render\\PlaceholderGeneratorInterface $placeholderGenerator, \\Drupal\\Core\\Render\\RenderCacheInterface $renderCache, \\Symfony\\Component\\HttpFoundation\\RequestStack $requestStack, array $renderer_config)"
+    },
+    "addCacheableDependency": {
+     "signature": "(array &$elements, $dependency)",
+     "declaration": "public function addCacheableDependency(array &$elements, $dependency)"
+    },
+    "addDebugOutput": {
+     "signature": "(array $elements, bool $is_cache_hit, array $pre_bubbling_elements, float $render_time)",
+     "declaration": "protected function addDebugOutput(array $elements, bool $is_cache_hit, array $pre_bubbling_elements = [], float $render_time = 0.0)"
+    },
+    "doCallback": {
+     "signature": "($callback_type, $callback, array $args)",
+     "declaration": "protected function doCallback($callback_type, $callback, array $args)"
+    },
+    "doRender": {
+     "signature": "(array &$elements, Drupal\\Core\\Render\\RenderContext $context): Drupal\\Component\\Render\\MarkupInterface|string",
+     "declaration": "protected function doRender(array &$elements, \\Drupal\\Core\\Render\\RenderContext $context): \\Drupal\\Component\\Render\\MarkupInterface|string"
+    },
+    "doRenderPlaceholder": {
+     "signature": "(array &$placeholder_element): Drupal\\Component\\Render\\MarkupInterface|string",
+     "declaration": "protected function doRenderPlaceholder(array &$placeholder_element): \\Drupal\\Component\\Render\\MarkupInterface|string"
+    },
+    "doRenderRoot": {
+     "signature": "(array &$elements, Drupal\\Core\\Render\\RenderContext $context): Drupal\\Component\\Render\\MarkupInterface|string",
+     "declaration": "protected function doRenderRoot(array &$elements, \\Drupal\\Core\\Render\\RenderContext $context): \\Drupal\\Component\\Render\\MarkupInterface|string"
+    },
+    "doReplacePlaceholder": {
+     "signature": "(string $placeholder, Drupal\\Component\\Render\\MarkupInterface|string $markup, array $elements, array $placeholder_element): array",
+     "declaration": "protected function doReplacePlaceholder(string $placeholder, \\Drupal\\Component\\Render\\MarkupInterface|string $markup, array $elements, array $placeholder_element): array"
+    },
+    "doTrustedCallback": {
+     "signature": "(callable $callback, array $args, $message, $error_type, $extra_trusted_interface)",
+     "declaration": "public function doTrustedCallback(callable $callback, array $args, $message, $error_type = \\Drupal\\Core\\Security\\TrustedCallbackInterface::THROW_EXCEPTION, $extra_trusted_interface = NULL)"
+    },
+    "ensureMarkupIsSafe": {
+     "signature": "(array $elements)",
+     "declaration": "protected function ensureMarkupIsSafe(array $elements)"
+    },
+    "executeInRenderContext": {
+     "signature": "(Drupal\\Core\\Render\\RenderContext $context, callable $callable)",
+     "declaration": "public function executeInRenderContext(\\Drupal\\Core\\Render\\RenderContext $context, callable $callable)"
+    },
+    "getCurrentRenderContext": {
+     "signature": "()",
+     "declaration": "protected function getCurrentRenderContext()"
+    },
+    "hasRenderContext": {
+     "signature": "()",
+     "declaration": "public function hasRenderContext()"
+    },
+    "loadElementDefaults": {
+     "signature": "(array &$element): void",
+     "declaration": "protected function loadElementDefaults(array &$element): void"
+    },
+    "mergeBubbleableMetadata": {
+     "signature": "(array $a, array $b)",
+     "declaration": "public function mergeBubbleableMetadata(array $a, array $b)"
+    },
+    "render": {
+     "signature": "(&$elements, $is_root_call)",
+     "declaration": "public function render(&$elements, $is_root_call = FALSE)"
+    },
+    "renderInIsolation": {
+     "signature": "(&$elements)",
+     "declaration": "public function renderInIsolation(&$elements)"
+    },
+    "renderPlaceholder": {
+     "signature": "($placeholder, array $elements)",
+     "declaration": "public function renderPlaceholder($placeholder, array $elements)"
+    },
+    "renderPlain": {
+     "signature": "(&$elements)",
+     "declaration": "public function renderPlain(&$elements)"
+    },
+    "renderRoot": {
+     "signature": "(&$elements)",
+     "declaration": "public function renderRoot(&$elements)"
+    },
+    "replacePlaceholders": {
+     "signature": "(array &$elements)",
+     "declaration": "protected function replacePlaceholders(array &$elements)"
+    },
+    "setCurrentRenderContext": {
+     "signature": "(Drupal\\Core\\Render\\RenderContext $context)",
+     "declaration": "protected function setCurrentRenderContext(?\\Drupal\\Core\\Render\\RenderContext $context = NULL)"
+    },
+    "xssFilterAdminIfUnsafe": {
+     "signature": "($string)",
+     "declaration": "protected function xssFilterAdminIfUnsafe($string)"
+    }
+   },
+   "properties": {
+    "callableResolver": "protected Drupal\\Core\\Utility\\CallableResolver",
+    "contextCollection": "protected static",
+    "elementInfo": "protected Drupal\\Core\\Render\\ElementInfoManagerInterface",
+    "isRenderingRoot": "protected",
+    "placeholderGenerator": "protected Drupal\\Core\\Render\\PlaceholderGeneratorInterface",
+    "renderCache": "protected Drupal\\Core\\Render\\RenderCacheInterface",
+    "rendererConfig": "protected",
+    "requestStack": "protected Symfony\\Component\\HttpFoundation\\RequestStack",
+    "theme": "protected Drupal\\Core\\Theme\\ThemeManagerInterface"
+   },
+   "versions": [
+    "11.2.14",
+    "11.3.18",
+    "11.4.9"
+   ]
+  },
+  "TwigThemeEngine 11.3.18–11.4.9": {
+   "class": "Drupal\\Core\\Template\\TwigThemeEngine",
+   "parent": null,
+   "methods": {
+    "__construct": {
+     "signature": "(Drupal\\Core\\Template\\TwigEnvironment $twig)",
+     "declaration": "public function __construct(\\Drupal\\Core\\Template\\TwigEnvironment $twig)"
+    },
+    "renderTemplate": {
+     "signature": "(string $template_file, array $variables): Drupal\\Component\\Render\\MarkupInterface|string",
+     "declaration": "public function renderTemplate(string $template_file, array $variables): \\Drupal\\Component\\Render\\MarkupInterface|string"
+    },
+    "theme": {
+     "signature": "(array $existing, string $type, string $theme, string $path): array",
+     "declaration": "public function theme(array $existing, string $type, string $theme, string $path): array"
+    }
+   },
+   "properties": {
+    "twig": "protected Drupal\\Core\\Template\\TwigEnvironment"
+   },
+   "versions": [
+    "11.3.18",
+    "11.4.9"
+   ]
+  },
+  "ImplementationList 11.3.18–11.4.9": {
+   "class": "Drupal\\Core\\Hook\\ImplementationList",
+   "parent": null,
+   "methods": {
+    "__construct": {
+     "signature": "(array $listeners, array $modules)",
+     "declaration": "public function __construct(array $listeners, array $modules)"
+    },
+    "getForModule": {
+     "signature": "(string $module): array",
+     "declaration": "public function getForModule(string $module): array"
+    },
+    "hasImplementations": {
+     "signature": "(): bool",
+     "declaration": "public function hasImplementations(): bool"
+    },
+    "hasImplementationsForModules": {
+     "signature": "(array $modules): bool",
+     "declaration": "public function hasImplementationsForModules(array $modules): bool"
+    },
+    "iterateByModule": {
+     "signature": "(): Iterator",
+     "declaration": "public function iterateByModule(): \\Iterator"
+    }
+   },
+   "properties": {
+    "listeners": "public readonly array",
+    "modules": "public readonly array"
+   },
+   "versions": [
+    "11.3.18",
+    "11.4.9"
+   ]
+  }
+ }
+}

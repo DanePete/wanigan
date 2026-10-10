@@ -139,9 +139,10 @@ WordPress and other sites can each be on or off.
 - **Keys for everything**, in the view and in its page while nothing is typed
   into: P picks (and stops picking), ⇧L chooses a lens, 1 2 3 the widths,
   [ and ] the side panel's tabs, ⇧[ and ⇧] the dock's, ⇧C Compare, ⇧B the
-  component library; on a chosen part E edits, M moves, . opens its code, ⇧A
-  shows it alone, ⇧X takes it out; ⌘↩ adds a note, ⇧⌘↩ sends it (or the notes
-  waiting). All are on the shortcut sheet (?).
+  component library; on a chosen part E types on its words on the page (or,
+  for a part that is more than words, opens Edit ▾), M moves, . opens its
+  code, ⇧A shows it alone, ⇧X takes it out; ⌘↩ adds a note, ⇧⌘↩ sends it (or
+  the notes waiting). All are on the shortcut sheet (?).
 - **Finds the site** from the project's own files (`.ddev`, `wp-config.php`,
   a dev script, `.lando.yml`) and opens the site you already run. It starts
   nothing on its own. A ddev site's certificate is trusted when this Mac's own
@@ -178,10 +179,18 @@ WordPress and other sites can each be on or off.
 - **Notes for an agent.** Point at parts across pages, say what should change,
   and send them to a session as one message with a picture of each part. They
   wait in the dock's Notes tab.
-- **The design layer** (Edit ▾ › On the page, and Edits, ⇧E). Retyped words
-  and tried styles are kept by Wanigan, not written into the site: the page
-  shows them at once, through the layer. A style is for one element or every
-  instance of its kind (how many, said before you choose it); a custom
+- **The design layer** (Edit ▾ › On the page, and Edits, ⇧E). You edit on
+  the page itself, as in a site builder. Retype the words (E, or a
+  double-click on the chosen part's words) makes those words editable where
+  they are: each key shows on the page as you type it, Enter or clicking away
+  keeps them, Esc puts back exactly what was there, and the status line says
+  you are typing, with Keep and Put back. Retype in a box does the same from
+  the side panel, for the keyboard and screen readers. Try a style shows each
+  value on the page as you move its control (over an edit the layer already
+  shows there too), and Show it on the page keeps it. What you keep is kept by
+  Wanigan, not written into the site: the page goes on showing it through the
+  layer. A style is for one element or every instance of its kind (how many,
+  said before you choose it, and shown on every one as you try it); a custom
   property can change for the whole site. Edits lists every edit by page, with
   before → after, what it reaches (including "this item, shown twice on this
   page"), its state and what that means, and why when it no longer finds its
@@ -209,6 +218,30 @@ WordPress and other sites can each be on or off.
   inside one run of them, every tag kept. Words kept in something shown beyond
   the page (a template or part, a synced pattern, a menu, a widget, a setting)
   say where they show first, and are saved when you make them real again.
+  When nothing the page offers holds the words (a page builder's, a
+  shortcode's, a contributed field's), Wanigan looks where the content keeps
+  them and saves them there through core: on WordPress the post's stored
+  content (its markup, a shortcode's settings and the words it wraps, a
+  block's settings, changed together with the block's markup when it keeps
+  them twice), its excerpt and its custom fields (JSON written back token by
+  token with the escapes it was written with, a saved list as a list, a field
+  with a row per value by its row); on Drupal every field of the content the
+  page showed that its other saves do not cover (a contributed field's value,
+  JSON in it, a map, a link's title), in that translation, as a new revision.
+  The words must be found exactly once, as words; otherwise it says where they
+  are (twice, only in an address or a class, made from a template like
+  `%%title%%`, in the site's settings) and saves nothing. Elementor's pages are
+  read from the tree Elementor renders and saved through Elementor's own save
+  (its caches cleared, a revision kept); ACF's fields, repeater rows, blocks and
+  options are saved through ACF with its validation (an option every page shows
+  is saved only when you make it real again); copies that never render (a
+  builder's stored-content copy, an SEO plugin's mirror) are never saved into,
+  and Beaver Builder's and SiteOrigin's own layouts are refused, saying so.
+  After the save the page reloads and is read back: if it still shows the old
+  words, it says the site has them but whatever renders them may keep its own
+  copy, and Undo puts the old value back (custom fields keep no revision, so
+  this is their only way back, for ten minutes). Words a plugin computes and
+  never stores, and a builder's own cache, are beyond it.
   What it cannot save says why, and which kind of why: Drupal keeps no such
   thing (words written in a Twig template, a menu link written in code, a base
   field's label, words a Webform token or computed element makes), or Wanigan
@@ -226,8 +259,14 @@ WordPress and other sites can each be on or off.
   layer to compare; nothing runs twice, and undo waits while words are being
   saved. The window has been checked against the UI sweep's stand-in; on the
   Northstar demo, a script driving the real app made words in a plain field
-  real and verified them. Drupal's formatted text, configuration and Layout
-  Builder saves, and WordPress, have been tested with stand-ins only.
+  real and verified them. Typing on the page and a style shown as it changes
+  have been checked in headless Chromium on made-up pages and in the window
+  against the stand-in, not yet in the app on a site. Drupal's formatted text,
+  configuration and Layout Builder saves, and WordPress, have been tested with
+  stand-ins only, as have the stored-words search and save (Elementor and ACF
+  with stand-ins made in the shape of their public code; ACF PRO's repeaters,
+  blocks and options follow ACF's documented storage and are not yet checked
+  against ACF PRO itself).
 - **Go to**, in the address field (click it, or Shift+Space in the live view,
   ⌘⇧Space anywhere in a project): an address, or any page of the site by
   typing a few letters of its title, an admin or structure page, a path or an id, ranked as you type and by what you choose

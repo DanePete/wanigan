@@ -113,7 +113,8 @@ export const SHORTCUTS: readonly Shortcut[] = [
   { id: null, label: 'Compare Local with a hosted environment', group: 'In the live view', keys: ['Shift', 'C'] },
   { id: null, label: 'The site’s component library', group: 'In the live view', keys: ['Shift', 'B'] },
   { id: null, label: 'Your edits to the page, in the design layer', group: 'In the live view', keys: ['Shift', 'E'] },
-  { id: null, label: 'Every way to edit the chosen part', group: 'In the live view', keys: ['E'] },
+  // On words alone E types on them in the page (Enter keeps, Esc puts back); on anything else it opens Edit ▾.
+  { id: null, label: 'Type on the chosen part’s words on the page, or every way to edit it', group: 'In the live view', keys: ['E'] },
   { id: null, label: 'Move the chosen part', group: 'In the live view', keys: ['M'] },
   { id: null, label: 'The chosen part’s code, in the code editor', group: 'In the live view', keys: ['.'] },
   { id: null, label: 'Show the chosen part alone', group: 'In the live view', keys: ['Shift', 'A'] },

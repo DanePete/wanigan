@@ -1,8 +1,9 @@
 // What each part of a traced Drupal page names (helper version 4,
-// PartIdentity in src/shared/live-trace.ts), run under a stand-in Drupal: the
-// helper's own Recorder, Describe, Marks, Identity and TraceBuilder record a
-// page rendered the way core's renderer and theme manager would drive them,
-// over made-up entities (acme, northwind). What it proves: an entity, a field
+// PartIdentity in src/shared/live-trace.ts), run under a stand-in Drupal of
+// each release the helper supports, by shape (live-helper-drupal-stand-in.ts:
+// 10.6, 11.0, 11.1, 11.2, 11.4): the page is rendered through that release's
+// renderer, theme manager and theme registry with the trace's classes its
+// service provider put in place, over made-up entities (acme, northwind). What it proves: an entity, a field
 // and a field item carry the entity's UUID, a reference item is named by what
 // it refers to so a reorder does not move it, a component is named by where it
 // sits and which of its id it is there, a block placement, a menu, a menu link
@@ -14,10 +15,11 @@ import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { test } from 'node:test';
 import { DRUPAL_HELPER_FILES } from './live-helper-drupal.ts';
 import { which } from './environment.ts';
+import { standInCore } from './live-helper-drupal-stand-in.ts';
 import { identityKey, kindKey, parseTrace, type LiveTrace, type PartIdentity, type TracePart } from '../shared/live-trace.ts';
 
 const UUID = {
@@ -44,20 +46,6 @@ const LB = {
 };
 
 const HARNESS = String.raw`<?php
-namespace Drupal\Component\Render { interface MarkupInterface {} }
-namespace Drupal\Core\Render {
-  final class Markup implements \Drupal\Component\Render\MarkupInterface {
-    private function __construct(private string $s) {}
-    public static function create($s) { return new self((string) $s); }
-    public function __toString(): string { return $this->s; }
-  }
-}
-namespace Drupal\Component\Utility {
-  final class Html { public static function escape($s) { return htmlspecialchars((string) $s, ENT_QUOTES); } }
-  final class Xss { public static function filterAdmin($s) { return (string) $s; } }
-}
-namespace Drupal\Core\Entity { interface EntityInterface {} interface FieldableEntityInterface extends EntityInterface {} }
-namespace Drupal\Core\Field { interface FieldItemInterface {} interface FieldItemListInterface {} }
 namespace Drupal\views {
   class ViewExecutable {
     public $current_display;
@@ -89,13 +77,12 @@ namespace Drupal\wanigan_live\Trace {
   }
 }
 namespace {
-  use Drupal\wanigan_live\Trace\Frame;
   use Drupal\wanigan_live\Trace\Identity;
-  use Drupal\wanigan_live\Trace\Marks;
   use Drupal\wanigan_live\Trace\Recorder;
   use Drupal\wanigan_live\Trace\TraceBuilder;
 
-  foreach (['Recorder', 'Frame', 'FiberState', 'Source', 'Preview', 'Describe', 'Marks', 'Identity', 'TraceBuilder'] as $c) require getenv('WL_HELPER') . '/src/Trace/' . $c . '.php';
+  // A core of one release's shape, its container compiled by the helper's provider.
+  require getenv('WL_FOLDER') . '/core.php';
 
   final class Node implements Drupal\Core\Entity\FieldableEntityInterface {
     public function __construct(public string $type, public string $id, public ?string $uuid, public string $bundle, public string $label, public string $langcode = 'en', public bool $new = FALSE) {}
@@ -130,27 +117,13 @@ namespace {
     public function getTitle() { return $this->id; }
   }
   final class Placement { public function getRegion() { return 'content'; } public function getTheme() { return 'acme'; } }
-  final class Drupal {
-    public static function root() { return getenv('WL_ROOT') . '/web'; }
-    public static function theme() { return new class { public function getActiveTheme() { return new class { public function getName() { return 'acme'; } }; } }; }
-    public static function currentUser() { return new class { public function getDisplayName() { return 'editor'; } public function getRoles() { return ['authenticated']; } }; }
-    public static function logger($channel) { return new class { public function warning($m, $a = []) { $GLOBALS['wl_log'][] = strtr($m, $a); } }; }
-    public static function hasService($id) { return FALSE; }
-    public static function entityTypeManager() {
-      return new class {
-        public function hasDefinition($t) { return FALSE; }
-        public function getStorage($t) { return new class { public function load($id) { return new class($id) { public function __construct(private string $id) {} public function label() { return ucfirst($this->id) . ' navigation'; } }; } }; }
-      };
-    }
-    public static function service($id) {
-      return match ($id) {
-        'theme.registry' => new class { public function getRuntime() { return new class { public function has($n) { return FALSE; } public function get($n) { return NULL; } }; } },
-        'entity_type.bundle.info' => new class { public function getBundleInfo($t) { return []; } },
-        'plugin.manager.menu.link' => new class { public function createInstance($id) { return new Link($id); } },
-        default => throw new RuntimeException('No ' . $id . ' in this stand-in.'),
-      };
-    }
-  }
+  StandIn::boot(['wanigan_live'], 'acme', getenv('WL_HELPER'));
+  Drupal::$root = getenv('WL_ROOT') . '/web';
+  Drupal::$services['entity_type.manager'] = new class {
+    public function hasDefinition($t) { return FALSE; }
+    public function getStorage($t) { return new class { public function load($id) { return new class($id) { public function __construct(private string $id) {} public function label() { return ucfirst($this->id) . ' navigation'; } }; } }; }
+  };
+  Drupal::$services['plugin.manager.menu.link'] = new class { public function createInstance($id) { return new Link($id); } };
 
   /** What a template's content prints: its marks and its markup. */
   function printed($c): string {
@@ -158,17 +131,24 @@ namespace {
   }
 
   /**
-   * One themed element, as core renders it: the element's frame (TraceRenderer::doRender()), the template's
-   * initial preprocess (TracedRuntime), the helper's marks after every preprocess, the template's output
-   * (TraceThemeEngine::renderTemplate()), and the element left.
+   * One themed element, rendered by the stand-in core: its theme hook defined in the registry with its template,
+   * then the element (#theme, the hook's own variables as the stand-in's template_preprocess() hands them over)
+   * through the renderer, the theme manager and the registry, and whichever of the trace's classes the
+   * provider put in place for this release.
    */
   function themed(Recorder $r, string $hook, array $info, array $variables, string $file, callable $template): string {
-    $element = $r->push(new Frame('R', ['theme' => $variables['theme_hook_original'] ?? $hook, 'type' => NULL, 'component' => NULL]));
-    $frame = $r->beginTheme($hook, $info, $variables);
-    Marks::afterPreprocess($r, $frame, $variables);
-    $out = (string) $r->themePart($frame, $file, $variables, $template($variables));
-    $elements = isset($info['render element']) ? ($variables[$info['render element']] ?? []) : [];
-    return (string) $r->leaveElement($element, $elements, $out);
+    $original = (string) ($variables['theme_hook_original'] ?? $hook);
+    unset($variables['theme_hook_original']);
+    $key = $info['render element'] ?? NULL;
+    if ($key === NULL) {
+      $info['variables'] = ($info['variables'] ?? []) + ['wl_variables' => []];
+    }
+    StandIn::define($hook, $info, $file, $template);
+    $element = $key !== NULL ? (array) ($variables[$key] ?? []) : [];
+    unset($variables[$key ?? '']);
+    $element['#theme'] = $original;
+    $element['#wl_variables'] = $variables;
+    return StandIn::render($element);
   }
 
   /** A single-directory component, as its template's two calls mark it (TraceTwigExtension). */
@@ -254,6 +234,7 @@ namespace {
     $landing = new Node('node', '14', getenv('WL_LANDING'), 'landing_page', 'Northwind landing');
     $sample = new Node('node', '0', 'f00df00d-0000-4000-8000-000000000000', 'article', 'Sample', 'en', TRUE);
     $r = new Recorder('/node/12');
+    $r->sense();
     Recorder::$on = $r;
     // Alpha and beta were loaded by the formatter; gamma was not, so it is not named (and not loaded to name it).
     $related = [];
@@ -314,9 +295,8 @@ namespace {
     return $trace;
   }
 
-  $GLOBALS['wl_log'] = [];
   $keys = array_map([Identity::class, 'key'], json_decode(getenv('WL_SAMPLES'), TRUE));
-  echo json_encode(['first' => page(['alpha', 'beta', 'gamma'], FALSE), 'again' => page(['beta', 'alpha', 'gamma'], TRUE), 'keys' => $keys, 'log' => $GLOBALS['wl_log']]);
+  echo json_encode(['first' => page(['alpha', 'beta', 'gamma'], FALSE), 'again' => page(['beta', 'alpha', 'gamma'], TRUE), 'keys' => $keys, 'log' => StandIn::$log, 'classes' => StandIn::$classes]);
 }
 `;
 
@@ -337,24 +317,37 @@ const SAMPLES: PartIdentity[] = [
 const LINK = '0a1b2c3d-0000-4000-8000-00000000f00d';
 const HOME = '0a1b2c3d-0000-4000-8000-00000000f00e';
 
-function run(): { first: unknown; again: unknown; keys: string[]; log: string[] } {
+/** The releases whose shapes the page is rendered on (each a family of the trace's classes). */
+const RELEASES = ['10.6.18', '11.0.13', '11.1.10', '11.2.14', '11.4.9'];
+
+type Run = { first: unknown; again: unknown; keys: string[]; log: string[]; classes: Record<string, string> };
+const runs = new Map<string, Run>();
+
+/** The page, rendered twice on a release's stand-in (once per release: each test reads the same run). */
+function run(version: string): Run {
+  const done = runs.get(version);
+  if (done) return done;
   const bin = which('php', process.env.PATH ?? '') as string;
   const folder = mkdtempSync(join(tmpdir(), 'wanigan-drupal-identity-'));
   try {
-    mkdirSync(join(folder, 'src', 'Trace'), { recursive: true });
-    for (const c of ['Recorder', 'Frame', 'FiberState', 'Source', 'Preview', 'Describe', 'Marks', 'Identity', 'TraceBuilder']) {
-      writeFileSync(join(folder, 'src', 'Trace', `${c}.php`), DRUPAL_HELPER_FILES[`src/Trace/${c}.php`] ?? '');
+    const helper = join(folder, 'helper');
+    for (const [file, text] of Object.entries(DRUPAL_HELPER_FILES)) {
+      mkdirSync(dirname(join(helper, file)), { recursive: true });
+      writeFileSync(join(helper, file), text);
     }
+    writeFileSync(join(folder, 'core.php'), standInCore(version));
     writeFileSync(join(folder, 'composer.json'), '{}');
     writeFileSync(join(folder, 'check.php'), HARNESS);
-    return JSON.parse(execFileSync(bin, [join(folder, 'check.php')], {
+    const out = JSON.parse(execFileSync(bin, [join(folder, 'check.php')], {
       encoding: 'utf8',
       env: {
-        PATH: process.env.PATH ?? '', WL_HELPER: folder, WL_ROOT: folder, WL_SAMPLES: JSON.stringify(SAMPLES), WL_LINK: LINK, WL_HOME: HOME,
+        PATH: process.env.PATH ?? '', WL_FOLDER: folder, WL_HELPER: helper, WL_ROOT: folder, WL_SAMPLES: JSON.stringify(SAMPLES), WL_LINK: LINK, WL_HOME: HOME,
         WL_PAGE: UUID.page, WL_ALPHA: UUID.alpha, WL_BETA: UUID.beta, WL_GAMMA: UUID.gamma, WL_DELTA: UUID.delta, WL_TEASER: UUID.teaser,
         WL_NOTES: UUID.notes, WL_LANDING: UUID.landing, WL_PROMO: UUID.promo, WL_LB: JSON.stringify(LB),
       },
-    })) as { first: unknown; again: unknown; keys: string[]; log: string[] };
+    })) as Run;
+    runs.set(version, out);
+    return out;
   } finally { rmSync(folder, { recursive: true, force: true }); }
 }
 
@@ -371,137 +364,143 @@ const one = (parts: Map<string, TracePart[]>, label: string, n = 0): TracePart =
   return p;
 };
 
-test('every part a Drupal page can name carries its identity, and the trace keeps it', (t) => {
-  if (!which('php', process.env.PATH ?? '')) { t.skip('PHP is not installed here'); return; }
-  const out = run();
-  const first = parseTrace(out.first);
-  assert.ok(first, 'the helper’s answer is a trace by the contract');
-  // parseTrace() drops an identity it does not accept: what the helper wrote is what the trace kept.
-  const raw = (out.first as { parts: { id: string; identity?: unknown }[] }).parts;
-  assert.equal(raw.filter((p) => p.identity !== undefined).length, first.parts.filter((p) => p.identity).length, 'no identity was refused');
-  assert.deepEqual(out.log, [], 'nothing went wrong while it was built');
-  const parts = byLabel(first);
-  const page = { kind: 'entity', type: 'node', id: UUID.page, bundle: 'page', langcode: 'en' } as const;
-  const pageKey = identityKey(page);
+for (const version of RELEASES) {
+  test(`on ${version}, every part a Drupal page can name carries its identity, and the trace keeps it`, (t) => {
+    if (!which('php', process.env.PATH ?? '')) { t.skip('PHP is not installed here'); return; }
+    const out = run(version);
+    // Rendered through the trace's classes written for this release's shape.
+    const newest = version.startsWith('11.4');
+    assert.match(out.classes['theme.registry'] ?? '', newest ? /\\TraceRegistry$/ : /\\TraceRegistry1\d\d$/, 'the theme registry this release has');
+    assert.match(out.classes.renderer ?? '', /\\TraceRenderer(103)?$/);
+    const first = parseTrace(out.first);
+    assert.ok(first, 'the helper’s answer is a trace by the contract');
+    // parseTrace() drops an identity it does not accept: what the helper wrote is what the trace kept.
+    const raw = (out.first as { parts: { id: string; identity?: unknown }[] }).parts;
+    assert.equal(raw.filter((p) => p.identity !== undefined).length, first.parts.filter((p) => p.identity).length, 'no identity was refused');
+    assert.deepEqual(out.log, [], 'nothing went wrong while it was built');
+    const parts = byLabel(first);
+    const page = { kind: 'entity', type: 'node', id: UUID.page, bundle: 'page', langcode: 'en' } as const;
+    const pageKey = identityKey(page);
 
-  assert.deepEqual(one(parts, 'page: About Acme').identity, page, 'the entity: its type, UUID, bundle and language');
-  assert.deepEqual(one(parts, 'field_related').identity, { ...page, field: 'field_related' }, 'a field adds its name');
-  assert.deepEqual(one(parts, 'field_related #1').identity, { ...page, field: 'field_related', item: `ref:node:${UUID.alpha}` }, 'a reference item: what it refers to');
-  assert.deepEqual(one(parts, 'field_related #2').identity, { ...page, field: 'field_related', item: `ref:node:${UUID.beta}` });
-  assert.equal(one(parts, 'field_related #3').identity, undefined, 'a target the formatter did not load is not loaded to name it');
-  assert.deepEqual(one(parts, 'field_teasers #1').identity, { ...page, field: 'field_teasers', item: `ref:node:${UUID.delta}` }, 'a target shown rendered is named from its own build');
-  assert.deepEqual([one(parts, 'field_points #1').identity, one(parts, 'field_points #2').identity], [{ ...page, field: 'field_points', item: 'delta:0' }, { ...page, field: 'field_points', item: 'delta:1' }], 'a value item: its delta');
-  assert.deepEqual([one(parts, 'field_twice #1').identity, one(parts, 'field_twice #2').identity], [undefined, undefined], 'two items naming the same thing are not told apart, so neither is named');
+    assert.deepEqual(one(parts, 'page: About Acme').identity, page, 'the entity: its type, UUID, bundle and language');
+    assert.deepEqual(one(parts, 'field_related').identity, { ...page, field: 'field_related' }, 'a field adds its name');
+    assert.deepEqual(one(parts, 'field_related #1').identity, { ...page, field: 'field_related', item: `ref:node:${UUID.alpha}` }, 'a reference item: what it refers to');
+    assert.deepEqual(one(parts, 'field_related #2').identity, { ...page, field: 'field_related', item: `ref:node:${UUID.beta}` });
+    assert.equal(one(parts, 'field_related #3').identity, undefined, 'a target the formatter did not load is not loaded to name it');
+    assert.deepEqual(one(parts, 'field_teasers #1').identity, { ...page, field: 'field_teasers', item: `ref:node:${UUID.delta}` }, 'a target shown rendered is named from its own build');
+    assert.deepEqual([one(parts, 'field_points #1').identity, one(parts, 'field_points #2').identity], [{ ...page, field: 'field_points', item: 'delta:0' }, { ...page, field: 'field_points', item: 'delta:1' }], 'a value item: its delta');
+    assert.deepEqual([one(parts, 'field_twice #1').identity, one(parts, 'field_twice #2').identity], [undefined, undefined], 'two items naming the same thing are not told apart, so neither is named');
 
-  // Components: within the nearest identified part, counted by id there in page order.
-  const [one1, two] = parts.get('acme:card')!;
-  assert.deepEqual(one1?.identity, { kind: 'component', name: 'acme:card', within: pageKey, nth: 0 });
-  assert.deepEqual(two?.identity, { kind: 'component', name: 'acme:card', within: pageKey, nth: 1 }, 'the second of its id under the same part');
-  assert.deepEqual(one(parts, 'acme:badge').identity, { kind: 'component', name: 'acme:badge', within: identityKey(one1!.identity!), nth: 0 }, 'inside a component: within that component');
-  assert.deepEqual(one(parts, 'acme:card', 2).identity, { kind: 'component', name: 'acme:card', within: null, nth: 0 }, 'at the page’s top, inside nothing identified');
-  assert.equal(kindKey(one1!.identity!), kindKey(one(parts, 'acme:card', 2).identity!), 'every card is one kind');
+    // Components: within the nearest identified part, counted by id there in page order.
+    const [one1, two] = parts.get('acme:card')!;
+    assert.deepEqual(one1?.identity, { kind: 'component', name: 'acme:card', within: pageKey, nth: 0 });
+    assert.deepEqual(two?.identity, { kind: 'component', name: 'acme:card', within: pageKey, nth: 1 }, 'the second of its id under the same part');
+    assert.deepEqual(one(parts, 'acme:badge').identity, { kind: 'component', name: 'acme:badge', within: identityKey(one1!.identity!), nth: 0 }, 'inside a component: within that component');
+    assert.deepEqual(one(parts, 'acme:card', 2).identity, { kind: 'component', name: 'acme:card', within: null, nth: 0 }, 'at the page’s top, inside nothing identified');
+    assert.equal(kindKey(one1!.identity!), kindKey(one(parts, 'acme:card', 2).identity!), 'every card is one kind');
 
-  // Configuration.
-  const blocks = parts.get('A block')!;
-  assert.deepEqual(blocks[0]?.identity, { kind: 'config', type: 'block', id: 'acme_content', plugin: 'system_main_block' }, 'a block placement: its id and plugin');
-  assert.equal(blocks[1]?.identity, undefined, 'a Layout Builder component told no entity and no UUID: no identity, never a placement’s');
-  assert.equal(blocks[2]?.identity, undefined, 'a plugin id with a space: no identity, never a cleaned-up one');
-  assert.deepEqual(blocks[3]?.identity, { kind: 'config', type: 'block', id: 'acme_main_menu', plugin: 'system_menu_block:main' });
-  assert.deepEqual(blocks[4]?.identity, { kind: 'config', type: 'block', id: 'acme_footer_menu', plugin: 'system_menu_block:footer' });
-  assert.deepEqual(['Home', 'About', 'Front'].map((l) => one(parts, l).identity), [
-    { kind: 'config', type: 'menu_link', id: `menu_link_content:${HOME}` },
-    { kind: 'config', type: 'menu_link', id: `menu_link_content:${LINK}` },
-    { kind: 'config', type: 'menu_link', id: 'standard.front_page' },
-  ], 'a menu link: its plugin id');
-  assert.deepEqual(['Main navigation', 'Footer navigation'].map((l) => one(parts, l).identity), [
-    { kind: 'config', type: 'menu', id: 'main' },
-    { kind: 'config', type: 'menu', id: 'footer' },
-  ], 'a menu: its machine name, apart from its links and the block that places it');
-  assert.equal(one(parts, 'Odd menu navigation').identity, undefined, 'a menu name no identity can carry: none, never a cleaned-up one');
-  assert.deepEqual(one(parts, 'Front page · Page').identity, { kind: 'config', type: 'view', id: 'frontpage:page_1' }, 'a view display');
-  assert.deepEqual(one(parts, 'article: Northwind news (teaser)').identity, { kind: 'entity', type: 'node', id: UUID.teaser, bundle: 'article', langcode: 'en' }, 'an entity a view shows');
+    // Configuration.
+    const blocks = parts.get('A block')!;
+    assert.deepEqual(blocks[0]?.identity, { kind: 'config', type: 'block', id: 'acme_content', plugin: 'system_main_block' }, 'a block placement: its id and plugin');
+    assert.equal(blocks[1]?.identity, undefined, 'a Layout Builder component told no entity and no UUID: no identity, never a placement’s');
+    assert.equal(blocks[2]?.identity, undefined, 'a plugin id with a space: no identity, never a cleaned-up one');
+    assert.deepEqual(blocks[3]?.identity, { kind: 'config', type: 'block', id: 'acme_main_menu', plugin: 'system_menu_block:main' });
+    assert.deepEqual(blocks[4]?.identity, { kind: 'config', type: 'block', id: 'acme_footer_menu', plugin: 'system_menu_block:footer' });
+    assert.deepEqual(['Home', 'About', 'Front'].map((l) => one(parts, l).identity), [
+      { kind: 'config', type: 'menu_link', id: `menu_link_content:${HOME}` },
+      { kind: 'config', type: 'menu_link', id: `menu_link_content:${LINK}` },
+      { kind: 'config', type: 'menu_link', id: 'standard.front_page' },
+    ], 'a menu link: its plugin id');
+    assert.deepEqual(['Main navigation', 'Footer navigation'].map((l) => one(parts, l).identity), [
+      { kind: 'config', type: 'menu', id: 'main' },
+      { kind: 'config', type: 'menu', id: 'footer' },
+    ], 'a menu: its machine name, apart from its links and the block that places it');
+    assert.equal(one(parts, 'Odd menu navigation').identity, undefined, 'a menu name no identity can carry: none, never a cleaned-up one');
+    assert.deepEqual(one(parts, 'Front page · Page').identity, { kind: 'config', type: 'view', id: 'frontpage:page_1' }, 'a view display');
+    assert.deepEqual(one(parts, 'article: Northwind news (teaser)').identity, { kind: 'entity', type: 'node', id: UUID.teaser, bundle: 'article', langcode: 'en' }, 'an entity a view shows');
 
-  // A menu shows wherever it is placed, so taking a link out asks first, even when its links are content.
-  const menus = (first.collections ?? []).filter((c) => c.kind === 'menu');
-  assert.deepEqual(menus.map((c) => [c.label, c.changes, c.shows]), [
-    ['Main navigation', 'content', 'everywhere the Main navigation shows'],
-    ['Footer navigation', 'configuration', 'everywhere the Footer navigation shows'],
-  ]);
+    // A menu shows wherever it is placed, so taking a link out asks first, even when its links are content.
+    const menus = (first.collections ?? []).filter((c) => c.kind === 'menu');
+    assert.deepEqual(menus.map((c) => [c.label, c.changes, c.shows]), [
+      ['Main navigation', 'content', 'everywhere the Main navigation shows'],
+      ['Footer navigation', 'configuration', 'everywhere the Footer navigation shows'],
+    ]);
 
-  // Nothing stable to name.
-  for (const label of ['Page', 'content', 'article: Sample (teaser)']) assert.equal(one(parts, label).identity, undefined, label);
-});
+    // Nothing stable to name.
+    for (const label of ['Page', 'content', 'article: Sample (teaser)']) assert.equal(one(parts, label).identity, undefined, label);
+  });
 
-test('the same part has the same key on every load, and a reordered reference keeps its own', (t) => {
-  if (!which('php', process.env.PATH ?? '')) { t.skip('PHP is not installed here'); return; }
-  const out = run();
-  const first = parseTrace(out.first)!;
-  const again = parseTrace(out.again)!;
-  assert.notEqual(first.id, again.id, 'two traces');
-  const keys = (trace: LiveTrace): string[] => trace.parts.flatMap((p) => (p.identity ? [identityKey(p.identity)] : []));
-  assert.deepEqual(keys(again).sort(), keys(first).sort(), 'every identified part is found again by its key');
-  assert.equal(new Set(keys(first)).size, keys(first).length, 'no two parts of a page share a key');
-  // The items of field_related were reordered: alpha's part moved, and its identity went with it.
-  const items = (trace: LiveTrace): (string | undefined)[] => trace.parts.filter((p) => p.label.startsWith('field_related #')).map((p) => (p.identity?.kind === 'entity' ? p.identity.item : undefined));
-  assert.deepEqual(items(first), [`ref:node:${UUID.alpha}`, `ref:node:${UUID.beta}`, undefined]);
-  assert.deepEqual(items(again), [`ref:node:${UUID.beta}`, `ref:node:${UUID.alpha}`, undefined], 'each item keeps what it refers to, wherever it now is');
-  const at = (trace: LiveTrace, item: string): number => trace.parts.findIndex((p) => p.identity?.kind === 'entity' && p.identity.item === item);
-  assert.ok(at(again, `ref:node:${UUID.alpha}`) > at(again, `ref:node:${UUID.beta}`), 'alpha is now after beta on the page');
-});
+  test(`on ${version}, the same part has the same key on every load, and a reordered reference keeps its own`, (t) => {
+    if (!which('php', process.env.PATH ?? '')) { t.skip('PHP is not installed here'); return; }
+    const out = run(version);
+    const first = parseTrace(out.first)!;
+    const again = parseTrace(out.again)!;
+    assert.notEqual(first.id, again.id, 'two traces');
+    const keys = (trace: LiveTrace): string[] => trace.parts.flatMap((p) => (p.identity ? [identityKey(p.identity)] : []));
+    assert.deepEqual(keys(again).sort(), keys(first).sort(), 'every identified part is found again by its key');
+    assert.equal(new Set(keys(first)).size, keys(first).length, 'no two parts of a page share a key');
+    // The items of field_related were reordered: alpha's part moved, and its identity went with it.
+    const items = (trace: LiveTrace): (string | undefined)[] => trace.parts.filter((p) => p.label.startsWith('field_related #')).map((p) => (p.identity?.kind === 'entity' ? p.identity.item : undefined));
+    assert.deepEqual(items(first), [`ref:node:${UUID.alpha}`, `ref:node:${UUID.beta}`, undefined]);
+    assert.deepEqual(items(again), [`ref:node:${UUID.beta}`, `ref:node:${UUID.alpha}`, undefined], 'each item keeps what it refers to, wherever it now is');
+    const at = (trace: LiveTrace, item: string): number => trace.parts.findIndex((p) => p.identity?.kind === 'entity' && p.identity.item === item);
+    assert.ok(at(again, `ref:node:${UUID.alpha}`) > at(again, `ref:node:${UUID.beta}`), 'alpha is now after beta on the page');
+  });
 
-test('a Layout Builder component is named by its UUID on the entity it is rendered for, with its plugin, wherever its section moves', (t) => {
-  if (!which('php', process.env.PATH ?? '')) { t.skip('PHP is not installed here'); return; }
-  const out = run();
-  assert.deepEqual(out.log, []);
-  const first = parseTrace(out.first)!;
-  const again = parseTrace(out.again)!;
-  const before = byLabel(first);
-  const after = byLabel(again);
-  const lb = (entity: string, uuid: string, plugin: string): PartIdentity => ({ kind: 'config', type: 'layout_builder_component', id: `node:${entity}/${uuid}`, plugin });
-  const spring = lb(UUID.landing, LB.spring, 'inline_block:card');
-  const summer = lb(UUID.landing, LB.summer, 'inline_block:card');
-  assert.deepEqual(one(before, 'Spring sale').identity, spring, 'its UUID, on the entity it is rendered for, and its plugin');
-  assert.deepEqual(one(before, 'Summer sale').identity, summer);
-  assert.deepEqual(one(before, 'Promo in a layout').identity, lb(UUID.landing, LB.promo, `block_content:${UUID.promo}`));
-  assert.deepEqual(one(before, 'Body').identity, lb(UUID.landing, LB.body, 'field_block:node:landing_page:body'));
+  test(`on ${version}, a Layout Builder component is named by its UUID on the entity it is rendered for, with its plugin, wherever its section moves`, (t) => {
+    if (!which('php', process.env.PATH ?? '')) { t.skip('PHP is not installed here'); return; }
+    const out = run(version);
+    assert.deepEqual(out.log, []);
+    const first = parseTrace(out.first)!;
+    const again = parseTrace(out.again)!;
+    const before = byLabel(first);
+    const after = byLabel(again);
+    const lb = (entity: string, uuid: string, plugin: string): PartIdentity => ({ kind: 'config', type: 'layout_builder_component', id: `node:${entity}/${uuid}`, plugin });
+    const spring = lb(UUID.landing, LB.spring, 'inline_block:card');
+    const summer = lb(UUID.landing, LB.summer, 'inline_block:card');
+    assert.deepEqual(one(before, 'Spring sale').identity, spring, 'its UUID, on the entity it is rendered for, and its plugin');
+    assert.deepEqual(one(before, 'Summer sale').identity, summer);
+    assert.deepEqual(one(before, 'Promo in a layout').identity, lb(UUID.landing, LB.promo, `block_content:${UUID.promo}`));
+    assert.deepEqual(one(before, 'Body').identity, lb(UUID.landing, LB.body, 'field_block:node:landing_page:body'));
 
-  // The sections swapped, Summer sale moved to another section and region, the hero's region was reordered: each
-  // component is found again by its key, and its part is where it now is.
-  const placed = (trace: LiveTrace): string[] => trace.parts.filter((p) => p.identity?.kind === 'config' && p.identity.type === 'layout_builder_component').map((p) => p.label);
-  assert.deepEqual(placed(first), ['Spring sale', 'Summer sale', 'Promo in a layout', 'Body', 'Title of Northwind news', 'Title of Acme notes']);
-  assert.deepEqual(placed(again), ['Promo in a layout', 'Summer sale', 'Body', 'Spring sale', 'Title of Northwind news', 'Title of Acme notes'], 'they moved');
-  for (const label of ['Spring sale', 'Summer sale', 'Promo in a layout', 'Body']) {
-    assert.equal(identityKey(one(after, label).identity!), identityKey(one(before, label).identity!), `${label} keeps its key`);
-  }
-  // A component inside one is within it, so it moves with it (named within the entity, it would be counted anew).
-  const priceIn = (trace: LiveTrace, label: string): PartIdentity | undefined => {
-    const host = one(byLabel(trace), label);
-    return trace.parts.find((p) => p.label === 'acme:price' && p.parent === host.id)?.identity;
-  };
-  assert.deepEqual(priceIn(first, 'Summer sale'), { kind: 'component', name: 'acme:price', within: identityKey(summer), nth: 0 });
-  assert.deepEqual(priceIn(again, 'Summer sale'), priceIn(first, 'Summer sale'), 'the price in Summer sale is the same part after the move');
+    // The sections swapped, Summer sale moved to another section and region, the hero's region was reordered: each
+    // component is found again by its key, and its part is where it now is.
+    const placed = (trace: LiveTrace): string[] => trace.parts.filter((p) => p.identity?.kind === 'config' && p.identity.type === 'layout_builder_component').map((p) => p.label);
+    assert.deepEqual(placed(first), ['Spring sale', 'Summer sale', 'Promo in a layout', 'Body', 'Title of Northwind news', 'Title of Acme notes']);
+    assert.deepEqual(placed(again), ['Promo in a layout', 'Summer sale', 'Body', 'Spring sale', 'Title of Northwind news', 'Title of Acme notes'], 'they moved');
+    for (const label of ['Spring sale', 'Summer sale', 'Promo in a layout', 'Body']) {
+      assert.equal(identityKey(one(after, label).identity!), identityKey(one(before, label).identity!), `${label} keeps its key`);
+    }
+    // A component inside one is within it, so it moves with it (named within the entity, it would be counted anew).
+    const priceIn = (trace: LiveTrace, label: string): PartIdentity | undefined => {
+      const host = one(byLabel(trace), label);
+      return trace.parts.find((p) => p.label === 'acme:price' && p.parent === host.id)?.identity;
+    };
+    assert.deepEqual(priceIn(first, 'Summer sale'), { kind: 'component', name: 'acme:price', within: identityKey(summer), nth: 0 });
+    assert.deepEqual(priceIn(again, 'Summer sale'), priceIn(first, 'Summer sale'), 'the price in Summer sale is the same part after the move');
 
-  // One plugin, two components: one kind, two parts.
-  assert.equal(kindKey(spring), 'plugin|layout_builder_component|inline_block:card');
-  assert.equal(kindKey(summer), kindKey(spring));
-  assert.notEqual(identityKey(summer), identityKey(spring));
-  // A block placed in a region and the same block placed in a layout: two things, and two kinds.
-  const region = one(before, 'Promo in a region').identity!;
-  const layout = one(before, 'Promo in a layout').identity!;
-  assert.deepEqual(region, { kind: 'config', type: 'block', id: 'acme_promo', plugin: `block_content:${UUID.promo}` });
-  assert.notEqual(identityKey(layout), identityKey(region));
-  assert.notEqual(kindKey(layout), kindKey(region));
-  // A default layout shared by two articles: one UUID in the section storage, a part on each, never one identity.
-  const titles = ['Title of Northwind news', 'Title of Acme notes'].map((l) => one(before, l).identity!);
-  assert.deepEqual(titles, [lb(UUID.teaser, LB.title, 'field_block:node:article:title'), lb(UUID.notes, LB.title, 'field_block:node:article:title')]);
-  assert.equal(kindKey(titles[0]!), kindKey(titles[1]!));
+    // One plugin, two components: one kind, two parts.
+    assert.equal(kindKey(spring), 'plugin|layout_builder_component|inline_block:card');
+    assert.equal(kindKey(summer), kindKey(spring));
+    assert.notEqual(identityKey(summer), identityKey(spring));
+    // A block placed in a region and the same block placed in a layout: two things, and two kinds.
+    const region = one(before, 'Promo in a region').identity!;
+    const layout = one(before, 'Promo in a layout').identity!;
+    assert.deepEqual(region, { kind: 'config', type: 'block', id: 'acme_promo', plugin: `block_content:${UUID.promo}` });
+    assert.notEqual(identityKey(layout), identityKey(region));
+    assert.notEqual(kindKey(layout), kindKey(region));
+    // A default layout shared by two articles: one UUID in the section storage, a part on each, never one identity.
+    const titles = ['Title of Northwind news', 'Title of Acme notes'].map((l) => one(before, l).identity!);
+    assert.deepEqual(titles, [lb(UUID.teaser, LB.title, 'field_block:node:article:title'), lb(UUID.notes, LB.title, 'field_block:node:article:title')]);
+    assert.equal(kindKey(titles[0]!), kindKey(titles[1]!));
 
-  // Nothing stable or plain to name it by: no identity, never a cleaned-up one.
-  for (const label of ['Odd component', 'Spaced component', 'Title of Sample']) assert.equal(one(before, label).identity, undefined, label);
-});
+    // Nothing stable or plain to name it by: no identity, never a cleaned-up one.
+    for (const label of ['Odd component', 'Spaced component', 'Title of Sample']) assert.equal(one(before, label).identity, undefined, label);
+  });
 
-test('the helper’s identity key is identityKey(), byte for byte', (t) => {
-  if (!which('php', process.env.PATH ?? '')) { t.skip('PHP is not installed here'); return; }
-  const { keys } = run();
-  assert.deepEqual(keys, SAMPLES.map(identityKey));
-});
+  test(`on ${version}, the helper’s identity key is identityKey(), byte for byte`, (t) => {
+    if (!which('php', process.env.PATH ?? '')) { t.skip('PHP is not installed here'); return; }
+    const { keys } = run(version);
+    assert.deepEqual(keys, SAMPLES.map(identityKey));
+  });
+}

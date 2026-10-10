@@ -104,8 +104,10 @@ edit is previewed the way it will be implemented:
   plain rule would lose ties. Whether the native rule wins is proven in Stage 3.
 
 Each change repaints at once, without a reload.
-- **Text** patches the traced node's text in place (plain text, or the field's
-  allowed markup through a schema-checked editor: no `contenteditable` free-for-all).
+- **Text** patches the traced node's text in place (plain text, typed on the
+  one element that holds only those words, `plaintext-only` while it is typed;
+  or the field's allowed markup through a schema-checked editor: no
+  `contenteditable` free-for-all).
 - **Images** swap the `src`/`srcset` of the traced image to a local preview of
   the new file, keeping its box, so layout changes show honestly.
 - **Tokens** override the theme's custom property (`--color-accent`,
@@ -132,7 +134,7 @@ its tokens, its breakpoints, whether it is a custom theme).
 
 | Edit | Native home | How |
 |---|---|---|
-| Text, image, alt (one instance) | The field, block or configuration that holds it, through core. Drupal: the Entity API with `validate()` and a new revision, one run of words inside formatted text spliced and checked through its own format, configuration through the Config API with typed validation or its translation's override, an inline block through its layout's section storage. WordPress: the block's own element in the post, template, template part, synced pattern or navigation menu that stores it (one block written alone with `WP_Block_Processor`, formatted words spliced as core splices bound rich text), words bound to post meta in that field, one placement's override in its `core/block`, an image's media-library alt through media REST | Deterministic, through the helper, with a base hash and a 409 if the site changed; each target says where it shows, and a Drupal default layout every entity of a bundle shares says its reach and asks first |
+| Text, image, alt (one instance) | The field, block or configuration that holds it, through core. Drupal: the Entity API with `validate()` and a new revision, one run of words inside formatted text spliced and checked through its own format, configuration through the Config API with typed validation or its translation's override, an inline block through its layout's section storage. WordPress: the block's own element in the post, template, template part, synced pattern or navigation menu that stores it (one block written alone with `WP_Block_Processor`, formatted words spliced as core splices bound rich text), words bound to post meta in that field, one placement's override in its `core/block`, an image's media-library alt through media REST. Last, words nothing on the page offers, where the content keeps them (the stored-words search): WordPress, the post's stored content (markup, shortcodes' settings and wrapped words, block settings, a block's settings and markup together), excerpt and custom fields (JSON token by token, saved lists as lists) through `wp_update_post()` or `update_metadata_by_mid()`; Drupal, the fields of the shown translation its other saves do not model, through the Entity API; Elementor's tree through its `Document::save()`, ACF's fields, rows, blocks and options through `acf_update_value()` | Deterministic, through the helper, with a base hash and a 409 if the site changed; each target says where it shows, and a Drupal default layout every entity of a bundle shares says its reach and asks first; a stored-words save is read back on the reloaded page and can be undone |
 | Token (site-wide colour, font, size, space) | The theme's token: `theme.json` presets (WordPress), the theme's `:root` custom properties or its SCSS variables (Drupal) | Deterministic for `theme.json` and plain CSS custom properties; agent for SCSS maps and Tailwind config |
 | Style, every instance of a component | That component's own source: its SDC `.css`, its SCSS partial, or its block stylesheet, found from the matched rule and source maps | Deterministic when the rule and file are plain CSS; agent otherwise |
 | Style, one instance | Where core stores one instance's style: WordPress block-support attributes (preset references first); Drupal, a field or component prop that already varies it | Deterministic for block supports; otherwise an agent adds a native hook (a modifier class from a field or a variant prop) and a rule in the component's CSS |
@@ -417,8 +419,21 @@ or the project.
      translation and item the target's identity names (its UUID, langcode and
      item, never the default language or the first item holding the same
      words; a target that names no field is refused), only over the version
-     the page showed (content saved since, a newer draft and any validation
-     violation, the workflow's included, are refused, saying why). A plain
+     the page showed (content saved since and a newer draft are refused,
+     saying why). Validation refuses it as Drupal's own form for that one
+     field would (a violation of the field or of the content as a whole),
+     and besides on any of the workflow's and any the change brings,
+     validated before and after the change and compared; a problem the
+     content already had in a field the edit does not touch is no reason to
+     refuse, and the answer's note says it. Where the page shows the
+     item's words with more around them that the field does not hold (a
+     template or a preprocess adds it), and the field's mark shows the
+     content is as the page rendered it (its revision, and its changed time
+     where it carries one), the edit is made on the field's own words: kept
+     when what is added stays unchanged around the new words, refused as
+     code when the change touches it; without that proof the refusal says
+     Wanigan cannot tell, and nothing is said to have changed since unless
+     it might have. The site's note on a save is in the answer. A plain
      value is the words; in formatted text one run of words inside one stored
      text node is spliced byte for byte and kept only when rendering the old
      and new text through the item's format differs in those words alone
@@ -503,6 +518,61 @@ or the project.
      holding them (named), a changed page, a target the trace says this user
      may not change, or a refusal from the site (passed on as the site said
      it) answers `route: 'none'`, with why.
+   - Last, words nothing the page offers to edit holds (on WordPress also
+     words in a post's content no target offers, not formatted text a target
+     holds; on Drupal words no template writes, and first for a marked field of
+     a type its word saves do not model) are looked for where the content the
+     edit's part belongs to keeps them: the helpers' `POST /_wanigan/words`
+     (`find` reads only; `save` re-finds the place and writes only there, over
+     the hash `find` took, 409 otherwise), contract in
+     `src/shared/live-stored-words.ts`. Both helpers share one matcher: words
+     compared as the page shows them (wptexturize's typography read as typed,
+     references read, whitespace folded), whole words, found exactly once as
+     text (a string value, a text node, a quoted attribute that is not an
+     address, class, id, style or script); JSON read token by token and
+     written back with that token's flags; a serialized list walked and
+     written back only when it round-trips byte for byte. WordPress searches
+     the post's stored content (markup, registered shortcodes' settings and
+     wrapped words, block settings, a block's settings and markup holding the
+     same words changed together as `serialize_block_attributes()` writes
+     them, JSON content as JSON), its excerpt and every custom field by
+     `meta_id`; it saves with `wp_update_post()` (a revision) only when core's
+     filters on saving content would store exactly those bytes, or
+     `update_metadata_by_mid()` slashed deeply with `clean_post_cache()` after,
+     as a user with `edit_post` and no live lock, new words through kses as
+     plain text. Drupal searches the shown translation's default revision,
+     every field its word saves do not model and that can hold words (string
+     and map properties, never references, choices, addresses, machine names
+     or a contributed module's own structures), and saves through the Entity
+     API with the other word saves' gates, as a new revision; a paragraph is
+     refused until its save goes through the page that holds it. Adapters for
+     plugins that keep words their own way register with the WordPress search,
+     each in its own class, used only when the plugin is active, never needed
+     by the core path: Elementor, a site adapter on the shared base
+     (docs/design/2026-10-10-site-adapters.md: what it calls is declared and
+     checked, a missing call refuses by name, a version past the verified
+     range saves and says so) (its elements tree, `Document::save()`, its
+     caches and revisions; a template the page shows found through its
+     `data-elementor-id` marks and asked first), ACF (fields, sub-field rows,
+     blocks and options through `acf_update_value()` after
+     `acf_validate_value()`; an option asked first), and known copies and
+     builders' own data that are never saved (Beaver Builder's and
+     SiteOrigin's layouts refused with whose they are, their content copies,
+     Bricks', Breakdance's and Elementor's data, Pagelayer's copy, an SEO
+     plugin's mirror). Found once, the page as it is is kept, the words saved,
+     the edit marked implemented on the site's ok, and the page reloaded and
+     read back; the answer says where the words are kept and through whose
+     save, whether the site keeps a revision, what a plugin's own copy may do,
+     and when the page still shows the old words says so first. Undo puts
+     the old value back by the token the site gave (ten minutes); the edit
+     stays implemented. Refusals name their cause: nowhere ("the site does not
+     keep these words in this content: code or another content item makes
+     them"), more than once (named), only in code, made from a template
+     (`%%title%%`, `{{post_title}}`, `[node:title]`), kept in the site's
+     settings (an option, not changed from here yet), or changed since. Still
+     not saved: words a plugin computes and never stores, a builder's own
+     cache (said, not cleared, outside the adapters), words in another
+     content item than the one the trace names, and options outside ACF's.
    - Just before words are saved, and when a style, a token or formatted
      words are handed to an agent (once: asking again never keeps a page
      that may already have the agent's change), the page the edit is on is
@@ -544,12 +614,26 @@ or the project.
    step 4 and other pages are not checked.
 
 **The window** shows a tray of the project's edits (before and after, the
-page each is on, its state and verdict, fragile ones said so), per-edit
-discard, undo and redo, and the style panel and "Retype the words", which now
-make layer edits with a scope (`this`, every instance of its `kind`, or a
-token for the site) instead of trying values on the page. A style edit's
-"Make it real" goes to an agent as intent, as before; a text edit's saves
-through the helper and then verifies.
+page each is on, its state and verdict, fragile ones said so) and per-edit
+discard, undo and redo. Edits are made where they show, as a site builder
+makes them. "Retype the words" (E on a part that is only words, or a
+double-click on the chosen part's words in the page) makes that element
+editable where it is, through the page script (`LiveBridge.layerType`): plain
+text, the caret at its end, every keystroke the page itself. It is keyed
+first (`layerTarget()`), so the edit names the words the site rendered. Enter
+or clicking away keeps the words as a text edit (`live.layerAdd`, scope
+`this`), which the layer goes on showing without a flicker; Escape puts back
+exactly what was there, its text nodes and the helper's part marks; a
+navigation ends it as cancelled. Meanwhile the status line says it is typing,
+with Keep and Put back, the live view's keys stay off the page, and links
+around the words do not act. "Retype in a box" makes the same edit from the
+side panel, for the keyboard and screen readers. The style panel shows each
+value on the page as its control moves, as one preview the page script owns
+(`LiveBridge.layerTry`) on the element or every one of its kind, through a
+sheet that outranks the layer's own rules, and keeps it as a layer edit with
+a scope (`this`, every instance of its `kind`, or a token for the site) on
+Show it on the page. A style edit's "Make it real" goes to an agent as
+intent, as before; a text edit's saves through the helper and then verifies.
 
 ## Proven, and what it changed
 

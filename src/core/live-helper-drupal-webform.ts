@@ -228,6 +228,10 @@ final class Webform implements AdapterInterface {
       return;
     }
     $variables['message']['#wanigan_live_webform'] = ['webform' => (string) $webform->id(), 'setting' => 'confirmation_message', 'shown' => ['confirmation_message' => $text]];
+    // A template variable is rendered on its own, outside the page's render
+    // arrays: on a core traced through hooks, it is handed the callbacks
+    // that find its part (nothing, on any other).
+    \Drupal\wanigan_live\Trace\PartsByHooks::attach($variables['message']);
   }
 
   /**

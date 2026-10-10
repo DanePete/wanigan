@@ -76,8 +76,12 @@ const live: LiveBridge = {
   layerShow: (on) => ipcRenderer.invoke('live:layerShow', on) as ReturnType<LiveBridge['layerShow']>,
   layerTarget: () => ipcRenderer.invoke('live:layerTarget') as ReturnType<LiveBridge['layerTarget']>,
   layerImplement: (id) => ipcRenderer.invoke('live:layerImplement', id) as ReturnType<LiveBridge['layerImplement']>,
+  layerUndo: (id) => ipcRenderer.invoke('live:layerUndo', id) as ReturnType<LiveBridge['layerUndo']>,
   layerVerify: (id, options) => ipcRenderer.invoke('live:layerVerify', id, options ?? null) as ReturnType<LiveBridge['layerVerify']>,
   layerPicture: (path) => ipcRenderer.invoke('live:layerPicture', path) as ReturnType<LiveBridge['layerPicture']>,
+  layerType: () => ipcRenderer.invoke('live:layerType') as ReturnType<LiveBridge['layerType']>,
+  layerTypeEnd: (keep) => ipcRenderer.invoke('live:layerTypeEnd', keep === true) as Promise<void>,
+  layerTry: (values, scope) => ipcRenderer.invoke('live:layerTry', values ?? null, scope ?? 'this') as Promise<number>,
   // The Go to launcher (src/main/live-find.ts).
   find: (projectId, query, options) => ipcRenderer.invoke('live:find', projectId, query ?? '', options ?? null) as ReturnType<LiveBridge['find']>,
   findHere: (projectId) => ipcRenderer.invoke('live:findHere', projectId) as ReturnType<LiveBridge['findHere']>,

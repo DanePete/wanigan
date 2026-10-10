@@ -11,11 +11,11 @@ export const WORDPRESS_ADAPTERS_SOURCE = String.raw`
  * plus a save, and Wanigan_Live_Adapters::status() reads the declaration without building anything.
  */
 abstract class Wanigan_Live_Adapter {
-	/** A stable id, such as 'elementor'. */
+	/** A stable id, such as 'acme-builder'. */
 	abstract public static function id(): string;
 
 	/**
-	 * The plugin as its owner knows it: array('name' => 'Elementor', 'active' => bool, 'version' => ?string), the
+	 * The plugin as its owner knows it: array('name' => 'Acme Builder', 'active' => bool, 'version' => ?string), the
 	 * version as the plugin itself reports it (its own constant or function), null when it does not say.
 	 */
 	abstract public static function extension(): array;

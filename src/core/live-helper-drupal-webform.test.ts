@@ -45,6 +45,7 @@ namespace Drupal\Component\Serialization {
   }
 }
 namespace Drupal\Core\Form { interface FormStateInterface {} }
+namespace Drupal\Core\Security { interface TrustedCallbackInterface {} }
 namespace Drupal\Core\Entity { interface EntityInterface {} interface FieldableEntityInterface extends EntityInterface {} interface ContentEntityInterface extends EntityInterface {} }
 namespace Drupal\Core\Field { interface FieldItemInterface {} interface FieldItemListInterface {} }
 namespace Drupal\wanigan_live\Edit { final class Moves { public static function levelOrder($menu, $parent) { return []; } } }
@@ -245,7 +246,7 @@ namespace {
   }
   final class FormState implements Drupal\Core\Form\FormStateInterface {}
 
-  foreach (['Trace/Recorder', 'Trace/Frame', 'Trace/FiberState', 'Trace/Source', 'Trace/Preview', 'Trace/Describe', 'Trace/Marks', 'Trace/Identity', 'Trace/TraceBuilder', 'Edit/Targets', 'Adapter/AdapterInterface', 'Adapter/Adapters', 'Adapter/Webform'] as $c) { require getenv('WL_HELPER') . '/src/' . $c . '.php'; }
+  foreach (['Trace/Recorder', 'Trace/Frame', 'Trace/FiberState', 'Trace/Source', 'Trace/Preview', 'Trace/Describe', 'Trace/Marks', 'Trace/Identity', 'Trace/TraceBuilder', 'Trace/PartsByHooks', 'Edit/Targets', 'Adapter/AdapterInterface', 'Adapter/Adapters', 'Adapter/Webform'] as $c) { require getenv('WL_HELPER') . '/src/' . $c . '.php'; }
   require getenv('WL_HELPER') . '/wanigan_live.module';
 
   /** One element as the renderer leaves it (TraceRenderer::doRender()): its frame, its output, and the trace's part. */
@@ -382,6 +383,17 @@ const SCENARIOS = String.raw`
   World::reset();
   World::$config['webform.webform.contact']['settings']['confirmation_message'] = '';
   $out['confirmationDefault'] = confirmation(['#markup' => 'New submission added to Contact Acme.'])[0]['edits'];
+  // Where a core is traced through hooks, the message (a template variable) is handed the callbacks that find its part.
+  foreach (['hooked' => TRUE, 'unhooked' => FALSE] as $name => $byHooks) {
+    World::reset();
+    $traced = new Recorder('/webform/contact/confirmation');
+    $traced->byHooks = $byHooks;
+    Recorder::$on = $traced;
+    $vars = ['webform' => new Drupal\webform\Entity\Webform('contact'), 'message' => ['#markup' => 'Thanks, we will be in touch.']];
+    wanigan_live_preprocess_webform_confirmation($vars);
+    Recorder::$on = NULL;
+    $out[$name] = $vars['message']['#pre_render'] ?? NULL;
+  }
   // A site default with markup and no token: saved on this form, its tags kept.
   World::reset();
   World::$config['webform.webform.contact']['settings']['confirmation_message'] = '';
@@ -590,6 +602,7 @@ test('the confirmation message is offered where the confirmation shows it, and t
   assert.deepEqual([answer[0], settings.confirmation_message], [200, 'Thanks! We will write soon.'], 'through setSetting()');
   const fallback = (out.confirmationDefault as EditTarget[])[0]!;
   assert.match(fallback.why ?? '', /^A token makes these words \(\[webform:title\]\)/);
+  assert.deepEqual([out.hooked, out.unhooked], [[['Drupal\\wanigan_live\\Trace\\PartsByHooks', 'preRender']], null], 'handed the hooks’ callbacks only where the page is traced through hooks');
   // A default with markup: offered as HTML, saved on this form with its tags, the site's default as it was.
   const [[own], saved, mine, site] = out.confirmationOwn as [EditTarget[], Answer, string, string];
   assert.deepEqual([own!.value, (own!.schema as { contentMediaType?: string }).contentMediaType, own!.why], ['<p>Thanks for writing.</p>', 'text/html', undefined]);

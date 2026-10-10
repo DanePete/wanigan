@@ -1037,6 +1037,8 @@ final class Moves {
       'menu' => $this->undoLinks($record),
       'display' => $this->undoDisplay($record),
       'layout' => $this->undoLayout($record),
+      // Words saved where the content kept them (Save\StoredWords): the old value, only while it holds what was written.
+      'stored' => \Drupal\wanigan_live\Save\StoredWords::undo($record),
       default => [422, self::refuse('That cannot be undone.')],
     };
   }
