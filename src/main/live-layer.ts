@@ -25,8 +25,10 @@
 //   the helper splices and checks through the text's own format), through `POST /_wanigan/save`, the window's own
 //   helperSave path, to exactly the content, translation and item the edit's target names (saveTarget): never the
 //   default language, never the first item that holds the same words; a save the helper answers with a confirm token
-//   (words in a Drupal default layout every entity of a bundle shares, said with how far it reaches) is made when the
-//   edit is made real again, with that token. Otherwise through the one edit target of the page's trace that holds
+//   (words in a Drupal default layout every entity of a bundle shares, or in a Paragraphs library item every page using
+//   it shows, said with how far it reaches) is made when the edit is made real again, with that token. A save that
+//   moved the page shown (the helper answers the saved content's address after the save and before) goes to the new
+//   address instead of reloading the old one. Otherwise through the one edit target of the page's trace that holds
 //   exactly those words (wordsTarget(): a title, an excerpt, a string meta, a setting, a menu link's text, a
 //   WordPress block's rich text, a Drupal block's title or a run of a view's words), saved by the window's own schema
 //   save (`POST /_wanigan/edit/<id>`, live-edit-save.ts): how WordPress's helper saves a field, and both helpers save
@@ -84,7 +86,7 @@ import type { LiveEditSaved, LiveTraceAnswer } from '../shared/live-lens.ts';
 import { fragileWhy, kindWords } from '../shared/layer-words.ts';
 import { TRACE_ID, identityKey, kindKey, type EditTarget, type LiveTrace, type PartIdentity, type TracePart } from '../shared/live-trace.ts';
 import { MARKUP, asWords, decodeRefs, retypeRich } from '../shared/rich-text.ts';
-import { sameSite, type LiveSite } from '../shared/live.ts';
+import { movedTo, sameSite, type LiveSite } from '../shared/live.ts';
 import type { Method } from '../shared/protocol.ts';
 import { RENDER_MS, deadline, folderOf, inHiddenWindow, type HiddenPage } from './live-capture.ts';
 import type { HelperSaved, LiveCurrent, LiveViewHooks, SaveAt } from './live-view.ts';
@@ -1165,8 +1167,13 @@ export function wireLiveLayer(options: LiveLayerOptions): { hooks: LiveViewHooks
       if (!saved.ok) return none(saved.error ?? 'The site did not save it.');
       const refused = await mark(cur.projectId, id, 'implemented');
       // The site now has the words, whatever the layer recorded: the page shows them as it renders them, and the layer
-      // applies again after the load.
-      if (!here.cur.webContents.isDestroyed()) here.cur.webContents.reloadIgnoringCache();
+      // applies again after the load. A save that moved the page shown (a new alias, written inside the save) goes to
+      // its new address, rather than reloading one that now answers 404 or a redirect.
+      if (!here.cur.webContents.isDestroyed()) {
+        const next = movedTo(saved, here.url);
+        if (next && sameSite(here.cur.base, next)) void here.cur.webContents.loadURL(next).catch(() => {});
+        else here.cur.webContents.reloadIgnoringCache();
+      }
       if (refused) return none(inSiteUnmarked(saved.revision ?? null, refused));
       return { ok: true, id, state: 'implemented', revision: saved.revision ?? null };
     }

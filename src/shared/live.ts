@@ -320,6 +320,28 @@ export function sameSite(a: string, b: string): boolean {
   }
 }
 
+/** A path on the site's own origin as a helper answers one, or null. */
+export const sitePath = (v: unknown): string | null => (typeof v === 'string' && /^\/(?![/\\])[^\s]{0,2047}$/.test(v) ? v : null);
+
+/**
+ * Where the view goes after a helper save: the saved content's new address, when the page shown is that content's own
+ * page as it was addressed before the save, and the save moved it (the old address then answers 404, or a redirect
+ * where Redirect is on). Null to reload where it is: nothing moved, or the page is not the saved content's own (a
+ * paragraph library item, a block, content shown on another page).
+ */
+export function movedTo(saved: { ok: boolean; url?: string | null; was?: string | null }, current: string): string | null {
+  if (!saved.ok || !saved.url || !saved.was || saved.url === saved.was) return null;
+  let here: URL;
+  try { here = new URL(current); } catch { return null; }
+  const same = (a: string, b: string): boolean => { try { return decodeURI(a) === decodeURI(b); } catch { return a === b; } };
+  if (!same(here.pathname, saved.was)) return null;
+  let next: URL;
+  try { next = new URL(saved.url, here.origin); } catch { return null; }
+  if (next.origin !== here.origin) return null;
+  if (!next.search) next.search = here.search;
+  return next.toString();
+}
+
 /* ── ddev ──────────────────────────────────────────────────────────────── */
 
 type Yaml = Record<string, string | string[]>;

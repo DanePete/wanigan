@@ -119,8 +119,11 @@ function wire(over: {
   const posts: { path: string; body: unknown }[] = [];
   const sheets: { inserted: string[]; origins: unknown[]; removed: string[]; reloads: number } = { inserted: [], origins: [], removed: [], reloads: 0 };
   let url = over.url ?? `${BASE}paddling`;
+  /** Where the view was sent (loadURL): a save that moved its page. */
+  const loads: string[] = [];
   const webContents = {
     id: 7, getURL: () => url, isDestroyed: () => false,
+    loadURL: async (to: string) => { loads.push(to); url = to; },
     insertCSS: async (css: string, options?: { cssOrigin?: string }) => { sheets.inserted.push(css); sheets.origins.push(options?.cssOrigin); return `key-${sheets.inserted.length}`; },
     removeInsertedCSS: async (key: string) => { sheets.removed.push(key); },
     reloadIgnoringCache: () => { sheets.reloads++; },
@@ -189,7 +192,7 @@ function wire(over: {
   });
   const invoke = <T>(channel: string, ...args: unknown[]): Promise<T> => (handlers.get(channel) as (...a: unknown[]) => Promise<T>)({}, ...args);
   return {
-    page, marks, saves, posts, sheets, renders, befores, order, dataDir, wired,
+    page, marks, saves, posts, sheets, renders, befores, order, dataDir, wired, loads,
     /** What was kept of the page as it was for an edit, as verifyNow reads it. */
     kept: (id: string): BeforeKept | null => { try { return beforeKept(JSON.parse(readFileSync(join(dataDir, 'live-layer', folderOf('p1'), id, 'before', 'meta.json'), 'utf8'))); } catch { return null; } },
     setEdits: (next: LayerEdit[]) => { edits = next; },
@@ -1612,6 +1615,25 @@ test('Drupal: words a block’s title, a view’s header or a menu link keeps ar
     assert.equal(w.posts.length, 2, 'nothing is sent for words kept in code');
     assert.deepEqual(w.saves, [], 'none of them is a field’s save');
   } finally { w.done(); }
+});
+
+test('Drupal: a save that moved the page shown (a new alias) takes the view to its new address; any other save reloads it', async () => {
+  const retyped = edit({ label: 'Title', page: '/fr/pagayer-101', change: { type: 'text', value: 'Pagayer 102' }, target: { part: title(), inner: null, selector: null, textHash: layerTextHash('Pagayer 101') } });
+  const moved = wire({ edits: [retyped], url: `${BASE}fr/pagayer-101`, helper: () => ({ ok: true, error: null, label: 'Pagayer 102', revision: '42', url: '/fr/pagayer-102', was: '/fr/pagayer-101' }) });
+  try {
+    moved.page.parts = { p6: { '': [words('Pagayer 101', 'node:12:title:string:fr')] } };
+    await moved.apply();
+    assert.deepEqual(await moved.implement(retyped.id), { ok: true, id: retyped.id, state: 'implemented', revision: '42' });
+    assert.deepEqual([moved.loads, moved.sheets.reloads], [['https://acme.example.test/fr/pagayer-102'], 0], 'to the new address, never a reload of the old one');
+  } finally { moved.done(); }
+  // Words in a library item every page using it shows: its address is not this page's, so the page reloads where it is.
+  const shared = wire({ edits: [{ ...retyped, state: 'draft' }], url: `${BASE}fr/pagayer-101`, helper: () => ({ ok: true, error: null, label: 'Spring hours', revision: '301', url: '/admin/content/paragraphs/1', was: '/admin/content/paragraphs/1' }) });
+  try {
+    shared.page.parts = { p6: { '': [words('Pagayer 101', 'node:12:title:string:fr')] } };
+    await shared.apply();
+    assert.equal((await shared.implement(retyped.id)).ok, true);
+    assert.deepEqual([shared.loads, shared.sheets.reloads], [[], 1]);
+  } finally { shared.done(); }
 });
 
 test('Drupal: words in a default layout are saved when made real again, with the token the site’s first answer gave', async () => {

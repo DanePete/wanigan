@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { componentProps, ddevInfo, ddevPlatform, liveUrl, readDdevYaml, regionMadeBy, sameRegion, sameSite, type LiveRegion } from './live.ts';
+import { componentProps, ddevInfo, ddevPlatform, liveUrl, movedTo, readDdevYaml, regionMadeBy, sameRegion, sameSite, sitePath, type LiveRegion } from './live.ts';
 
 /** Shaped like real ddev configs, comments and nested blocks included. */
 const NORTHWIND = `# ddev config
@@ -67,6 +67,24 @@ test('an address: http(s), no credentials, no fragment; a bare host means https'
   assert.ok(sameSite('https://northwind.ddev.site/', 'http://northwind.ddev.site/user'), 'http and https of one host');
   assert.ok(!sameSite('https://northwind.ddev.site/', 'https://evil.example/'));
   assert.ok(!sameSite('http://localhost:3000/', 'http://localhost:5173/'), 'another port is another site');
+});
+
+test('a save that moved the page shown goes to its new address; anything else reloads where it is', () => {
+  const page = 'https://northwind.ddev.site/about-acme?tab=team#top';
+  // A new title gave the content a new alias inside the save (Pathauto): the old address now answers 404 or a redirect.
+  assert.equal(movedTo({ ok: true, url: '/about-northwind', was: '/about-acme' }, page), 'https://northwind.ddev.site/about-northwind?tab=team');
+  assert.equal(movedTo({ ok: true, url: '/fr/a-propos', was: '/fr/%C3%A0-propos' }, 'https://northwind.ddev.site/fr/%C3%A0-propos'), 'https://northwind.ddev.site/fr/a-propos', 'compared as decoded paths');
+  for (const [saved, why] of [
+    [{ ok: true, url: '/about-acme', was: '/about-acme' }, 'nothing moved'],
+    [{ ok: true, url: '/admin/content/paragraphs/1', was: '/admin/content/paragraphs/1' }, 'a library item saved from a page using it'],
+    [{ ok: true, url: '/node/12-new', was: '/node/12' }, 'the page shown is not the saved content’s own address'],
+    [{ ok: false, url: '/about-northwind', was: '/about-acme' }, 'nothing was saved'],
+    [{ ok: true, url: null, was: '/about-acme' }, 'no address after'],
+    [{ ok: true }, 'a helper that said neither'],
+  ] as const) assert.equal(movedTo(saved, page), null, why);
+  assert.equal(movedTo({ ok: true, url: 'https://evil.example/x', was: '/about-acme' }, page), null, 'never to another origin');
+  assert.equal(sitePath('/about-acme'), '/about-acme');
+  for (const bad of ['//evil.example/x', '/\\evil.example', 'https://northwind.ddev.site/x', 'about', '/a b', 42, null]) assert.equal(sitePath(bad), null, String(bad));
 });
 
 test('a region was made by an edited file when the absolute path ends with the site’s own path', () => {
