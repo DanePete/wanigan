@@ -88,11 +88,21 @@ export function wireLiveDevtools(options: {
     dock = v;
     dockPainted = false;
     dockPlace = null;
-    // Shown once DevTools has loaded and drawn twice (at most 2 s on, for a frontend that never says).
+    // Shown once DevTools has drawn itself in its theme: built, and on a dark system its background dark (it paints a
+    // light page first and applies its theme after, which showed as three seconds of white panel in a dark window,
+    // take devtools-d2). At most 3 s on, for a frontend that never says.
     const shown = (): void => { if (dock !== v || dockPainted) return; dockPainted = true; place(); };
-    const painted = 'new Promise((done) => { const t0 = Date.now(); const look = () => (document.body && document.body.childElementCount > 0) || Date.now() - t0 > 1500 ? requestAnimationFrame(() => requestAnimationFrame(() => done(true))) : setTimeout(look, 30); look(); })';
+    const painted = `new Promise((done) => {
+      const t0 = Date.now();
+      const dark = matchMedia('(prefers-color-scheme: dark)').matches;
+      const lum = (el) => { const m = /\\d+(\\.\\d+)?/g; const c = (getComputedStyle(el).backgroundColor.match(m) || []).map(Number); return c.length >= 3 && (c[3] ?? 1) > 0 ? 0.299 * c[0] + 0.587 * c[1] + 0.114 * c[2] : null; };
+      const themed = () => !dark || [document.body, document.documentElement].some((el) => el && lum(el) !== null && lum(el) < 128);
+      const look = () => (document.body && document.body.childElementCount > 0 && themed()) || Date.now() - t0 > 2500
+        ? requestAnimationFrame(() => requestAnimationFrame(() => done(true))) : setTimeout(look, 40);
+      look();
+    })`;
     wc.once('did-finish-load', () => { void wc.executeJavaScript(painted).catch(() => null).finally(shown); });
-    setTimeout(shown, 2000);
+    setTimeout(shown, 3000);
     page.setDevToolsWebContents(wc);
     page.openDevTools({ mode: 'detach', activate: false });
   };
