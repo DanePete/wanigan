@@ -13,6 +13,7 @@ const live: LiveBridge = {
   cover: (covered) => ipcRenderer.invoke('live:cover', covered) as Promise<string | null>,
   reload: (hard) => ipcRenderer.invoke('live:reload', hard === true) as Promise<void>,
   css: () => ipcRenderer.invoke('live:css') as Promise<number>,
+  hideAdmin: (hide) => ipcRenderer.invoke('live:hideAdmin', hide) as Promise<boolean>,
   go: (url) => ipcRenderer.invoke('live:go', url) as Promise<boolean>,
   back: () => ipcRenderer.invoke('live:back') as Promise<void>,
   forward: () => ipcRenderer.invoke('live:forward') as Promise<void>,

@@ -254,6 +254,12 @@ type AddMode = 'library' | 'page';
 const ARRANGE_KEY = 'wanigan.live.arrange';
 const STRUCTURE_KEY = 'wanigan.live.structure';
 const readArrange = (): boolean => { try { return localStorage.getItem(ARRANGE_KEY) !== '0'; } catch { return true; } };
+// The site's own admin bars, hidden in the view: off until the owner asks, then kept for every site and page.
+const ADMIN_KEY = 'wanigan.live.hideAdmin';
+const readHideAdmin = (): boolean => { try { return localStorage.getItem(ADMIN_KEY) === '1'; } catch { return false; } };
+/** What the admin-bar switch hides, by platform (shared/live-admin.ts hides all three kinds whichever it is). */
+const adminBarsOf = (platform: string | null): string => (platform === 'drupal' ? 'Drupal’s admin toolbar and sidebar'
+  : platform === 'wordpress' ? 'WordPress’s admin bar' : 'the site’s admin bars');
 const readOpen = (key: string): boolean => { try { return localStorage.getItem(key) !== '0'; } catch { return true; } };
 const keepOpen = (key: string, open: boolean): void => { try { localStorage.setItem(key, open ? '1' : '0'); } catch { /* lasts this window */ } };
 /** Under this width the live view shows one side panel at a time, so the page keeps the most room. */
@@ -406,6 +412,13 @@ function LiveShown({ site, url, project, follow, card, compact, following, shots
   usePaintLens(lensed, only);
   const [editing, setEditing] = useState<EditRequest | null>(null);
   const [arrangeOn, setArrangeOn] = useState(readArrange);
+  const [hideAdmin, setHideAdmin] = useState(readHideAdmin);
+  // Main keeps it for every page the view loads; told again whenever the window opens a view.
+  useEffect(() => { void live.hideAdmin?.(hideAdmin).catch(() => {}); }, [live, hideAdmin]);
+  const toggleAdmin = (): void => setHideAdmin((v) => {
+    try { localStorage.setItem(ADMIN_KEY, v ? '0' : '1'); } catch { /* lasts this window */ }
+    return !v;
+  });
   const stageRef = useRef<HTMLDivElement>(null);
   const deviceRef = useRef<HTMLDivElement>(null);
   // How this works (components/live/HowLiveWorks.tsx): the toolbar's button and the palette open it. A session's split view has none.
@@ -1073,6 +1086,11 @@ function LiveShown({ site, url, project, follow, card, compact, following, shots
           ) : null}
           {!compact ? (
             <IconButton icon="eye" label="Show the page without the layer" pressed={!layer.on} disabled={!!env || !live} onClick={() => void layer.show(!layer.on)} />
+          ) : null}
+          {!compact ? (
+            <IconButton icon="menu" label={hideAdmin ? `Show ${adminBarsOf(site.platform)}` : `Hide ${adminBarsOf(site.platform)}`} pressed={hideAdmin}
+              data-tip={`${hideAdmin ? 'Show' : 'Hide'} ${adminBarsOf(site.platform)}: the page as a visitor sees it, and you stay logged in`}
+              disabled={!hasScript} onClick={toggleAdmin} />
           ) : null}
           {!compact ? (
             <span className="live-commit" data-tour="live-edits">

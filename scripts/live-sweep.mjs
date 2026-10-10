@@ -51,6 +51,7 @@ import { LIVE_PAGE_KEYS } from '../src/shared/live-keys.ts';
 import { compileLayer, trySheet } from '../src/shared/design-layer.ts';
 import { fitProblems } from './ui-fit.mjs';
 import { pageScriptSource } from '../src/main/live-page-source.ts';
+import { ADMIN_ATTR, ADMIN_CSS } from '../src/shared/live-admin.ts';
 
 const out = join(root, '.artifacts', 'live');
 
@@ -362,6 +363,21 @@ try {
       if (bar.voice !== 0) fail(t('layout: Voice has no empty place among the tools, or something is drawn there'));
       for (const want of [/^Lens$/, /^Phone/, /^Tablet/, /^Full width/, /^Show the page without the layer$/, /^Edits: the design layer$/, /^Make real/, /^More/, /^How this works$/]) {
         if (!bar.end.some((c) => want.test(c))) fail(t(`layout: the bar's end has nothing like ${want} (${bar.end.join(' | ')})`));
+      }
+      // The site's admin bars: one switch, said for the platform, kept for the next view (Drupal here).
+      {
+        const hide = page.locator('.live-bar-end button[aria-label="Hide Drupal’s admin toolbar and sidebar"]');
+        if (!(await hide.count())) fail(t(`layout: no switch to hide Drupal’s admin bars (${bar.end.join(' | ')})`));
+        else {
+          const k = await mark();
+          await hide.click();
+          await page.waitForFunction((n) => window.__wgLive.calls.slice(n).includes('hideAdmin true'), k, { timeout: 2000 }).catch(() => fail(t('layout: hiding the admin bars did not ask the view to')));
+          const shown = page.locator('.live-bar-end button[aria-label="Show Drupal’s admin toolbar and sidebar"]');
+          if ((await shown.getAttribute('aria-pressed').catch(() => null)) !== 'true') fail(t('layout: the admin-bar switch does not say it is on'));
+          if ((await page.evaluate(() => localStorage.getItem('wanigan.live.hideAdmin'))) !== '1') fail(t('layout: hiding the admin bars is not kept for the next view'));
+          await shown.click();
+          await page.waitForFunction((n) => window.__wgLive.calls.slice(n).includes('hideAdmin false'), k, { timeout: 2000 }).catch(() => fail(t('layout: showing the admin bars again did not ask the view to')));
+        }
       }
       for (const gone of ['Site settings', 'Open in the default browser', 'Go to a page of the site (Shift+Space)']) {
         if (await page.$(`.live-bar button[aria-label="${gone}"]`)) fail(t(`layout: "${gone}" is still a button of its own in the bar`));
@@ -1908,6 +1924,36 @@ try {
     await bare.addScriptTag({ content: script }).catch(() => {});
     if (!errors.some((m) => /already been declared/.test(m))) fail('page script: the bare script sent twice no longer throws (did its build change?), so "sent twice" above proves nothing: update this check');
     await bare.close();
+  }
+  {
+    // The admin-bar sheet on a made-up page carrying all three kinds, as each core lays them out: inert without the
+    // root's attribute, and with it every bar gone and every offset it caused undone. (Main inserts it as a user-origin
+    // sheet, stronger still; here it is an author sheet, which proves the selectors and their weight.)
+    const admin = await browser.newPage({ viewport: { width: 1200, height: 700 } });
+    await admin.setContent(`<!doctype html><html><head><style>@media screen { html { margin-top: 32px !important; } } body { margin: 0; }</style></head>
+<body class="toolbar-fixed toolbar-horizontal admin-bar" style="padding-top: 79px">
+<div id="wpadminbar" style="position:fixed;top:0;left:0;right:0;height:32px">WordPress</div>
+<div id="toolbar-administration">Toolbar</div>
+<aside class="top-bar" data-drupal-admin-styles data-offset-top style="position:fixed;top:0;height:64px">Top bar</aside>
+<aside class="admin-toolbar" style="position:fixed;left:0;top:0;bottom:0;width:264px">Sidebar</aside>
+<div class="dialog-off-canvas-main-canvas" style="margin-inline-start: var(--drupal-displace-offset-left, 264px)">
+<header id="site" style="position:sticky;top:var(--drupal-displace-offset-top, 0px)">Acme</header></div>
+<script>document.documentElement.style.setProperty('--drupal-displace-offset-top', '64px'); document.documentElement.style.setProperty('--drupal-displace-offset-left', '264px');</script>
+</body></html>`);
+    await admin.addStyleTag({ content: ADMIN_CSS });
+    const read = () => admin.evaluate(() => {
+      const cs = (sel, prop) => getComputedStyle(document.querySelector(sel)).getPropertyValue(prop);
+      return { bars: ['#wpadminbar', '#toolbar-administration', 'aside.top-bar', 'aside.admin-toolbar'].map((sel) => cs(sel, 'display')),
+        html: cs('html', 'margin-top'), body: cs('body', 'padding-top'), main: cs('.dialog-off-canvas-main-canvas', 'margin-left'), header: cs('#site', 'top') };
+    });
+    const before = await read();
+    if (before.bars.includes('none') || before.html !== '32px' || before.body !== '79px' || before.main !== '264px' || before.header !== '64px') fail(`admin bars: the sheet changed the page before it was switched on ${JSON.stringify(before)}`);
+    await admin.evaluate((a) => document.documentElement.toggleAttribute(a, true), ADMIN_ATTR);
+    const hidden = await read();
+    if (hidden.bars.some((d) => d !== 'none') || hidden.html !== '0px' || hidden.body !== '0px' || hidden.main !== '0px' || hidden.header !== '0px') fail(`admin bars: switched on, something stayed ${JSON.stringify(hidden)}`);
+    await admin.evaluate((a) => document.documentElement.toggleAttribute(a, false), ADMIN_ATTR);
+    if (JSON.stringify(await read()) !== JSON.stringify(before)) fail('admin bars: switched off, the page did not come back as it was');
+    await admin.close();
   }
   const regions = await page.evaluate(() => window.__wl.scan());
   const at = Object.fromEntries(regions.filter((r) => r.part).map((r) => [r.part, r.index]));

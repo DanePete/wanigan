@@ -184,6 +184,8 @@ export interface LiveBridge {
   reload(hard?: boolean): Promise<void>;
   /** Fetch the page's stylesheets again in place; reloads instead when they are aggregated. */
   css(): Promise<number>;
+  /** Hide the site's own admin bars in the view (Drupal's toolbar, top bar and sidebar; WordPress's admin bar), or show them; kept across loads. Answers what is now in force. */
+  hideAdmin(hide: boolean): Promise<boolean>;
   /** Go to another page of the same site. */
   go(url: string): Promise<boolean>;
   back(): Promise<void>;

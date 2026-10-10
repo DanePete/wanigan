@@ -802,6 +802,7 @@ export function liveStub(f) {
     async cover(covered) { if (host) host.style.visibility = covered ? 'hidden' : 'visible'; return covered && bounds ? wireAt(bounds.width, bounds.height) : null; },
     async reload() { window.__wgLive.calls.push('reload'); setTimeout(tell, 30); },
     async css() { return 0; },
+    async hideAdmin(hide) { window.__wgLive.calls.push(`hideAdmin ${hide}`); window.__wgLive.hideAdmin = hide; return hide; },
     async go(url) { window.__wgLive.calls.push(`go ${url}`); return true; },
     async back() {}, async forward() {}, async open() {},
     async devtoolsShow(b, focus) {

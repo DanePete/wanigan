@@ -20,6 +20,7 @@ import { loopbackAddress } from '../shared/live-envs.ts';
 import type { LiveBounds, LiveViewState } from '../shared/bridge.ts';
 import { envId, hostedPage } from './live-compare-request.ts';
 import { PAGE_HAS_SCRIPT, pageScriptSource } from './live-page-source.ts';
+import { ADMIN_CSS, adminSwitch } from '../shared/live-admin.ts';
 
 /** The isolated world the page script runs in: the page's own scripts cannot reach it. */
 const WORLD = 4242;
@@ -276,6 +277,8 @@ export function wireLiveView(options: {
   hooks?: LiveViewHooks;
 }): LiveViewWiring {
   let view: WebContentsView | null = null;
+  // The owner's choice to hide the site's admin bars, for every page the view loads.
+  let hideAdmin = false;
   let projectId: string | null = null;
   /** The hosted environment the view shows; null: the local site. */
   let env: string | null = null;
@@ -452,7 +455,11 @@ export function wireLiveView(options: {
       if (/^https?:\/\//i.test(url)) void shell.openExternal(url);
       return { action: 'deny' };
     });
-    wc.on('dom-ready', () => { void inject(); });
+    wc.on('dom-ready', () => {
+      void inject();
+      // The site's admin bars, hidden when the owner asked: the sheet goes into every page, inert until switched on.
+      void wc.insertCSS(ADMIN_CSS, { cssOrigin: 'user' }).then(() => (hideAdmin ? run(adminSwitch(true), false) : false)).catch(() => {});
+    });
     wc.on('did-start-navigation', (details) => { if (details.isMainFrame && !details.isSameDocument) logged = []; });
     wc.on('console-message', (details) => {
       // Electron's own advice to app developers is not the site's problem.
@@ -568,6 +575,14 @@ export function wireLiveView(options: {
   });
   // The page's DevTools, in the dock or its own window, is live-devtools.ts's: it hears of each view through the hooks.
 
+  // Hide the site's own admin bars (Drupal's toolbar, top bar and sidebar; WordPress's admin bar), or show them again:
+  // kept for every page the view loads until changed (shared/live-admin.ts).
+  ipcMain.handle('live:hideAdmin', async (event, raw: unknown) => {
+    if (!ok(event)) return false;
+    if (typeof raw === 'boolean') hideAdmin = raw;
+    if (view && !view.webContents.isDestroyed()) await run(adminSwitch(hideAdmin), false);
+    return hideAdmin;
+  });
   ipcMain.handle('live:css', async (event) => {
     if (!ok(event)) return 0;
     const swapped = await run<number>('window.__wl ? window.__wl.css() : 0', 0);
