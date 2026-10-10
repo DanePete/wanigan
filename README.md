@@ -166,8 +166,12 @@ WordPress and other sites can each be on or off.
 - **Notes for an agent.** Point at parts across pages, say what should change,
   and send them to a session as one message with a picture of each part.
 - **By hand** (Edit ▾ › On the page). Retype words on the page: they save to your own template when
-  they are written there exactly once (with a revert), or to a plain text field
-  through Drupal itself. Try a style on the page; it goes to the agent as
+  they are written there exactly once (with a revert), or through the site
+  itself to the one thing that holds exactly those words: a plain text field on
+  Drupal; on WordPress a title, an excerpt, a string meta, the site's title or
+  tagline, or a menu link's text, each saved through core's REST API with a
+  revision where WordPress keeps one. Formatted text (a block's, a post's
+  content) goes to an agent. Try a style on the page; it goes to the agent as
   intent, never written into the stylesheets by hand.
 - **Go to**, in the address field (click it, or Shift+Space in the live view,
   ⌘⇧Space anywhere in a project): an address, or any page of the site by
@@ -654,7 +658,9 @@ verification results and the behavior that remains unverified.
   serves), a component's props form, saving WordPress content by hand, and
   Canvas pieces by their own ids. The Drupal helper's Layout Builder moves, and
   reordering a field with several items, have not been run against a real
-  site. Agents' looks at it
+  site. Retyped words saved on WordPress (a title, a menu link's text) are
+  tested with stand-in pages, traces and a stand-in site, not yet seen against
+  a running WordPress. Agents' looks at it
   (`wanigan mcp`): tested with a real core and a stand-in app; each CLI seen
   connecting and listing the tools, as above, not yet seen calling one in a
   real turn.

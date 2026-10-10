@@ -310,11 +310,33 @@ or the project.
    innermost region with a part that has one), the CSS path from that part's
    root element to it, its words' hash, what `kind` would reach and how many
    elements that is on this page, and its computed values as `before`.
-3. `layerImplement(id)` makes a text edit real where it is plain words in a
-   plain text field the helper can save (`helperSave`, as the logged-in user,
-   a revision where the site keeps them), and marks it `implemented`. Anything
-   else answers `route: 'agent'` (styles, until phase 3) or `route: 'none'`,
-   with why.
+3. `layerImplement(id)` makes a text edit real where its element holds plain
+   words and one thing the site saves holds exactly those words, as the
+   logged-in user with a revision where the site keeps them, and marks it
+   `implemented` only when the site says it saved (with that revision).
+   - Drupal: a plain text field the helper marks around the words
+     (`data-wl-field`), saved through `helperSave` (`POST /_wanigan/save`).
+   - Otherwise (WordPress's helper marks no field; it saves fields through
+     schema targets): the one `via: 'schema'` edit target of the page's trace
+     whose value, or a string property of it, equals the words as the site
+     rendered them (whitespace folded, wptexturize's quotes, dashes and
+     ellipsis read as typed): a title, an excerpt, a string meta, the site
+     title or tagline, a menu link's text (its address sent back as it was).
+     Never a slug, a status, a choice, an address or a read-only value. It is
+     looked for in the parts the edit's identity names, then outward a level
+     at a time, the nearest level deciding: each part's parent, and the post
+     a block shows through its block context (`context.postId`), so a
+     post-title block finds its post's title whether it sits inside the post
+     or beside it in the template. It is saved through the window's own
+     schema save (`POST /_wanigan/edit/<id>` with the trace's id, checked
+     with `checkValue` in main and again by the helper), refused if the view
+     holds another trace by then.
+   - Formatted text (a block's rich text, words inside a post's content, a
+     value holding markup) answers `route: 'agent'`, as styles and tokens do
+     until phase 3. Nothing holding the words, more than one thing holding
+     them (named), a changed page, a target the trace says this user may not
+     change, or a refusal from the site (passed on as the site said it)
+     answers `route: 'none'`, with why.
 4. `layerVerify(id)` renders the page with the layer (the design) and without
    it (the result) in hidden windows in the view's session at each width,
    measures the noise floor by rendering the result twice, then runs the
