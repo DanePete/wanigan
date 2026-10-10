@@ -65,7 +65,7 @@ export function wireLiveSnap(options: {
       { partition, url, base: c.base, width, what: 'The page', failed: 'The whole page could not be pictured' },
       async (p) => {
         await p.settle();
-        const { height, cut } = await p.grow(PAGE_MAX_HEIGHT);
+        const { height, cut } = await p.measure(PAGE_MAX_HEIGHT);
         const script = options.pageScript();
         let regions: LiveRegion[] = [];
         if (script) {

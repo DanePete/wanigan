@@ -94,10 +94,10 @@ function standIn(hang: 'tick' | 'height' | 'snapshot' | 'picture' | null): { win
   return { log, window: { webContents: wc as never, destroy: () => { log.push('destroy'); } } };
 }
 
-/** What a verification's render does with its page, in order: run its clock, grow it, measure it, picture it. */
+/** What a verification's render does with its page, in order: run its clock, measure it, read it, picture it. */
 const render = async (page: HiddenPage): Promise<string> => {
   await page.freeze();
-  const { height } = await page.grow(6_000);
+  const { height } = await page.measure(6_000);
   await page.read('window.__wl.layerSnap()', [], 4242);
   return (await page.shoot(height, true)) ? 'pictured' : 'no picture';
 };
@@ -120,4 +120,59 @@ test('every step of a hidden render has a deadline: a page that never answers fa
   const forever = await inHiddenWindow({ ...options, open: () => slow.window, stepMs: 50, renderMs: 80 }, () => new Promise<string>(() => {}));
   assert.deepEqual(forever, { error: 'The page could not be rendered: it did not answer within 80 ms while it was rendered, so its window was closed' });
   assert.deepEqual(slow.log, ['attach', 'detach', 'destroy']);
+});
+
+/**
+ * A stand-in for a page that sizes itself to its window, as a sticky footer does: a 192 px header above a wrapper of
+ * `min-height: 100vh` holding 2,981 px of content (Northstar's shape), so the page is 192 px taller than any window
+ * at least that tall. It records each viewport it was given, each picture's height, and the order of what was read.
+ */
+function windowSizedPage(): { window: HiddenWindow; viewports: number[]; pictured: { height: number; page: number }[]; order: string[] } {
+  let vh = 0, attached = false;
+  const viewports: number[] = [], pictured: { height: number; page: number }[] = [], order: string[] = [];
+  const tall = (): number => 192 + Math.max(vh, 2_981);
+  const wc = {
+    on: () => wc, setWindowOpenHandler: () => {}, setAudioMuted: () => {}, setBackgroundThrottling: () => {},
+    getURL: () => 'https://acme.example.test/paddling',
+    loadURL: async () => {},
+    insertCSS: async () => 'key',
+    executeJavaScript: () => Promise.resolve(0),
+    executeJavaScriptInIsolatedWorld: (_world: number, scripts: { code: string }[]) => {
+      const code = scripts[0]?.code ?? '';
+      if (code.includes('scrollTo(')) { order.push('scrolled through'); return Promise.resolve(true); }
+      if (code.startsWith('Math.ceil(Math.max(document.documentElement.scrollHeight')) { order.push('measured'); return Promise.resolve(tall()); }
+      return Promise.resolve(null);
+    },
+    debugger: {
+      attach: () => { attached = true; }, isAttached: () => attached, detach: () => { attached = false; }, on: () => {},
+      sendCommand: (method: string, params?: { height?: number; clip?: { height: number } }) => {
+        if (method === 'Emulation.setDeviceMetricsOverride' && typeof params?.height === 'number') { vh = params.height; viewports.push(vh); }
+        if (method !== 'Page.captureScreenshot') return Promise.resolve({});
+        pictured.push({ height: params?.clip?.height ?? 0, page: tall() });
+        return Promise.resolve({ data: Buffer.from('png').toString('base64') });
+      },
+    },
+  };
+  return { window: { webContents: wc as never, destroy: () => {} }, viewports, pictured, order };
+}
+
+test('a page that sizes itself in vh is measured and pictured whole at one screen’s height, the same in every render', async () => {
+  // Seen on the Northstar demo on 10 October 2026: the window was grown to the page and again while the page grew
+  // with it, so Verify compared a 3365 px render of an unchanged page with a 3173 px one, and failed step 3.
+  const heights: number[] = [];
+  for (let n = 0; n < 2; n++) {
+    const page = windowSizedPage();
+    let measured = 0;
+    const answer = await inHiddenWindow({ ...options, width: 1440, open: () => page.window }, async (p) => {
+      measured = (await p.measure(6_000)).height;
+      return (await p.shoot(measured, true)) ? 'pictured' : 'no picture';
+    });
+    assert.equal(answer, 'pictured');
+    assert.deepEqual(page.viewports, [900], 'the viewport is set once, one screen tall, and never grown to the page');
+    assert.deepEqual(page.order, ['scrolled through', 'measured'], 'scrolled through for late content, then measured once');
+    assert.equal(measured, 3_173, 'the page as a 900 px screen lays it out');
+    assert.ok(page.pictured.length > 0 && page.pictured.every((s) => s.height === s.page), 'each picture is the whole page, its footer in it');
+    heights.push(measured);
+  }
+  assert.equal(heights[0], heights[1], 'the same height in both renders');
 });

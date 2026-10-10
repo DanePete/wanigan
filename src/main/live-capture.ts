@@ -7,9 +7,11 @@
 // - Only the site's own pages load: a link, a redirect or a script that would leave is stopped, and said.
 // - What a render does once loaded is its caller's: settle() switches animations, transitions and the caret off and
 //   waits for lazy images, fonts and two frames; freeze() (a verification's) runs the page on a clock of its own
-//   instead; grow() makes the viewport as tall as the page; shoot() takes it through the DevTools protocol
-//   (Page.captureScreenshot), never capturePage, which takes only the viewport and gives two device pixels a CSS
-//   pixel on a Retina screen. Scrollbars are hidden, so the captured layout is the viewport's width.
+//   instead; measure() scrolls through the page once and reads its height; shoot() takes it through the DevTools
+//   protocol (Page.captureScreenshot beyond the viewport), never capturePage, which takes only the viewport and gives
+//   two device pixels a CSS pixel on a Retina screen. Scrollbars are hidden, so the captured layout is the viewport's
+//   width. The viewport stays one screen tall: a page that sizes itself in vh grows with its window, so a window
+//   grown to the page made the same page a different height from one render to the next.
 // - What the probes found (docs/research/2026-10-09-design-layer-probes.md) is followed: no DevTools virtual time
 //   (requestAnimationFrame and CSS animations keep real time, and two of its modes stop pages loading), but a clock
 //   injected before the page's own scripts, advanced a fixed amount once the page has loaded, then every finite
@@ -118,6 +120,19 @@ const QUIET_CSS = '*,*::before,*::after{caret-color:transparent!important;scroll
 
 const DOCUMENT_HEIGHT = 'Math.ceil(Math.max(document.documentElement.scrollHeight, document.body ? document.body.scrollHeight : 0))';
 const FRAMES = 'new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(() => done(true))))';
+/** Down the page a screen at a time, a frame and a moment at each, then back to the top: what loads once in view loads. */
+const SCROLL_THROUGH = `(async () => {
+  const step = Math.max(200, innerHeight - 80);
+  const frame = () => new Promise((done) => requestAnimationFrame(() => done(true)));
+  for (let y = 0, n = 0; y < document.documentElement.scrollHeight && n < 60; y += step, n++) {
+    scrollTo({ top: y, left: 0, behavior: 'instant' });
+    await frame();
+    await new Promise((done) => setTimeout(done, 60));
+  }
+  scrollTo({ top: 0, left: 0, behavior: 'instant' });
+  await frame();
+  return true;
+})()`;
 const LOAD_MS = 30_000;
 /** A page's HTML read back for the verification at most this long; a longer one is not read. */
 const HTML_MAX = 4_000_000;
@@ -126,7 +141,6 @@ export const STEP_MS = 20_000;
 /** How long a render may take once its page has loaded. */
 export const RENDER_MS = 180_000;
 
-const pause = (ms: number): Promise<void> => new Promise((done) => setTimeout(done, ms));
 const seconds = (ms: number): string => (ms >= 1_000 ? `${Math.round(ms / 1_000)} seconds` : `${ms} ms`);
 
 /**
@@ -174,10 +188,10 @@ export interface HiddenPage {
   /** After the caller changed a frozen page (the design layer put on it): every animation finished or cancelled again, and two frames drawn. The clock does not move. */
   still(): Promise<void>;
   /**
-   * The viewport grown to the page (up to `max` CSS pixels), again while the page grows with it: the height shown,
-   * whether the page was cut there, and how tall the page is.
+   * The page scrolled through once, a screen at a time, and back to its top, then measured with the viewport still
+   * one screen tall: the height to picture (up to `max` CSS pixels), whether the page was cut there, and how tall it is.
    */
-  grow(max: number): Promise<{ height: number; cut: boolean; full: number }>;
+  measure(max: number): Promise<{ height: number; cut: boolean; full: number }>;
   /**
    * The page from its top, `height` CSS pixels tall, as a PNG at one device pixel per CSS pixel; null when nothing
    * came. `stable`: taken again until two in a row are the same (at most five), and the last one answered.
@@ -318,22 +332,16 @@ export async function inHiddenWindow<T>(o: HiddenOptions, during: (page: HiddenP
         await read(FINISH, 0, 4_244);
         await read(FRAMES, true, 4_244);
       },
-      async grow(max) {
-        const tall = async (): Promise<number> => {
-          const h = Number(await read(DOCUMENT_HEIGHT, screen, 4_244));
-          return Number.isFinite(h) && h > 0 ? h : screen;
-        };
-        let height = await tall();
-        let shown = screen;
-        for (let round = 0; round < 3; round++) {
-          const next = Math.max(screen, Math.min(max, height));
-          if (next === shown) break;
-          shown = next;
-          await metrics(shown);
-          await read(FRAMES, true, 4_244);
-          await pause(300);
-          height = await tall();
-        }
+      async measure(max) {
+        // Late content first: what a script loads once it is in view loads (lazy images already have: SETTLE).
+        await read(SCROLL_THROUGH, false, 4_244);
+        // Then measured once, and the viewport left one screen tall: shoot() pictures beyond it. Never grown to the
+        // page: a page that sets a height in vh (a sticky footer's `min-height: 100vh` round the whole site) grows
+        // with the window, so growing the window to the page, and again, made the same page a different height from
+        // one render to the next, and Verify compared a 3365 px page with a 3173 px one that had not changed. At one
+        // screen, a vh height is what a person's screen gives it, the same in every render.
+        const measured = Number(await read(DOCUMENT_HEIGHT, screen, 4_244));
+        const height = Number.isFinite(measured) && measured > 0 ? measured : screen;
         return { height: Math.min(max, height), cut: height > max, full: height };
       },
       async shoot(height, stable = false) {

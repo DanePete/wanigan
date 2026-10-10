@@ -806,7 +806,7 @@ function onPage<T>(deps: RenderDeps, r: LayerRenderRequest, take: (page: HiddenP
       const run: Run = (code, fallback) => page.read(code, fallback, PAGE_WORLD);
       const res = await resolveLayer(run, trace, r.edits, r.path);
       const picture = async (whole: boolean): Promise<LayerRendered | { error: string }> => {
-        const { height, cut, full } = await page.grow(VERIFY_MAX_HEIGHT);
+        const { height, cut, full } = await page.measure(VERIFY_MAX_HEIGHT);
         // What a script added after the page arrived: not in the HTML the server sent, so the page decides it, not the
         // save. Left out of the pixel steps and, read whole, of the page's elements.
         const html = await page.html();
