@@ -2045,7 +2045,13 @@ final class Wanigan_Live {
 		$target = array('id' => $id, 'kind' => 'block-attributes', 'label' => self::block_label($name) . ' block in ' . $info['label'], 'via' => 'schema', 'schema' => array('type' => 'object', 'properties' => $props, 'additionalProperties' => false), 'value' => (object) $value, 'revisions' => $info['revisions']);
 		$why = $info['why'];
 		if (!$why && !$writable) $why = 'Nothing in this block can change here: each setting says why. Change it in the editor.';
-		if (!$why && !self::round_trips($store)) $why = 'Writing this ' . $noun . '’s blocks back would change other parts of it (its saved markup does not survive parse_blocks() and serialize_blocks() unchanged), so Wanigan does not save it. Change it in the editor.';
+		if (!$why) {
+			// Saving writes this one block back alone; where WordPress has no block processor, the whole store, only when it
+			// reads back byte for byte.
+			$spans = self::store_spans($store);
+			if ($spans === null && !self::round_trips($store)) $why = self::NOT_YET . 'this WordPress has no block processor (6.9 or later) to write one block alone, and writing this ' . $noun . '’s blocks back whole would change other parts of it. Change it in the editor.';
+			elseif ($spans !== null && ($spans === false || !isset($spans[implode('.', $map['path'])]))) $why = self::NOT_YET . 'WordPress’s block processor does not find this block where the block parser puts it, so Wanigan does not write it. Change it in the editor.';
+		}
 		if ($why) $target['why'] = $why;
 		self::$edits[$id] = $target;
 		self::$private[$id] = array('type' => 'block', 'store' => $store, 'path' => $map['path'], 'fp' => md5(serialize_block($node)), 'hash' => md5(self::$trees[$store]['content']), 'name' => $name);
@@ -2873,6 +2879,101 @@ final class Wanigan_Live {
 		return (isset($a['blockName']) ? $a['blockName'] : null) === (isset($b['blockName']) ? $b['blockName'] : null)
 			&& $strip(isset($a['attrs']) ? $a['attrs'] : array()) == $strip(isset($b['attrs']) ? $b['attrs'] : array())
 			&& (isset($a['innerHTML']) ? $a['innerHTML'] : '') === (isset($b['innerHTML']) ? $b['innerHTML'] : '');
+	}
+
+	/** The spans of a store's blocks as the trace saw it (spans()), worked out once. */
+	private static function store_spans(string $store) {
+		if (!isset(self::$trees[$store])) return false;
+		if (!array_key_exists('spans', self::$trees[$store])) self::$trees[$store]['spans'] = self::spans(self::$trees[$store]['content']);
+		return self::$trees[$store]['spans'];
+	}
+
+	/**
+	 * Where each block sits in stored markup, by its path (the indexes parse_blocks() gives: at the top, freeform HTML
+	 * between blocks counts; inside a block, only blocks do): the byte span of its opening delimiter, of each run of its
+	 * own HTML in order (innerContent's strings), and where it ends. From class-wp-block-processor.php (6.9+), which
+	 * walks the delimiters without parsing the document: depth goes up before an opener, a void block or an HTML span,
+	 * and down before a closer. Null when this WordPress has no block processor; false when the markup does not read
+	 * as one tree of blocks.
+	 */
+	private static function spans(string $content) {
+		if (!class_exists('WP_Block_Processor')) return null;
+		$p = new WP_Block_Processor($content);
+		$out = array();
+		$open = array();
+		$top = 0;
+		while ($p->next_token()) {
+			$depth = $p->get_depth();
+			$span = $p->get_span();
+			if (!$span) return false;
+			if ($p->is_html()) {
+				if ($depth !== count($open) + 1) return false;
+				if (!$open) $top++;
+				else $out[$open[count($open) - 1]['key']]['chunks'][] = array($span->start, $span->length);
+				continue;
+			}
+			$type = $p->get_delimiter_type();
+			if ($type === WP_Block_Processor::CLOSER) {
+				if (!$open || $depth !== count($open) - 1) return false;
+				$b = array_pop($open);
+				$out[$b['key']]['end'] = $span->start + $span->length;
+				continue;
+			}
+			if ($depth !== count($open) + 1) return false;
+			if ($open) {
+				$i = count($open) - 1;
+				$path = array_merge($open[$i]['path'], array($open[$i]['children']++));
+			} else {
+				$path = array($top++);
+			}
+			$key = implode('.', $path);
+			$out[$key] = array('start' => $span->start, 'opener' => $span->length, 'void' => $type === WP_Block_Processor::VOID, 'chunks' => array());
+			if ($type === WP_Block_Processor::VOID) $out[$key]['end'] = $span->start + $span->length;
+			else $open[] = array('path' => $path, 'key' => $key, 'children' => 0);
+		}
+		if ($open || $p->get_last_error()) return false;
+		return $out;
+	}
+
+	/**
+	 * Stored markup with one block changed and every other byte as it was, as class-wp-block-processor.php's own example
+	 * replaces one block by its span: the block's opening delimiter is rewritten only when its attributes changed, and
+	 * each run of its own HTML only where it changed, so its inner blocks are not rewritten either. Read back before it
+	 * is used: those bytes must parse as the block written. Null when this WordPress has no block processor.
+	 */
+	private static function splice_block(string $content, array $path, array $old, array $new) {
+		$spans = self::spans($content);
+		if ($spans === null) return null;
+		$key = implode('.', $path);
+		$lost = new WP_Error('wanigan', self::NOT_YET . 'WordPress’s block processor does not find that block where the block parser puts it, so Wanigan does not write it. Change it in the editor.');
+		if ($spans === false || !isset($spans[$key])) return $lost;
+		$s = $spans[$key];
+		$before = array_values(array_filter($old['innerContent'], 'is_string'));
+		$after = array_values(array_filter($new['innerContent'], 'is_string'));
+		if (count($before) !== count($s['chunks']) || count($after) !== count($before)) return $lost;
+		$edits = array();
+		if ($new['attrs'] !== $old['attrs']) $edits[] = array($s['start'], $s['opener'], self::opener((string) $new['blockName'], (array) $new['attrs'], $s['void']));
+		foreach ($after as $i => $chunk) {
+			if ($chunk === $before[$i]) continue;
+			if (substr($content, $s['chunks'][$i][0], $s['chunks'][$i][1]) !== $before[$i]) return $lost;
+			$edits[] = array($s['chunks'][$i][0], $s['chunks'][$i][1], $chunk);
+		}
+		if (!$edits) return $content;
+		usort($edits, function ($a, $b) { return $b[0] - $a[0]; });
+		$out = $content;
+		$grew = 0;
+		foreach ($edits as $e) {
+			$out = substr($out, 0, $e[0]) . $e[2] . substr($out, $e[0] + $e[1]);
+			$grew += strlen($e[2]) - $e[1];
+		}
+		$read = array_values(array_filter(parse_blocks(substr($out, $s['start'], $s['end'] - $s['start'] + $grew)), function ($b) { return !empty($b['blockName']); }));
+		if (count($read) !== 1 || serialize_block($read[0]) !== serialize_block($new)) return new WP_Error('wanigan', self::NOT_YET . 'the block did not read back as it was written, so nothing was saved. Change it in the editor.');
+		return $out;
+	}
+
+	/** A block's opening delimiter, as blocks.php get_comment_delimited_block_content() writes one. */
+	private static function opener(string $name, array $attrs, bool $void): string {
+		return '<!-- wp:' . strip_core_block_namespace($name) . ' ' . ($attrs ? serialize_block_attributes($attrs) . ' ' : '') . ($void ? '/-->' : '-->');
 	}
 
 	/** Whether blocks.php serialize_blocks( parse_blocks( $content ) ) gives the content back byte for byte. */
@@ -4354,16 +4455,16 @@ final class Wanigan_Live {
 
 	/**
 	 * A block's attributes or sourced text, written into the stored tree it was rendered from and saved through the
-	 * store's REST route; refused when the stored content changed since the trace.
+	 * store's REST route, that block alone; refused when the stored content changed since the trace, or the block moved.
 	 */
 	private static function save_block(array $p, array $value) {
 		$info = self::fresh_store($p['store']);
 		if (is_wp_error($info)) return $info;
 		if (md5($info['content']) !== $p['hash']) return new WP_Error('wanigan', 'This ' . $info['noun'] . ' changed since the page was shown: reload it and try again.');
 		$blocks = parse_blocks($info['content']);
-		if (serialize_blocks($blocks) !== $info['content']) return new WP_Error('wanigan', 'Writing this ' . $info['noun'] . '’s blocks back would change other parts of it, so Wanigan does not save it.');
 		$node = self::node_in($blocks, $p['path']);
 		if (!$node || md5(serialize_block($node)) !== $p['fp']) return new WP_Error('wanigan', 'That block is not where it was: reload the page and try again.');
+		$old = $node;
 		$type = WP_Block_Type_Registry::get_instance()->get_registered($p['name']);
 		if (!$type) return new WP_Error('wanigan', 'That block type is no longer registered.');
 		$changed = false;
@@ -4388,8 +4489,22 @@ final class Wanigan_Live {
 			$changed = true;
 		}
 		if (!$changed) return array();
-		$blocks = self::replace_node($blocks, $p['path'], $node);
-		return self::save_store($p['store'], $info, serialize_blocks($blocks));
+		return self::write_block($p['store'], $info, $blocks, $p['path'], $old, $node);
+	}
+
+	/**
+	 * One changed block written into its store and saved through the store's REST route: alone, every other byte as it
+	 * was (splice_block()); where WordPress has no block processor, the whole store, only when it reads back byte for
+	 * byte.
+	 */
+	private static function write_block(string $store, array $info, array $blocks, array $path, array $old, array $new) {
+		$content = self::splice_block($info['content'], $path, $old, $new);
+		if ($content === null) {
+			if (serialize_blocks($blocks) !== $info['content']) return new WP_Error('wanigan', self::NOT_YET . 'this WordPress has no block processor (6.9 or later) to write one block alone, and writing this ' . $info['noun'] . '’s blocks back whole would change other parts of it.');
+			$content = serialize_blocks(self::replace_node($blocks, $path, $new));
+		}
+		if (is_wp_error($content)) return $content;
+		return self::save_store($store, $info, $content);
 	}
 
 	private static function replace_node(array $blocks, array $path, array $node): array {

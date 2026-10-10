@@ -659,7 +659,8 @@ Wanigan_Live::flushed();
 $id = (new ReflectionProperty('Wanigan_Live', 'id'))->getValue();
 $stored = get_transient('wanigan_live_t_1_' . $id);
 
-/* then each save, as POST /_wanigan/edit/<id> runs it */
+/* what changed on the site after the page was shown, then each save, as POST /_wanigan/edit/<id> runs it */
+foreach ($S['change'] ?? array() as $pid => $c) get_post((int) $pid)->post_content = $c;
 $answers = array();
 $save = new ReflectionMethod('Wanigan_Live', 'edit_save');
 foreach ($S['saves'] ?? array() as $s) {
@@ -693,6 +694,8 @@ interface Scenario {
   theme_mods?: Record<string, unknown>;
   cannot?: string[];
   unsupported?: string[];
+  /** Post content changed after the page was shown, before the saves. */
+  change?: Record<number, string>;
   saves?: { find: string; kind?: string; value: unknown }[];
 }
 interface Result {
@@ -788,6 +791,36 @@ describe('what a WordPress page offers to change, and what saving it writes, und
     assert.match(r.answers[1]?.data.error ?? '', /comment/i);
     assert.deepEqual(r.rest, [], 'nothing was sent to WordPress');
     assert.equal(r.posts[7], content);
+  });
+
+  test('one block is written back alone: markup elsewhere that a whole-document round trip would rewrite stays byte for byte', () => {
+    // Attribute JSON written by another tool: escaped slashes, which serialize_block_attributes() writes unescaped.
+    const card = '<!-- wp:acme/card {"link":"https:\\/\\/acme.example.test\\/menu","title":"Menu"} /-->';
+    const content = `<!-- wp:paragraph -->\n<p>Open daily</p>\n<!-- /wp:paragraph -->\n\n${card}\n\n<!-- wp:paragraph {"dropCap":true} -->\n<p class="has-drop-cap">Since 1990</p>\n<!-- /wp:paragraph -->`;
+    const r = run(page(content, { saves: [{ find: 'Paragraph block', value: { content: 'Open <strong>every</strong> day', dropCap: false } }] }));
+    const paragraphs = edits(r).filter((x) => x.label.startsWith('Paragraph block'));
+    assert.equal(paragraphs.length, 2);
+    for (const e of paragraphs) assert.equal(e.why, undefined, 'the document need not survive parse_blocks() and serialize_blocks() whole');
+    assert.ok(r.answers[0]?.data.ok, r.answers[0]?.data.error);
+    assert.equal(r.posts[7], content.replace('<p>Open daily</p>', '<p>Open <strong>every</strong> day</p>'), 'only the words changed; the other blocks’ bytes, escaped slashes and all, are as they were');
+    assert.deepEqual(r.rest.map(([m, route]) => `${m} ${route}`), ['POST /wp/v2/pages/7']);
+  });
+
+  test('a block’s attribute change rewrites only its own delimiter, and a save still refuses a change since the trace and a post someone has open', () => {
+    const content = '<!-- wp:navigation-link {"label":"Menu","url":"/menu","kind":"custom"} /-->\n\n<!-- wp:paragraph -->\n<p>Open</p>\n<!-- /wp:paragraph -->';
+    const changed = run(page(content, { saves: [{ find: 'Custom Link block', value: { label: 'Our menu' } }] }));
+    assert.ok(changed.answers[0]?.data.ok, changed.answers[0]?.data.error);
+    assert.equal(changed.posts[7], content.replace('{"label":"Menu","url":"/menu","kind":"custom"}', '{"label":"Our menu","url":"/menu","kind":"custom"}'));
+
+    const stale = run(page(content, { change: { 7: content.replace('Open', 'Closed') }, saves: [{ find: 'Paragraph block', value: { content: 'Shut' } }] }));
+    assert.equal(stale.answers[0]?.status, 409);
+    assert.match(stale.answers[0]?.data.error ?? '', /changed since the page was shown/);
+    assert.deepEqual(stale.rest, [], 'nothing was written over the newer content');
+
+    const locked = run(page(content, { meta: { 7: { _edit_lock: `${Math.floor(Date.now() / 1000)}:1` } }, saves: [{ find: 'Paragraph block', value: { content: 'Shut' } }] }));
+    assert.match(target(locked, 'Paragraph block').why ?? '', /open in the editor/, 'the owner’s own open editor would write over it');
+    assert.equal(locked.answers[0]?.status, 403);
+    assert.deepEqual(locked.rest, []);
   });
 
   test('a static block’s own settings stay read-only, saying WordPress keeps no PHP save() to write them', () => {
