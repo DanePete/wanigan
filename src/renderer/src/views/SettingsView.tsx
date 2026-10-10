@@ -5,11 +5,12 @@ import type { UpdateStatus } from '@shared/updates';
 import { JevSettings } from '../components/Jev';
 import { LocalModelsSettings } from '../components/LocalModels';
 import { PhoneSettings } from '../components/PhoneSettings';
-import { Button, Segmented, useToast } from '../components/ui';
+import { Button, Segmented, Toggle, useToast } from '../components/ui';
 import { bridge } from '../lib/api';
 import { ago, plural } from '../lib/format';
 import { useAppState } from '../lib/settings';
 import { setTheme, useTheme, type ThemeChoice } from '../lib/theme';
+import { resetTours, setToursOff, startTour, useTourState } from '../lib/tours';
 import '../styles/live.css';
 
 export function SettingsView({ projects }: { projects: ProjectSummary[] | undefined }) {
@@ -39,9 +40,14 @@ const THEMES: readonly { value: ThemeChoice; label: string }[] = [
   { value: 'dark', label: 'Dark' },
 ];
 
-/** Light, dark, or whatever the system is set to: kept in this window, on this computer (it was the rail's switch). */
+/**
+ * Light, dark, or whatever the system is set to: kept in this window, on this computer (it was the rail's switch).
+ * And the guided tours: whether a view's tour offers itself on the first visit, and playing them again.
+ */
 function AppearanceSettings() {
   const { choice } = useTheme();
+  const tours = useTourState();
+  const toast = useToast();
   return (
     <section className="settings-group" aria-labelledby="set-appearance">
       <header className="account-group-head">
@@ -52,6 +58,14 @@ function AppearanceSettings() {
           <span className="settings-label">Theme</span>
           <Segmented<ThemeChoice> label="Theme" value={choice} options={THEMES} onChange={setTheme} />
         </div>
+      </div>
+      <div className="settings-row">
+        <Toggle checked={!tours.off} onChange={(on) => setToursOff(!on)} label="Offer a view’s tour the first time you open it"
+          hint="Every view’s tour is a click away whenever you want it: the compass at the end of the status line, or Tour in the palette." />
+      </div>
+      <div className="settings-row settings-tours">
+        <Button size="s" icon="tour" onClick={() => startTour('welcome')}>Play the welcome tour</Button>
+        <Button size="s" tone="quiet" onClick={() => { resetTours(); toast('Every tour will offer itself again, the welcome tour included.', 'done'); }}>Offer every tour again</Button>
       </div>
     </section>
   );

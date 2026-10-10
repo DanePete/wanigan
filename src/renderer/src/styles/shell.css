@@ -145,9 +145,10 @@
   background: var(--line-strong);
 }
 
+/* As tall as its tiles (it scrolls when there are more than fit), so the foot keeps the bottom by its own margin. */
 .rail-projects {
   display: flex;
-  flex: 1 1 0;
+  flex: 0 1 auto;
   flex-direction: column;
   align-items: center;
   gap: var(--space-1);
@@ -184,6 +185,7 @@
   flex-direction: column;
   align-items: center;
   gap: var(--space-1);
+  margin-top: auto;
   padding-top: var(--space-2);
 }
 

@@ -9,7 +9,10 @@ import { PALETTE_GROUPS, PER_GROUP, arrange, step, type PaletteGroup } from '@sh
 import { SAID_MIN_QUERY, saidCutText, type SaidHit, type SaidSearch } from '@shared/said';
 import { GIT_COMMANDS, keyLabel, shortcutFor, type CommandId, type GitCommandId } from '@shared/shortcuts';
 import { bridge, call, useQuery } from '../lib/api';
-import { LIVE_VIEW, PROJECT_VIEWS, navigate, type ProjectView } from '../lib/router';
+import { LIVE_VIEW, PROJECT_VIEWS, navigate, useLocation, type ProjectView } from '../lib/router';
+import { startTour } from '../lib/tours';
+import { openHow, useHowAvailable } from '../lib/how';
+import { TOURS, placeOf, tourFor } from '../tours';
 import { setTheme } from '../lib/theme';
 import { STATE_LABEL, ago, fileManager } from '../lib/format';
 import { Icon, type IconName } from '../components/icons';
@@ -70,6 +73,10 @@ export function Palette({ projects, currentProject, onClose, setDialog, runComma
   /** The app's command table (App.tsx), so a command here does exactly what its keys do. */
   runCommand: (id: CommandId) => boolean;
 }) {
+  const { route } = useLocation();
+  const viewTour = tourFor(route);
+  const place = placeOf(route);
+  const how = useHowAvailable(place);
   const mac = bridge().platform === 'darwin';
   useCoversLive();
   const [query, setQuery] = useState('');
@@ -144,6 +151,10 @@ export function Palette({ projects, currentProject, onClose, setDialog, runComma
       ] : []),
       keyed('shortcuts', 'Commands', 'question'),
       { id: 'notifications', group: 'Commands', label: 'Notifications', detail: 'what just happened, and what failed', icon: 'bell', run: () => openNotifications() },
+      // How this view works, and guided tours: found by typing ("how", "help", "tour", "guide").
+      ...(how ? [{ id: 'how-view', group: 'Commands' as const, label: 'How this view works', detail: 'help: the picture of what happens here, with live numbers', icon: 'question' as const, whenTyped: true, run: () => openHow(place) }] : []),
+      ...(viewTour ? [{ id: 'tour-view', group: 'Commands' as const, label: `Tour of ${viewTour.name}`, detail: 'help: a guided walk through this view', icon: 'tour' as const, whenTyped: true, run: () => startTour(viewTour.id) }] : []),
+      ...(TOURS.has('welcome') ? [{ id: 'tour-welcome', group: 'Commands' as const, label: 'Welcome tour', detail: 'help: a guided walk through Wanigan', icon: 'tour' as const, whenTyped: true, run: () => startTour('welcome') }] : []),
       { id: 'theme-dark', group: 'Commands', label: 'Theme: dark', icon: 'moon', run: () => setTheme('dark') },
       { id: 'theme-light', group: 'Commands', label: 'Theme: light', icon: 'sun', run: () => setTheme('light') },
       { id: 'theme-system', group: 'Commands', label: 'Theme: match the system', icon: 'auto', run: () => setTheme('system') },
@@ -154,7 +165,7 @@ export function Palette({ projects, currentProject, onClose, setDialog, runComma
         run: () => navigate({ name: 'session', projectKey: hit.projectKey, sessionId: hit.sessionId }) });
     }
     return out;
-  }, [projects, currentProject, cards.data, everywhere.data, sessions.data, said.result, setDialog]);
+  }, [projects, currentProject, cards.data, everywhere.data, sessions.data, said.result, setDialog, viewTour, how, place]);
 
   const groups = useMemo(() => arrange(items.map((i) => ({ ...i, text: `${i.label} ${i.detail ?? ''}`, found: !!i.said })), query), [items, query]);
   const flat = useMemo(() => groups.flatMap((g) => g.items), [groups]);
