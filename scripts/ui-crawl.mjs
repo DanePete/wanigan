@@ -144,7 +144,7 @@ function plan(w) {
     { name: 'MCP store', hash: '#/mcp', open: click('.topbar-tools [role="radio"]:has-text("Store")'), ready: '.store-card' },
     { name: 'Search and commands', hash: board, open: press('Meta+k'), scope: '.palette' },
     { name: 'Keyboard shortcuts', hash: board, open: press('Shift+Slash'), scope: '.dialog', ready: '.shortcuts' },
-    { name: 'How this works', hash: board, open: click('.how-btn'), scope: '.dialog', ready: '.how-flow' },
+    { name: 'How this works', hash: board, open: click('.board-how button'), scope: '.dialog', ready: '.how-flow' },
     { name: 'Saved views', hash: board, open: click('.views-trigger'), scope: '.views-panel', ready: '.views-panel .views-row' },
     { name: 'Talk to Wanigan', hash: board, open: click('.chat-fab'), scope: '.chat' },
     { name: 'Play with Wanigan', hash: '#/needs', open: click('.needs-orb .play-button'), scope: '.play-panel' },

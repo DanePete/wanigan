@@ -22,6 +22,8 @@ import { Select } from '../components/Select';
 import { MenuButton, type MenuItem } from '../components/Menu';
 import { orbPlay } from '../components/Orb';
 import { SavedViews } from './SavedViews';
+import { HowButton } from '../components/How';
+import { useHow } from '../lib/how';
 
 type Column = (typeof COLUMNS)[number];
 
@@ -168,12 +170,13 @@ export function BoardToolbar({ project, mode, board, setDialog, onHow }: {
   const to = (view: 'board' | 'list'): string => href({ name: 'project', projectKey: project.key, view }, openKey);
   return (
     <Toolbar label="Cards" className="board-toolbar">
-      <span ref={modes} className="board-modes" onClickCapture={(e) => { if ((e.target as Element).closest('a')) modeChosen = true; }}>
+      <span ref={modes} className="board-modes" data-tour="board-modes" onClickCapture={(e) => { if ((e.target as Element).closest('a')) modeChosen = true; }}>
         <NavTabs label="Show the cards as" className="tabs-s" items={[
           { href: to('board'), label: 'Board', current: mode === 'board', keys: 'go-board', tip: 'The board: a lane for each step' },
           { href: to('list'), label: 'List', current: mode === 'list', keys: 'go-list', tip: 'Every card in one table, archived ones too' },
         ]} />
       </span>
+      <div className="board-filters" data-tour="board-filters">
       <label className="search-field board-search">
         <Icon name="search" size={14} />
         <span className="visually-hidden">Filter cards</span>
@@ -193,12 +196,13 @@ export function BoardToolbar({ project, mode, board, setDialog, onHow }: {
         <Icon name="down" size={12} />
       </MenuButton>
       {board.filtering ? <Button size="s" tone="quiet" onClick={board.clear}>Clear</Button> : null}
+      </div>
       <div className="board-toolbar-end">
         <SavedViews projectId={project.id} views={board.views} current={board.current} appliedId={board.applied} onApply={board.apply} setApplied={board.setApplied} />
         {mode === 'board' ? <Select<BoardSort> label="Order" size="s" className="board-order" value={board.sort} onChange={board.setSort} options={order} /> : null}
-        {onHow ? <IconButton icon="question" label="How the board works" className="how-btn" onClick={onHow} /> : null}
+        {onHow ? <span className="board-how" data-tour="board-how" {...tipProps('The board’s rules as a picture, with live numbers')}><HowButton onClick={onHow} /></span> : null}
         {setDialog ? (
-          <Button tone="primary" size="s" icon="plus" keys="new-card" className="board-new" onClick={() => setDialog({ kind: 'card', projectId: project.id })}>New card</Button>
+          <Button tone="primary" size="s" icon="plus" keys="new-card" className="board-new" data-tour="board-new" onClick={() => setDialog({ kind: 'card', projectId: project.id })}>New card</Button>
         ) : null}
       </div>
     </Toolbar>
@@ -220,7 +224,7 @@ export function Board({ project, setDialog }: { project: ProjectSummary; setDial
   const { card: openKey } = useLocation();
   const board = useBoardView(project.id);
   const { sort, matches, filtering } = board;
-  const [how, setHow] = useState(false);
+  const how = useHow('board');
   const [allDone, setAllDone] = useState(false);
   const [drag, setDrag] = useState<{ id: string; from: Column } | null>(null);
   const [drop, setDrop] = useState<{ column: Column; index: number } | null>(null);
@@ -262,6 +266,7 @@ export function Board({ project, setDialog }: { project: ProjectSummary; setDial
   const open = (cards.data ?? []).filter((c) => c.status !== 'done' && c.status !== 'archived');
   const matching = COLUMNS.reduce((n, col) => n + (col === 'done' ? 0 : columns[col].length), 0);
   const working = columns.working;
+  const firstKey = COLUMNS.map((col) => columns[col][0]?.key).find(Boolean) ?? null;
   const held = working.filter((c) => c.claim).length;
   const running = working.filter((c) => c.live).length;
 
@@ -408,8 +413,8 @@ export function Board({ project, setDialog }: { project: ProjectSummary; setDial
 
   return (
     <div className="board-wrap">
-      <BoardToolbar project={project} mode="board" board={board} setDialog={setDialog} onHow={() => setHow(true)} />
-      {how ? <HowItWorks project={project} cards={cards.data} onClose={() => setHow(false)} showColumn={showColumn} /> : null}
+      <BoardToolbar project={project} mode="board" board={board} setDialog={setDialog} onHow={how.show} />
+      {how.open ? <HowItWorks project={project} cards={cards.data} onClose={how.hide} showColumn={showColumn} /> : null}
       <JevStrip project={project} />
       <div className="board-canvas">
         <SinceStrip key={project.id} projectId={project.id} cards={cards.data} />
@@ -418,7 +423,7 @@ export function Board({ project, setDialog }: { project: ProjectSummary; setDial
             A card is the work: file one, start a session on it, and its agent takes it.
           </EmptyState>
         ) : (
-          <div className="board" ref={boardRef} aria-busy={cards.loading} aria-describedby="board-keys" onKeyDown={(e) => void onBoardKey(e)}>
+          <div className="board" ref={boardRef} data-tour="board-lanes" aria-busy={cards.loading} aria-describedby="board-keys" onKeyDown={(e) => void onBoardKey(e)}>
             <p id="board-keys" className="visually-hidden">
               {`Enter opens a card. J and K move between cards, H and L between columns. ${keyLabel('Mod', mac)} with an arrow moves the card. In the Inbox, A accepts a card and X archives it.`}
             </p>
@@ -455,7 +460,7 @@ export function Board({ project, setDialog }: { project: ProjectSummary; setDial
                     {shown.map((c, i) => (
                       <li key={c.id} className="card-slot">
                         {drop?.column === col && renderDropIndex === i && drag?.id !== c.id ? <div className="drop-line" aria-hidden="true" /> : null}
-                        <CardTile card={c} open={openKey === c.key} dragging={drag?.id === c.id} onDragStart={onDragStart} onDragEnd={() => { setDrag(null); setDrop(null); }} />
+                        <CardTile card={c} tour={c.key === firstKey} open={openKey === c.key} dragging={drag?.id === c.id} onDragStart={onDragStart} onDragEnd={() => { setDrag(null); setDrop(null); }} />
                       </li>
                     ))}
                     {drop?.column === col && renderDropIndex >= shown.length ? <li className="card-slot"><div className="drop-line" aria-hidden="true" /></li> : null}
@@ -482,8 +487,10 @@ function CardSkeletons({ n }: { n: number }) {
   return <>{Array.from({ length: n }, (_, i) => <li key={i} className="card-slot" aria-hidden="true"><div className="card-skeleton"><span /><span /></div></li>)}</>;
 }
 
-function CardTile({ card, open, dragging, onDragStart, onDragEnd }: {
+function CardTile({ card, tour, open, dragging, onDragStart, onDragEnd }: {
   card: CardSummary;
+  /** The card a guided tour points at (the board's first). */
+  tour: boolean;
   open: boolean;
   dragging: boolean;
   onDragStart: (e: DragEvent, c: CardSummary) => void;
@@ -498,6 +505,7 @@ function CardTile({ card, open, dragging, onDragStart, onDragEnd }: {
       aria-label={`${card.key} ${card.title}`}
       aria-current={open ? 'true' : undefined}
       data-key={card.key}
+      data-tour={tour ? 'board-card' : undefined}
       onDragStart={(e) => onDragStart(e, card)}
       onDragEnd={onDragEnd}
       onClick={() => openCard(card.key)}

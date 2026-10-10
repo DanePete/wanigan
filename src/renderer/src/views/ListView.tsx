@@ -104,8 +104,8 @@ export function ListView({ project, setDialog }: { project: ProjectSummary; setD
             Nothing on this board has those words, types, priority and agent together.
           </EmptyState>
         ) : (
-          <table className="list-table" aria-label={`${project.name}: every card`} aria-busy={cards.loading}>
-            <thead>
+          <table className="list-table" data-tour="list-table" aria-label={`${project.name}: every card`} aria-busy={cards.loading}>
+            <thead data-tour="list-head">
               <tr>
                 {head('key', 'Key')}
                 <th scope="col"><span>Type</span></th>
@@ -125,6 +125,7 @@ export function ListView({ project, setDialog }: { project: ProjectSummary; setD
                   key={c.id}
                   data-key={c.key}
                   tabIndex={c.key === stop ? 0 : -1}
+                  data-tour={c.key === stop ? 'list-row' : undefined}
                   className={c.status === 'archived' ? 'list-archived' : undefined}
                   aria-current={openKey === c.key ? 'true' : undefined}
                   onFocus={() => setActive(c.key)}

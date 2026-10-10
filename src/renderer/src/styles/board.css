@@ -22,8 +22,21 @@
   flex: none;
 }
 
+/* The filters, together (a guided tour points at them as one). */
+.board-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+  min-width: 0;
+}
+
+.board-how {
+  display: inline-flex;
+}
+
 .board-search {
-  flex: 0 1 calc(var(--column-w) + var(--space-2));
+  flex: 0 1 calc(var(--column-w) - var(--space-8));
   width: auto;
   min-width: calc(var(--column-w) - var(--space-12));
   height: var(--control-s);
@@ -77,7 +90,8 @@
 
 /* Where the bar is short of room, the card types keep their marks and give up their words (each keeps its name),
    then New card keeps its plus (and its name, and its key in its tooltip). */
-@container board-toolbar (max-width: 1080px) {
+@container board-toolbar (max-width: 1160px) {
+  .board-how .btn > span,
   .board-new > span {
     position: absolute;
     width: var(--hairline);
@@ -87,17 +101,21 @@
     white-space: nowrap;
   }
 
+  .board-how .btn,
   .board-new {
     width: var(--control-s);
     padding: 0;
   }
 
+}
+
+@container board-toolbar (max-width: 1080px) {
   .board-search {
-    flex-basis: calc(var(--column-w) - var(--space-8));
+    flex-basis: calc(var(--column-w) - var(--space-12));
   }
 }
 
-@container board-toolbar (max-width: 1300px) {
+@container board-toolbar (max-width: 1360px) {
   .board-types .chip .type > span:last-child {
     position: absolute;
     width: var(--hairline);

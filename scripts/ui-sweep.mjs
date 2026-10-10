@@ -897,7 +897,7 @@ try {
       if (!glided) failures.push(`dark: ${moving}, accepted from the Inbox, did not glide into Ready`);
     }
     await page.keyboard.press('Escape');
-    await page.click('.how-btn');
+    await page.click('.board-how button');
     await page.waitForSelector('.how-flow .how-box');
     await page.waitForTimeout(250);
     await page.screenshot({ path: join(out, `${theme}-how.png`) });

@@ -67,7 +67,7 @@ export function SavedViews({ projectId, views, current, appliedId, onApply, setA
   };
 
   return (
-    <div className="views-bar">
+    <div className="views-bar" data-tour="board-views">
       <button
         ref={trigger}
         type="button"
