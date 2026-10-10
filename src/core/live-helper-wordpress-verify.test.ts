@@ -69,40 +69,82 @@ ${script}
   const NOW = Math.floor(Date.now() / 1000);
   const STEADY = `t=${NOW - 60};s=42`;
 
-  test('the blocks core renders differently each time are marked by why, on their root tag; the rest are left as they are', () => {
-    const blocks: [string, Record<string, unknown>, string | null][] = [
-      ['core/gallery', { randomOrder: true }, 'random-order'],
-      ['core/gallery', {}, null],
-      ['core/calendar', {}, 'today'],
-      ['core/latest-comments', {}, 'latest-comments'],
-      ['core/rss', { feedURL: 'https://feeds.example.test/acme' }, 'remote-feed'],
-      ['core/loginout', {}, 'login-state'],
-      ['core/post-date', { format: 'human-diff' }, 'relative-date'],
-      ['core/post-date', { format: 'M j, Y' }, null],
-      ['core/comment-date', { format: 'human-diff' }, 'relative-date'],
-      ['core/query', { query: { orderBy: 'rand' } }, 'random-order'],
-      ['core/query', { query: { orderBy: 'rand', inherit: true } }, null],
-      ['core/query', { query: { orderBy: 'date' } }, null],
-      ['core/paragraph', {}, null],
-    ];
-    const out = run({ token: TOKEN, steady: STEADY }, `
+  // [block, its attributes, why it is marked, what a hold holds still]
+  const BLOCKS: [string, Record<string, unknown>, string | null, string | null][] = [
+    ['core/gallery', { randomOrder: true }, 'random-order', null],
+    ['core/gallery', {}, null, null],
+    ['core/calendar', {}, 'today', null],
+    ['core/latest-comments', {}, 'latest-comments', null],
+    ['core/rss', { feedURL: 'https://feeds.example.test/acme' }, 'remote-feed', null],
+    ['core/loginout', {}, 'login-state', null],
+    ['core/post-date', { format: 'human-diff' }, 'relative-date', 'time'],
+    ['core/post-date', { format: 'M j, Y' }, null, null],
+    ['core/comment-date', { format: 'human-diff' }, 'relative-date', 'time'],
+    ['core/query', { query: { orderBy: 'rand' } }, 'random-order', 'order'],
+    ['core/query', { query: { orderBy: 'rand', inherit: true } }, null, null],
+    ['core/query', { query: { orderBy: 'date' } }, null, null],
+    ['core/paragraph', {}, null, null],
+  ];
+  const marked = (steady: string): string[] => run({ token: TOKEN, steady }, `
 $filters = hooked('render_block');
 $mark = end($filters);
-$cases = json_decode(${JSON.stringify(JSON.stringify(blocks))}, true);
+$cases = json_decode(${JSON.stringify(JSON.stringify(BLOCKS))}, true);
 echo json_encode(array_map(function ($c) use ($mark) { return $mark('<div class="wp-block-x"><p>Paddling</p></div>', array('blockName' => $c[0], 'attrs' => $c[1])); }, $cases));
 `) as string[];
-    blocks.forEach(([name, , why], i) => {
-      const html = out[i];
-      if (why) assert.equal(html, `<div data-wanigan-vary="${why}" class="wp-block-x"><p>Paddling</p></div>`, `${name} ${JSON.stringify(blocks[i]![1])}`);
-      else assert.equal(html, '<div class="wp-block-x"><p>Paddling</p></div>', `${name} ${JSON.stringify(blocks[i]![1])}`);
+
+  test('the blocks core renders differently each time are marked by why, on their root tag, and held still where the hold removes it; the rest are left as they are', () => {
+    const held = marked(STEADY);
+    // A hold that is refused (a time later than now) still marks them, and says nothing is held.
+    const refused = marked(`t=${NOW + 3600};s=42`);
+    BLOCKS.forEach(([name, attrs, why, holds], i) => {
+      const what = `${name} ${JSON.stringify(attrs)}`;
+      if (!why) {
+        assert.equal(held[i], '<div class="wp-block-x"><p>Paddling</p></div>', what);
+        return;
+      }
+      assert.equal(held[i], `<div data-wanigan-vary="${why}"${holds ? ` data-wanigan-held="${holds}"` : ''} class="wp-block-x"><p>Paddling</p></div>`, what);
+      assert.equal(refused[i], `<div data-wanigan-vary="${why}" class="wp-block-x"><p>Paddling</p></div>`, `${what}, not held`);
     });
   });
 
-  test('only a request with the token and a verification’s hold is marked: never the owner’s view, never anyone else’s', () => {
-    const count = 'echo json_encode(count(hooked("render_block")));';
-    const traced = run({ token: TOKEN }, count) as number;
-    assert.equal(run({ token: TOKEN, steady: STEADY }, count), traced + 1, 'one more render_block filter, with the hold');
-    assert.equal(run({ steady: STEADY }, count), 0, 'no token: nothing, hold or not');
-    assert.equal(run({ token: 'e'.repeat(48), steady: STEADY }, count), 0, 'another Wanigan’s key: nothing');
+  test('a hold is a time no later than now nor 400 days before it, and a seed', () => {
+    const got = run({}, `
+echo json_encode(array_map(function ($h) { return wanigan_live_hold($h, 1700000000); }, array('t=1699999940;s=42', 't=1700000000;s=1', 't=1700000001;s=42', 't=' . (1700000000 - 401 * 86400) . ';s=42', 't=1699999940;s=0', 't=1699999940', 'x', 't=1699999940;s=42;views=a:b')));
+`);
+    assert.deepEqual(got, [[1_699_999_940, 42], [1_700_000_000, 1], null, null, null, null, null, null]);
+  });
+
+  test('held, a relative date is measured to the held time, a random query is seeded, and the response says what was held', () => {
+    const held = NOW - 60;
+    const out = run({ token: TOKEN, steady: `t=${held};s=42` }, `
+function human_time_diff($from, $to = 0) { if (empty($to)) $to = time(); $since = abs($to - $from) . 's'; foreach (hooked('human_time_diff') as $f) $since = $f($since, abs($to - $from), $from, $to); return $since; }
+function get_option($name) { return $name === 'gmt_offset' ? '2' : null; }
+class Query { public $vars; public function __construct($v) { $this->vars = $v; } public function get($k) { return $this->vars[$k] ?? ''; } public function set($k, $v) { $this->vars[$k] = $v; } }
+$orders = array();
+foreach (array('rand', 'date rand', 'RAND', 'date', '', array('rand' => 'ASC', 'title' => 'DESC')) as $o) { $q = new Query(array('orderby' => $o)); foreach (hooked('pre_get_posts') as $f) $f($q); $orders[] = $q->get('orderby'); }
+echo json_encode(array(
+  'now' => human_time_diff(${held} - 3600),
+  'local' => human_time_diff(${held} - 3600, time() + 7200),
+  'between' => human_time_diff(1000, 4000),
+  'orders' => $orders,
+  'said' => count(hooked('send_headers')),
+));
+`) as { now: string; local: string; between: string; orders: unknown[]; said: number };
+    assert.equal(out.now, '3600s', 'an hour before the held time, however long ago that was');
+    assert.equal(out.local, '10800s', 'a local now (current_time) is held by its offset too: the held time two hours on');
+    assert.equal(out.between, '3000s', 'two other times are left as they were');
+    assert.deepEqual(out.orders, ['RAND(42)', 'date RAND(42)', 'RAND(42)', 'date', '', { 'RAND(42)': 'ASC', title: 'DESC' }]);
+    assert.equal(out.said, 1, 'one header');
+    assert.match(WORDPRESS_VERIFY_SOURCE, /header\('X-Wanigan-Steady: t=' \. \$wanigan_live_hold\[0\] \. ';s=' \. \$wanigan_live_hold\[1\]\);/, 'the time and seed it was sent');
+  });
+
+  test('only a request with the token and a verification’s hold is marked or held: never the owner’s view, never anyone else’s', () => {
+    const count = 'echo json_encode(array_map(function ($h) { return count(hooked($h)); }, array("render_block", "human_time_diff", "pre_get_posts", "send_headers")));';
+    const [traced, ...rest] = run({ token: TOKEN }, count) as number[];
+    assert.deepEqual(rest, [0, 0, 0], 'the owner’s view: nothing held');
+    assert.deepEqual(run({ token: TOKEN, steady: STEADY }, count), [traced! + 1, 1, 1, 1], 'with the hold: one more render_block filter, and the hold');
+    assert.deepEqual(run({ token: TOKEN, steady: 'not a hold' }, count), [traced! + 1, 0, 0, 0], 'a hold refused: marked, nothing held');
+    assert.deepEqual(run({ steady: STEADY }, count), [0, 0, 0, 0], 'no token: nothing, hold or not');
+    assert.deepEqual(run({ token: 'e'.repeat(48), steady: STEADY }, count), run({ token: 'e'.repeat(48) }, count), 'another Wanigan’s key: nothing more than without a hold');
   });
 });

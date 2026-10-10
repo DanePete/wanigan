@@ -14,7 +14,7 @@ import type { EditTarget, LiveTrace, PartIdentity, TracePart } from '../shared/l
 import { folderOf } from './live-capture.ts';
 import { saveSchemaEdit } from './live-edit-save.ts';
 import {
-  areasOf, beforeCheck, beforeKept, madeOn, masksOf, pathOf, traceProblem, wireLiveLayer,
+  areasOf, beforeCheck, beforeKept, madeOn, masksOf, pathOf, steadyOf, traceProblem, wireLiveLayer,
   type BeforeKept, type LayerBeforeRender, type LayerRender, type LayerRenderRequest,
 } from './live-layer.ts';
 
@@ -1198,6 +1198,69 @@ test('a render’s masks: the trace’s parts by their boxes on the page, and th
   ], 'a part not on the page has no box; a reason the page made up is dropped; a held mark counts only when the helper confirmed the hold');
   assert.equal(masksOf(null, { t: 1, s: 1, views: [] }, areas)[1]?.held, true, 'confirmed: the relative date was held still');
   assert.deepEqual(areasOf('nothing'), { parts: {}, vary: [] });
+});
+
+/* ── what the site's helper held still ── */
+
+test('the helper’s answer to a hold is read only for the hold that was sent, with the views it seeded', () => {
+  const hold = { t: 1_700_000_000, s: 42 };
+  assert.deepEqual(steadyOf('t=1700000000;s=42', hold), { t: 1_700_000_000, s: 42, views: [] });
+  assert.deepEqual(steadyOf('t=1700000000;s=42;views=picks:block_1,news:page_1', hold), { t: 1_700_000_000, s: 42, views: ['picks:block_1', 'news:page_1'] });
+  assert.equal(steadyOf('t=1700000000;s=43', hold), null, 'another seed');
+  assert.equal(steadyOf('t=1699999999;s=42', hold), null, 'another time');
+  assert.equal(steadyOf('t=1700000000;s=42', null), null, 'nothing was sent');
+  assert.equal(steadyOf(undefined, hold), null, 'the helper said nothing: an older helper, or one that refused');
+  assert.deepEqual(steadyOf('t=1700000000;s=42;views=Bad View!', hold), null);
+});
+
+test('a change the helper held still is compared when every render was held alike, and left out when one was not', async () => {
+  const e = edit({ state: 'implemented' });
+  // A relative date at the foot of the page, which the helper held still: the same in every render held alike. The
+  // result also changed it (a leak), which is caught only because the date is compared.
+  const DATE = { x: 0, y: 180, width: 64, height: 20 };
+  const held = (confirm: (r: LayerRenderRequest, n: number) => boolean): LayerRender => {
+    let n = 0;
+    return async (r) => {
+      const me = n++;
+      return {
+        png: Buffer.from('x'), bitmap: r.design ? blank(64, 200) : painted(blank(64, 200), DATE, 100), elements: [heading(e.id, 'rgb(18, 52, 86)')], found: [e.id],
+        masks: [{ label: 'The core/post-date block', why: 'shows a date relative to now', rects: [DATE], held: confirm(r, me) }],
+        ...(confirm(r, me) ? { steady: { t: r.hold!.t, s: r.hold!.s, views: [] } } : {}),
+      };
+    };
+  };
+  const alike = wire({ edits: [e], render: held(() => true) });
+  try {
+    const v = await alike.verify(e.id, { widths: [390] });
+    assert.deepEqual([v.ok, v.failed, v.masked, v.held], [false, 'rest', [], { at: 1_700_000_000 }], 'held alike: compared, and the leak in it shows');
+  } finally { alike.done(); }
+  const once = wire({ edits: [e], render: held((_r, n) => n !== 2) });
+  try {
+    const v = await once.verify(e.id, { widths: [390] });
+    assert.deepEqual([v.ok, v.held, v.masked], [true, null, [{ label: 'The core/post-date block', why: 'shows a date relative to now', widths: [390], nearEdit: false }]],
+      'one render the helper did not hold: what it would change is left out and named, and the verdict does not say it was held');
+  } finally { once.done(); }
+});
+
+test('against a page from before held at another time, what the hold keeps still is left out of that comparison', async () => {
+  const { w, e } = retitled(false);
+  try {
+    await w.apply();
+    await w.implement(e.id);
+    // The page from before was kept with a relative date the helper held still at its own time.
+    const kept = w.kept(e.id)!;
+    const meta = join(w.dataDir, 'live-layer', folderOf('p1'), e.id, 'before', 'meta.json');
+    const at = { t: kept.hold.t, s: kept.hold.s, views: [] };
+    const DATE = { label: 'The core/post-date block', why: 'shows a date relative to now', rects: [PARAGRAPH], held: true };
+    writeFileSync(meta, JSON.stringify({ ...kept, widths: { 390: { ...kept.widths['390'], masks: [DATE], steady: at } } }));
+    assert.equal((await w.verify(e.id, { widths: [390] })).before?.ran, true);
+    assert.deepEqual(w.renders.map((r) => r.hold), w.renders.map(() => kept.hold), 'today’s renders are held at its time, so the date is the same');
+    // Held at another time (a hold the helper refused then): the date is left out of that comparison, and said.
+    w.setEdits(w.edits().map((x) => ({ ...x, state: 'implemented' })));
+    writeFileSync(meta, JSON.stringify({ ...kept, widths: { 390: { ...kept.widths['390'], masks: [DATE], steady: null } } }));
+    const v = await w.verify(e.id, { widths: [390] });
+    assert.deepEqual(v.masked, [{ label: 'The core/post-date block', why: 'shows a date relative to now', widths: [390], nearEdit: false }]);
+  } finally { w.done(); }
 });
 
 test('a render that never answers fails its verification, saying so, and the next verification still runs', { timeout: 10_000 }, async () => {
