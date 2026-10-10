@@ -137,6 +137,14 @@ try {
     const rows = await page.$$eval('.live-layer-title', (els) => els.map((e) => e.textContent));
     for (const want of ['Hero', 'Sidebar', 'Opening hours']) if (!rows.some((r) => r === want || r?.startsWith(want))) fail(t(`layers: no "${want}" row (${rows.join(', ')})`));
     await shot('layers');
+    // An agent's file edit seen on the page offers its session (Open the session): its own message from when it
+    // started was gone by the time the edit landed (take editor-e14 went to the terminal through the Sessions list).
+    {
+      const ns = (await page.evaluate(() => window.wanigan.call('projects.list', {}))).find((p) => p.key === 'NS');
+      await page.evaluate(({ projectId, path }) => window.wanigan.__emit('live', { kind: 'edit', projectId, sessionId: 's-agent-1', paths: [`${path}/web/themes/custom/acme/css/base.css`] }), { projectId: ns.id, path: ns.path });
+      await page.waitForSelector('.status-line button:has-text("Open the session")', { timeout: 4000 })
+        .catch(async () => fail(t(`agent edit: the page's message did not offer the session (${(await page.locator('.status-said').innerText().catch(() => '')).replace(/\s+/g, ' ')})`)));
+    }
     // Back in Live before the page's trace has come (from a session's split view, say): Layers shows it is loading, and
     // never says that nothing on the page says what made it (take editor-e10, 55.4 s: three frames of it).
     {

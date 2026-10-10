@@ -107,6 +107,8 @@ export const BRIDGE = `
         return r.result;
       },
       on(l) { listeners.add(l); return () => listeners.delete(l); },
+      // A sweep plays an event the main process would send (an agent's file edit, say).
+      __emit(event, data) { for (const l of listeners) l(event, data); },
       status: async () => 'connected',
       onStatus: () => () => {},
       // What is wrong with the core is the main process's to say; the sweep says it here.

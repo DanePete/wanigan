@@ -277,10 +277,13 @@ const WIDTHS: Record<Width, { px: number | null; label: string; icon: 'desktop' 
 };
 
 type Banner =
-  /** `styled`: the parts a stylesheet's changed rules style, not the parts it makes. */
-  | { kind: 'outlined'; file: string; count: number; styled?: boolean }
+  /**
+   * `styled`: the parts a stylesheet's changed rules style, not the parts it makes. `session`: the agent's session that
+   * made the edit, offered as Open the session (none in a session's own split view, where its terminal is beside).
+   */
+  | { kind: 'outlined'; file: string; count: number; styled?: boolean; session?: string | null }
   /** `swapped`: a stylesheet fetched again in place, not a reload. */
-  | { kind: 'not-here'; file: string; swapped?: boolean }
+  | { kind: 'not-here'; file: string; swapped?: boolean; session?: string | null }
   | { kind: 'elsewhere'; file: string }
   | { kind: 'waiting'; file: string }
   | { kind: 'reloaded' }
@@ -458,8 +461,13 @@ function LiveShown({ site, url, project, follow, card, compact, following, shots
   const say = useCallback((b: Banner): void => {
     const text = bannerText(b);
     if (b.kind === 'waiting') toast(text, 'info', { action: { label: 'Reload', run: () => void liveBridge()?.reload(true) } });
-    else toast(text);
-  }, [toast]);
+    // An agent's edit seen on the page: one click to what it read and the edit it made. Said there, the session's own
+    // "Open the session" (from when it started) was gone by the time its edit landed.
+    else if ((b.kind === 'outlined' || b.kind === 'not-here') && b.session) {
+      const sessionId = b.session;
+      toast(text, 'info', { action: { label: 'Open the session', run: () => navigate({ name: 'session', projectKey: project.key, sessionId }) } });
+    } else toast(text);
+  }, [toast, project.key]);
   // Every write is read back once the page reloads with it (live/write-checks.ts).
   const traceIdRef = useRef<string | null>(null);
   traceIdRef.current = traceData?.id ?? null;
@@ -564,6 +572,8 @@ function LiveShown({ site, url, project, follow, card, compact, following, shots
 
   const refreshProblems = useCallback(async (): Promise<void> => { setProblems(await live.problems()); }, [live]);
 
+  /** The session whose file edit is waiting to be seen on the page (the agents' edits, below). */
+  const editor = useRef<string | null>(null);
   const scanAndOutline = useCallback(async (paths: string[], reloaded: boolean): Promise<void> => {
     const before = scanned.current;
     const found = await live.scan();
@@ -586,14 +596,17 @@ function LiveShown({ site, url, project, follow, card, compact, following, shots
     const styled = swapped && !hits.length;
     if (styled) { const at = new Set(await live.restyled()); hits = found.filter((r) => at.has(r.index)); }
     if (paths.length) setChanged(new Set(hits.map((h) => h.index)));
+    // The session whose edit this is, once (none in a session's split view: its terminal is beside the page).
+    const session = paths.length && !compact ? editor.current : null;
+    if (paths.length) editor.current = null;
     if (hits.length) {
       await live.outline(hits.map((h) => h.index), null, 'edit');
-      say({ kind: 'outlined', file: fileName(paths[0] as string), count: hits.length, styled });
+      say({ kind: 'outlined', file: fileName(paths[0] as string), count: hits.length, styled, session });
       return;
     }
-    if (paths.length) say({ kind: 'not-here', file: fileName(paths[0] as string), swapped });
+    if (paths.length) say({ kind: 'not-here', file: fileName(paths[0] as string), swapped, session });
     if (next?.region) await live.outline([next.region.index], labelOf(next.region), 'pick');
-  }, [live, madeBy, labelOf, say]);
+  }, [live, madeBy, labelOf, say, compact]);
 
   /** Parts a page adds after it loads (a banner fetched by AJAX) are found by looking again while it changes. */
   const watchLate = useCallback((): void => {
@@ -679,7 +692,7 @@ function LiveShown({ site, url, project, follow, card, compact, following, shots
       const inside = e.paths.filter((p) => p === root || p.startsWith(`${root}/`));
       if (!inside.length) { say({ kind: 'elsewhere', file: fileName(e.paths[0] ?? '') }); return; }
       if (!following) { say({ kind: 'waiting', file: fileName(inside[0] as string) }); return; }
-      if (e.sessionId) edited.current.add(e.sessionId);
+      if (e.sessionId) { edited.current.add(e.sessionId); editor.current = e.sessionId; }
       for (const p of inside) q.paths.add(p);
     } else {
       const reloadedForEdits = !!e.sessionId && edited.current.delete(e.sessionId);
