@@ -5,6 +5,7 @@ import type { UpdateStatus } from '@shared/updates';
 import { JevSettings } from '../components/Jev';
 import { LocalModelsSettings } from '../components/LocalModels';
 import { PhoneSettings } from '../components/PhoneSettings';
+import { VoiceSettings } from '../components/VoiceSettings';
 import { Button, Segmented, Toggle, useToast } from '../components/ui';
 import { bridge } from '../lib/api';
 import { ago, plural } from '../lib/format';
@@ -24,6 +25,7 @@ export function SettingsView({ projects }: { projects: ProjectSummary[] | undefi
           <AppearanceSettings />
           <GeneralSettings />
           <LiveViewSettings />
+          <VoiceSettings />
           <UpdateSettings />
           <LocalModelsSettings />
           <PhoneSettings />

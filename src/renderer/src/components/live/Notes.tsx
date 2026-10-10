@@ -8,7 +8,7 @@
 // or another that takes a message at once), which starts the session, saves
 // the pictures to it and queues the words, exactly as a send to a running one
 // does. One click or key, never by itself: nothing starts or spends without it.
-import { useState, type KeyboardEvent, type ReactNode } from 'react';
+import { useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import type { LayerSnapshot } from '@shared/design-layer';
 import type { LiveComponent, LiveEdit } from '@shared/live';
 import type { Provider, ProjectSummary, Session } from '@shared/model';
@@ -25,6 +25,7 @@ import { heldInLayer } from '../../lib/live-layer';
 import { Select } from '../Select';
 import { Button, EmptyState, IconButton, useToast } from '../ui';
 import { Icon } from '../icons';
+import { VoiceInput } from '../VoiceInput';
 import { KIND_ICON } from './Layers';
 import { addNote, clearNotes, notesText, removeNote, useNotes, type LiveNote } from './note-store';
 
@@ -226,16 +227,17 @@ export function NoteComposer({ project, draft, components, prefer, compact = fal
     else if (isAddKey(e, mac)) { e.preventDefault(); void keep(); }
   };
   const chord = (...k: string[]): string => k.map((x) => keyLabel(x, mac)).join(mac ? '' : '+');
+  const box = useRef<HTMLTextAreaElement>(null);
   const explain = (
-    <textarea aria-label={given ? 'What is wrong, in your words' : 'What should change here?'} rows={compact ? 1 : 3} value={text}
+    <textarea ref={box} aria-label={given ? 'What is wrong, in your words' : 'What should change here?'} rows={compact ? 1 : 3} value={text}
       placeholder={given ? `Explain what is wrong${given.kind === 'recording' ? ' and what you expected' : ''}` : hasChange ? 'Anything to add? (optional)' : 'What should change here?'}
       onChange={(e) => setText(e.target.value)} onKeyDown={keys} />
   );
-  // The explanation, with voice input's place beside it (data-slot="voice": empty until Voice lands from its branch).
+  // The explanation, with voice input beside it (data-slot="voice"): its words go in at the box's caret.
   const say = (
     <div className="live-compose-say">
       {explain}
-      <div className="live-compose-voice" data-slot="voice">{voice}</div>
+      <div className="live-compose-voice" data-slot="voice">{voice ?? <VoiceInput target={box} label="Speak the note" size={compact ? 's' : 'm'} />}</div>
     </div>
   );
   return (

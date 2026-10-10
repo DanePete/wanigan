@@ -19,6 +19,7 @@ import { Button, IconButton, Segmented, useFocusTrap, useToast } from './ui';
 import { AttachButton, AttachmentChips, useAttachments, useFileDrop } from './Attachments';
 import { receivesLine } from '@shared/attachments';
 import { useCoversLive } from '../lib/live';
+import { VoiceInput } from './VoiceInput';
 
 /*
  * What the chat asks of the orb, for both the button and the conversation.
@@ -242,6 +243,7 @@ function ChatSheet({ project, everywhere, setEverywhere, thread, error, orb, onC
             }}
             placeholder={scope ? `Ask about ${scope.name}` : 'Ask about your projects'}
           />
+          <VoiceInput target={input} label="Speak your question" />
           {thinking ? (
             <Button tone="quiet" icon="stop" onClick={stop}>Stop</Button>
           ) : (

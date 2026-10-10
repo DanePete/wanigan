@@ -17,6 +17,7 @@ import { SessionTokens } from '../components/Tokens';
 import { Ask } from '../components/Ask';
 import { AttachButton, AttachmentChips, useAttachments, useFileDrop } from '../components/Attachments';
 import { LivePane } from '../components/Live';
+import { VoiceInput } from '../components/VoiceInput';
 import { useLiveSplit, useSessionEdits } from '../lib/live';
 import { useAppState } from '../lib/settings';
 import { liveFor } from '@shared/settings';
@@ -195,6 +196,7 @@ function Composer({ sessionId, provider, state, zone }: { sessionId: string; pro
   const waits = provider === 'claude' && state !== 'waiting';
   const ids = attach.files.map((f) => f.id);
   const once = useSingleFlight();
+  const box = useRef<HTMLTextAreaElement>(null);
   const send = (): Promise<void> => once(async () => {
     if (!text.trim() && !ids.length) return;
     // The text stays in the box when sending fails, so Retry sends it again.
@@ -219,6 +221,7 @@ function Composer({ sessionId, provider, state, zone }: { sessionId: string; pro
         {takesFiles ? <AttachButton onPick={attach.pick} /> : null}
         <label className="visually-hidden" htmlFor="composer">Message the agent</label>
         <textarea
+          ref={box}
           id="composer"
           rows={1}
           value={text}
@@ -226,6 +229,7 @@ function Composer({ sessionId, provider, state, zone }: { sessionId: string; pro
           placeholder={waits ? 'Message the agent. It is sent when the agent is idle.' : 'Message the agent'}
           onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void send(); } }}
         />
+        <VoiceInput target={box} label="Speak to the agent" />
         <Button tone="primary" type="submit" icon="send" disabled={(!text.trim() && !ids.length) || attach.adding > 0}>{waits ? 'Queue' : 'Send'}</Button>
       </div>
     </form>

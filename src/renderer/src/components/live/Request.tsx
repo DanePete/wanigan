@@ -4,7 +4,7 @@
 // code that ran them; pointing at one outlines the part it was for), the
 // scripts and styles it added, and what it logged. Every number is what the
 // helper measured in this one render on this Mac.
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { queriesByCaller, slowest, truncatedNote, type LiveTraceAnswer, type PartIndex } from '@shared/live-lens';
 import type { LiveSite } from '@shared/live';
 import type { LiveTrace, TraceQuery } from '@shared/live-trace';
@@ -12,6 +12,7 @@ import type { ProjectSummary } from '@shared/model';
 import { ago } from '../../lib/format';
 import { Select } from '../Select';
 import { CopyButton, Segmented } from '../ui';
+import { VoiceInput } from '../VoiceInput';
 import { TraceNote } from './TraceNote';
 import { bytes, ms, where } from './trace-format';
 
@@ -77,6 +78,7 @@ function Hooks({ trace }: { trace: LiveTrace }) {
   const hooks = trace.hooks ?? [];
   const [by, setBy] = useState('');
   const [query, setQuery] = useState('');
+  const search = useRef<HTMLInputElement>(null);
   const owners = useMemo(() => [...new Set(hooks.map((h) => h.by))].sort(), [hooks]);
   const slow = useMemo(() => slowest(hooks, SLOWEST), [hooks]);
   const longest = useMemo(() => hooks.reduce((m, h) => Math.max(m, h.ms ?? 0), 0), [hooks]);
@@ -91,8 +93,9 @@ function Hooks({ trace }: { trace: LiveTrace }) {
           options={[{ value: '', label: `Every ${trace.platform === 'drupal' ? 'module and theme' : 'plugin and theme'}` }, ...owners.map((o) => ({ value: o, label: o }))]} />
         <label className="search-field live-request-search">
           <span className="visually-hidden">Search hooks</span>
-          <input type="search" placeholder="Search hooks" value={query} onChange={(e) => setQuery(e.target.value)} />
+          <input ref={search} type="search" placeholder="Search hooks" value={query} onChange={(e) => setQuery(e.target.value)} />
         </label>
+        <VoiceInput target={search} label="Say what to search for" size="s" />
       </div>
       <p className="faint small">{shown.length === hooks.length ? `${hooks.length} in the order they fired` : `${shown.length} of ${hooks.length}`}; the {SLOWEST} slowest are marked.</p>
       <ol className="live-timeline" aria-label="Hooks in the order they fired">
