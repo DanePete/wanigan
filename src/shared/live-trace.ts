@@ -221,8 +221,11 @@ export type PartKind = (typeof PART_KINDS)[number];
  *   part's identityKey, or null at the page's top), and which of its kind it
  *   is there (`nth`, from 0, in document order).
  * - `config`: one configuration item, by `type` and `id`: a Drupal block
- *   placement (`block`, with its `plugin`), a menu link (`menu_link`, its
- *   plugin id), a view display (`view`, `id:display`); a WordPress widget
+ *   placement (`block`, with its `plugin`), a Layout Builder component
+ *   (`layout_builder_component`, `<entity type>:<entity UUID>/<component
+ *   UUID>`, with its block `plugin`), a menu (`menu`, its machine name), a
+ *   menu link (`menu_link`, its plugin id), a view display (`view`,
+ *   `id:display`); a WordPress widget
  *   (`widget`), menu item (`menu_item`), template (`wp_template`) or template
  *   part (`wp_template_part`, its `theme//slug` id).
  * - `block`: a WordPress block in stored markup: where (`post:12`,
