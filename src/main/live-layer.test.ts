@@ -16,7 +16,7 @@ import type { EditTarget, LiveTrace, PartIdentity, TracePart } from '../shared/l
 import { folderOf } from './live-capture.ts';
 import { saveSchemaEdit } from './live-edit-save.ts';
 import {
-  areasOf, beforeCheck, beforeKept, madeOn, masksOf, pathOf, steadyOf, traceProblem, wireLiveLayer,
+  areasOf, beforeCheck, beforeKept, madeBy, madeOn, masksOf, pathOf, steadyOf, traceProblem, wireLiveLayer,
   type BeforeKept, type LayerBeforeRender, type LayerRender, type LayerRenderRequest,
 } from './live-layer.ts';
 import type { HelperSaved, SaveAt } from './live-view.ts';
@@ -48,10 +48,15 @@ const edit = (over: Partial<LayerEdit> = {}): LayerEdit => ({
   change: { type: 'style', values: { color: '#123456' } }, before: {}, state: 'draft', by: 'owner', at: 1, verdict: null, ...over,
 });
 
-/** One element on the model page: its whole text (null when it has none), whether it holds only words, the field around it. */
-interface El { text: string | null; plain: boolean; field?: string }
+/**
+ * One element on the model page: its whole text (null when it has none), whether it holds only words, the field around
+ * it, and the trace's parts around it, innermost first (what the page script's layerOf reads from the page's regions).
+ */
+interface El { text: string | null; plain: boolean; field?: string; around?: string[] }
 /** An element holding only words. */
 const words = (text: string, field?: string): El => ({ text, plain: true, ...(field ? { field } : {}) });
+/** An element holding only words, inside these parts of the trace (innermost first). */
+const wordsIn = (text: string, around: string[]): El => ({ text, plain: true, around });
 /** A container: its text is its children's. */
 const holding = (text: string | null): El => ({ text, plain: false });
 
@@ -102,7 +107,8 @@ function modelPage() {
       return (el ? {
         count: els.length, field: el.field ?? null, words: wordsOf(el), plain: el.plain,
         same: wordsOf(el) !== null && els.every((e) => e.plain && wordsOf(e) === wordsOf(el) && (e.field ?? null) === (el.field ?? null)),
-      } : { count: 0, field: null, words: null, plain: false, same: false }) as T;
+        parts: el.around ?? [],
+      } : { count: 0, field: null, words: null, plain: false, same: false, parts: [] }) as T;
     }
     return fallback;
   };
@@ -824,6 +830,160 @@ test('WordPress: words no target holds, or that two hold, are refused with why, 
     });
     assert.deepEqual([b.posts, b.marks], [[], []]);
   } finally { b.done(); }
+});
+
+/* ── WordPress: words a classic theme's template files write ── */
+
+// A made-up category archive in a child theme of a classic parent theme, as the WordPress helper traces it
+// (live-helper-wordpress.ts, live-helper-wordpress-template-words.ts): the page template and header.php are the
+// parent's, each a part named by its theme and path, offering the words typed into it and the strings it prints
+// through gettext, with their lines; a plugin's template and a plugin's shortcode are parts no identity names; a
+// template part too large to read says so.
+const fileOf = (path: string, owner: 'theme' | 'plugin', pkg: string) => ({ file: path, line: 1, owner, package: pkg }) as const;
+const tplPart = (theme: string, path: string, role: 'theme' | 'child' | 'parent'): PartIdentity => ({ kind: 'template', theme, path, role });
+const headerFile = tplPart('acme', 'header.php', 'parent');
+const archiveFile = tplPart('acme', 'archive.php', 'parent');
+const hugeFile = tplPart('acme-child', 'template-parts/huge.php', 'child');
+const headerWhy = 'These words are written in wp-content/themes/acme/header.php, a template of the parent theme “Acme”: code, so WordPress keeps no copy of them to change, and a parent theme update would overwrite an edit there. The change belongs in the active child theme, “Acme Child”: copy the file to wp-content/themes/acme-child/header.php, which WordPress then uses instead, and change the copy. An agent can do both from a brief.';
+const headerTWhy = 'These words are printed by wp-content/themes/acme/header.php through a WordPress translation function, in the text domain “acme”. A translation file for that text domain (.po and .mo, or .l10n.php) changes them without code; changing the string in the template is a code change, after which its translations no longer match it. The template is the parent theme’s, so a code change belongs in a copy of it at the same path in the child theme “Acme Child”. An agent can make either from a brief.';
+const eventsWhy = 'These words are written in wp-content/plugins/northwind-events/templates/upcoming.php, a template of the plugin “northwind-events”: the plugin’s code, which its updates overwrite, so Wanigan does not change it. Where the plugin lets a theme override its templates, a copy in the theme is where they change.';
+const readOnly = (description: string) => ({ type: 'string', readOnly: true, description });
+const headerWritten: EditTarget = {
+  id: 'words.tpl.0a1b2c3d4e5f', kind: 'template-override', label: 'Words written in header.php', via: 'schema', revisions: false, why: headerWhy,
+  schema: { type: 'object', properties: { w1: readOnly('They are on line 12.'), w2: readOnly('They are on lines 15 and 40.') } }, value: { w1: 'Plan your trip', w2: 'Paddle & camp' },
+};
+const headerT: EditTarget = {
+  id: 'words.t.0a1b2c3d4e5f', kind: 'template-override', label: 'Words header.php translates (acme)', via: 'schema', revisions: false, why: headerTWhy,
+  schema: { type: 'object', properties: { w1: readOnly('They are on line 9, printed through esc_html_e().') } }, value: { w1: 'Skip to content' },
+};
+const eventsWritten: EditTarget = {
+  id: 'words.tpl.5e6f7a8b9c0d', kind: 'template-override', label: 'Words written in upcoming.php', via: 'schema', revisions: false, why: eventsWhy,
+  schema: { type: 'object', properties: { w1: readOnly('They are on line 1.') } }, value: { w1: 'Upcoming events' },
+};
+const read = (preview: string) => [{ name: 'template.words', type: 'string', preview }];
+function classicTrace(): LiveTrace {
+  return {
+    version: 1, platform: 'wordpress', id: '0123456789abcdef', url: '/category/trips/', at: 1, total: { ms: 1 },
+    parts: [
+      { id: 'c0', kind: 'template', label: 'Page template: archive.php', identity: archiveFile, source: fileOf('wp-content/themes/acme/archive.php', 'theme', 'acme'), variables: read('read: 1 run of words, 0 translated strings') },
+      { id: 'c1', kind: 'template', label: 'header.php', parent: 'c0', identity: headerFile, source: fileOf('wp-content/themes/acme/header.php', 'theme', 'acme'), variables: read('read: 2 runs of words, 1 translated string'), edits: [headerWritten.id, headerT.id] },
+      { id: 'c2', kind: 'template', label: 'wp-content/plugins/northwind-events/templates/upcoming.php', parent: 'c0', source: fileOf('wp-content/plugins/northwind-events/templates/upcoming.php', 'plugin', 'northwind-events'), edits: [eventsWritten.id] },
+      { id: 'c3', kind: 'shortcode', label: '[northwind_events]', parent: 'c0', source: fileOf('wp-content/plugins/northwind-events/northwind-events.php', 'plugin', 'northwind-events') },
+      { id: 'c4', kind: 'template', label: 'template-parts/huge.php', parent: 'c0', identity: hugeFile, source: fileOf('wp-content/themes/acme-child/template-parts/huge.php', 'theme', 'acme-child'), variables: read('not read: it is larger than 256 KB') },
+    ],
+    edits: [headerWritten, headerT, eventsWritten],
+  };
+}
+/** A text edit on an element no part with an identity names: kept by its document path. */
+const unnamed = (selector: string, before: string, value: string): LayerEdit =>
+  edit({ label: 'Text (no part names it)', target: { part: null, inner: null, selector, textHash: layerTextHash(before) }, change: { type: 'text', value } });
+
+test('WordPress: words a theme template writes, and a string it prints through gettext, go to an agent with the file, the line and the text domain', async () => {
+  const typed = retype(headerFile, 'Plan a trip', 'Plan your trip', 'p:nth-of-type(1)');
+  const skip = retype(headerFile, 'Jump to content', 'Skip to content', 'a:nth-of-type(1)');
+  const w = wire({ edits: [typed, skip], trace: classicTrace() });
+  try {
+    w.page.parts = { c1: { 'p:nth-of-type(1)': [words('Plan your trip')], 'a:nth-of-type(1)': [words('Skip to content')] } };
+    await w.apply();
+    assert.deepEqual(await w.implement(typed.id), { ok: false, id: typed.id, route: 'agent', why: `${headerWhy} They are on line 12.` },
+      'typed into the parent theme’s header: code, which belongs in a copy in the child theme');
+    assert.deepEqual(await w.implement(skip.id), { ok: false, id: skip.id, route: 'agent', why: `${headerTWhy} They are on line 9, printed through esc_html_e().` },
+      'a gettext string: its text domain, and a translation file as the way without code');
+    assert.deepEqual([w.posts, w.saves, w.marks], [[], [], []], 'nothing is saved or marked: an agent makes it, on the owner’s click');
+    assert.deepEqual(w.befores.map((b) => b.width), [390, 1440, 390, 1440], 'the page as it was is kept for each, as for a style an agent makes');
+  } finally { w.done(); }
+});
+
+test('WordPress: a classic header’s site title, now that header.php is a named part, is the setting it shows, asked first and then saved', async () => {
+  // The helper puts the site title's target on the part that read it while rendering (option_seen): here header.php.
+  const title: EditTarget = { id: 'option-blogname', kind: 'option', label: 'Site title', via: 'schema', schema: { type: 'string', title: 'Site title' }, value: 'Acme Outfitters', revisions: false, shows: 'every page that shows the site’s title' };
+  const t = classicTrace();
+  const traced: LiveTrace = { ...t, parts: t.parts.map((p) => (p.id === 'c1' ? { ...p, edits: [...(p.edits ?? []), title.id] } : p)), edits: [...t.edits, title] };
+  const retitled = retype(headerFile, 'Northwind Outfitters', 'Acme Outfitters', 'p:nth-of-type(1) > a:nth-of-type(1)');
+  const w = wire({ edits: [retitled], trace: traced });
+  try {
+    w.page.parts = { c1: { 'p:nth-of-type(1) > a:nth-of-type(1)': [words('Acme Outfitters')] } };
+    await w.apply();
+    assert.deepEqual(await w.implement(retitled.id), {
+      ok: false, id: retitled.id, route: 'none',
+      why: 'These words are kept in Site title: saving them changes it wherever it shows (every page that shows the site’s title), not only on this page. Make it real again to save them there.',
+    }, 'said first, with where it shows');
+    assert.deepEqual(await w.implement(retitled.id), { ok: true, id: retitled.id, state: 'implemented', revision: '43' });
+    assert.deepEqual(w.posts, [{ path: '/_wanigan/edit/option-blogname', body: { trace: '0123456789abcdef', value: 'Northwind Outfitters' } }]);
+  } finally { w.done(); }
+});
+
+test('WordPress: words a template’s PHP makes, or a template not read, are refused naming the file, and never as “cannot tell”', async () => {
+  const computed = retype(headerFile, 'Hi', 'Hello Dana, welcome back', 'p:nth-of-type(2)');
+  const huge = retype(hugeFile, 'Less', 'Too much to read', 'p:nth-of-type(1)');
+  const w = wire({ edits: [computed, huge], trace: classicTrace() });
+  try {
+    w.page.parts = { c1: { 'p:nth-of-type(2)': [words('Hello Dana, welcome back')] }, c4: { 'p:nth-of-type(1)': [words('Too much to read')] } };
+    await w.apply();
+    assert.deepEqual(await w.implement(computed.id), {
+      ok: false, id: computed.id, route: 'none',
+      why: 'These words are not written as text in wp-content/themes/acme/header.php: its PHP, or code it calls, makes them, and Wanigan does not guess at what PHP computes, so there is nothing here to save them to. An agent can find where they are made from a brief.',
+    });
+    assert.deepEqual(await w.implement(huge.id), {
+      ok: false, id: huge.id, route: 'none',
+      why: 'These words are in what wp-content/themes/acme-child/template-parts/huge.php prints, and the site helper did not read that template (it is larger than 256 KB), so whether they are written there or made by its code is not known.',
+    });
+    assert.deepEqual([w.posts, w.marks], [[], []]);
+  } finally { w.done(); }
+});
+
+test('WordPress: an element no named part holds is looked up in the templates around it; a plugin’s is named, and only markup the trace knows nothing of “cannot tell”', async () => {
+  const inHeader = unnamed('html > body > header > nav > span', 'Paddle & camp', 'Paddle and camp');
+  const inPlugin = unnamed('html > body > main > section > h2', 'Upcoming events', 'Coming up');
+  const byPlugin = unnamed('html > body > main > p:nth-of-type(3)', 'Three trips left', 'Two trips left');
+  const nowhere = unnamed('html > body > div', 'Cookie settings', 'Cookies');
+  const w = wire({ edits: [inHeader, inPlugin, byPlugin, nowhere], trace: classicTrace() });
+  try {
+    w.page.selectors = {
+      'html > body > header > nav > span': [wordsIn('Paddle & camp', ['c1', 'c0'])],
+      'html > body > main > section > h2': [wordsIn('Upcoming events', ['c2', 'c0'])],
+      'html > body > main > p:nth-of-type(3)': [wordsIn('Three trips left', ['c3', 'c0'])],
+      'html > body > div': [wordsIn('Cookie settings', [])],
+    };
+    await w.apply();
+    assert.deepEqual(await w.implement(inHeader.id), { ok: false, id: inHeader.id, route: 'agent', why: `${headerWhy} They are on lines 15 and 40.` },
+      'in the header’s region, though no part names the element: written there, so an agent’s');
+    assert.deepEqual(await w.implement(inPlugin.id), { ok: false, id: inPlugin.id, route: 'none', why: `${eventsWhy} They are on line 1.` },
+      'a plugin’s template is the plugin’s code, said as whose');
+    assert.deepEqual(await w.implement(byPlugin.id), {
+      ok: false, id: byPlugin.id, route: 'none',
+      why: 'These words come from the plugin “northwind-events”: its code (wp-content/plugins/northwind-events/northwind-events.php) made this part of the page, and nothing here holds them, so Wanigan does not save them from here. They change where the plugin keeps them: in its settings if it has one for them, or in its code, which Wanigan does not change.',
+    });
+    const unknown = await w.implement(nowhere.id);
+    assert.deepEqual(unknown, { ok: false, id: nowhere.id, route: 'none', why: 'Its element is in markup no part of the page’s trace names, so Wanigan cannot tell what holds these words.' }, 'outside every part the trace knows');
+    for (const e of [inHeader, inPlugin, byPlugin]) assert.ok(!/cannot tell/.test(JSON.stringify(await w.implement(e.id))), 'the trace knew the file');
+    assert.deepEqual([w.posts, w.saves, w.marks], [[], [], []]);
+  } finally { w.done(); }
+});
+
+test('WordPress: words in no template are said by what made their part, and by nothing the trace does not know', () => {
+  const at = (file: string, pkg: string, owner: 'theme' | 'plugin' | 'yours' = 'plugin') => ({ file, line: 3, owner, package: pkg });
+  assert.match(madeBy({ id: 's', kind: 'shortcode', label: '[northwind_events]', source: at('wp-content/plugins/northwind-events/northwind-events.php', 'northwind-events') }) ?? '', /^These words come from the plugin “northwind-events”: its code \(wp-content\/plugins\/northwind-events\/northwind-events\.php\)/);
+  assert.match(madeBy({ id: 'm', kind: 'widget', label: 'Hours widget', source: at('wp-content/mu-plugins/acme-hours.php', 'acme-hours', 'yours') }) ?? '', /the plugin “acme-hours”/, 'a must-use plugin is a plugin too');
+  assert.match(madeBy({ id: 't', kind: 'shortcode', label: '[acme_badge]', source: at('wp-content/themes/acme/inc/badge.php', 'acme', 'theme') }) ?? '', /^These words come from the theme “acme”: its code \(wp-content\/themes\/acme\/inc\/badge\.php\) made this part/);
+  assert.equal(madeBy({ id: 'n', kind: 'menu', label: 'Link: About', identity: { kind: 'config', type: 'menu_item', id: '31' } }), null, 'a menu item made by core, from nothing the trace says: unknown');
+  assert.equal(madeBy(null), null);
+});
+
+test('WordPress: an edit on one element of a template file loaded in several places reaches only the places showing its words', async () => {
+  // A card template loaded once per post: "Read more" is written in it, the date is what it prints from each post.
+  const card = tplPart('acme', 'template-parts/content.php', 'theme');
+  const trace: LiveTrace = { ...classicTrace(), parts: [1, 2, 3].map((n) => ({ id: `k${n}`, kind: 'template' as const, label: 'template-parts/content.php', identity: card })) };
+  const more = edit({ target: { part: card, inner: 'a:nth-of-type(1)', selector: null, textHash: layerTextHash('Read more') } });
+  const date = edit({ target: { part: card, inner: 'time:nth-of-type(1)', selector: null, textHash: layerTextHash('2 June') }, change: { type: 'text', value: '3 June' } });
+  const w = wire({ edits: [more, date], trace });
+  try {
+    w.page.parts = Object.fromEntries([['1 June', 'Read more'], ['2 June', 'Read more'], ['3 May', 'Read on']].map(([d, m], i) => [`k${i + 1}`, { 'a:nth-of-type(1)': [words(m as string)], 'time:nth-of-type(1)': [words(d as string)] }]));
+    const applied = await w.apply();
+    assert.deepEqual(w.page.set?.tags[more.id], [0, 1], 'the style reaches the two places that show “Read more”, not the one that says “Read on”');
+    assert.deepEqual(w.page.set?.tags[date.id], [1], 'the retyped date is the one post’s, not every card’s');
+    assert.deepEqual(applied.shown.find((x) => x.id === date.id)?.elements, 1);
+  } finally { w.done(); }
 });
 
 /* ── WordPress: a block's rich text, the HTML its schema says it is ── */
@@ -1841,5 +2001,36 @@ test('Drupal: a webform a content field shows saves its words to the webform, no
     assert.deepEqual(w.saves, [], 'not through the field save the mark around it would take');
     assert.deepEqual(w.posts.map((p) => [p.path, p.body]), [['/_wanigan/edit/words.webform.contact.email.title', { trace: '0123456789abcdef', value: 'Your email' }]]);
     assert.deepEqual(w.marks.map((m) => [m.id, m.state]), [[retyped.id, 'implemented']]);
+  } finally { w.done(); }
+});
+
+test('Drupal: an element no named part holds is looked up in the templates around it, as words a template writes, rather than refused as unnamed', async () => {
+  // A block's template region the trace knows, though no part with an identity names the element (its path inside the
+  // region could not be written): the helper's TemplateWords on that template's part say what it writes.
+  const codeWhy = 'These words are written in themes/custom/acme/templates/block--acme-promo.html.twig, a template: a template is code, so Drupal keeps no such thing to change in the site. An agent can change the template from a brief (a copy of it in your theme, when the template is not yours).';
+  const tWhy = 'These words are printed by themes/custom/acme/templates/block--acme-promo.html.twig through Drupal’s interface translation (t()): Wanigan does not change an interface translation yet, and a change there reaches every page that prints the same words. Change them under Interface translation, or in the template.';
+  const ro = { type: 'object', properties: { w1: { type: 'string', readOnly: true } } };
+  const written: EditTarget = { id: 'words.tpl.5a6b7c8d9e0f', kind: 'template-override', label: 'Words written in block--acme-promo.html.twig', via: 'schema', revisions: false, schema: ro, value: { w1: 'Book a trip' }, why: codeWhy };
+  const translated: EditTarget = { id: 'words.t.5a6b7c8d9e0f', kind: 'template-override', label: 'Words block--acme-promo.html.twig translates', via: 'schema', revisions: false, schema: ro, value: { w1: 'Learn more' }, why: tWhy };
+  const drupal: LiveTrace = {
+    ...trace(),
+    parts: [{ id: 'page', kind: 'template', label: 'Page' }, { id: 'b1', kind: 'template', label: 'block--acme-promo.html.twig', parent: 'page', edits: [written.id, translated.id] }],
+    edits: [written, translated],
+  };
+  const book = unnamed('html > body > div > p:nth-of-type(1)', 'Book a trip', 'Book a canoe');
+  const learn = unnamed('html > body > div > a:nth-of-type(1)', 'Learn more', 'Read on');
+  const made = unnamed('html > body > div > span:nth-of-type(1)', '4 spots left', '3 spots left');
+  const w = wire({ edits: [book, learn, made], trace: drupal });
+  try {
+    w.page.selectors = {
+      'html > body > div > p:nth-of-type(1)': [wordsIn('Book a trip', ['b1', 'page'])],
+      'html > body > div > a:nth-of-type(1)': [wordsIn('Learn more', ['b1', 'page'])],
+      'html > body > div > span:nth-of-type(1)': [wordsIn('4 spots left', ['b1', 'page'])],
+    };
+    await w.apply();
+    assert.deepEqual(await w.implement(book.id), { ok: false, id: book.id, route: 'agent', why: codeWhy }, 'written in the template around it: code, an agent’s');
+    assert.deepEqual(await w.implement(learn.id), { ok: false, id: learn.id, route: 'none', why: tWhy }, 'printed through t(): an interface translation');
+    assert.deepEqual(await w.implement(made.id), { ok: false, id: made.id, route: 'none', why: DRUPAL_NOTHING_HOLDS }, 'in no template around it: made by code');
+    assert.deepEqual([w.posts, w.saves, w.marks], [[], [], []]);
   } finally { w.done(); }
 });

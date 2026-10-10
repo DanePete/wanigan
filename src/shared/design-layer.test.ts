@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {
   LAYER_PROPERTIES, compileLayer, layerBreakpoints, layerEdit, layerSelector, layerTextHash, layerValue, trySheet, tryValues, tryVar, type LayerEdit, type LayerTarget,
 } from './design-layer.ts';
-import { identityKey, kindKey, parseIdentity } from './live-trace.ts';
+import { identityKey, kindKey, parseIdentity, type PartIdentity } from './live-trace.ts';
 
 const hero: LayerTarget = { part: { kind: 'component', name: 'acme:hero', within: null, nth: 0 }, inner: null, selector: null, textHash: null };
 const edit = (over: Partial<LayerEdit> & { id: string }): LayerEdit => ({
@@ -147,6 +147,17 @@ test('a part’s identity is checked, keyed the same on every load, and says wha
   assert.equal(identityKey(inLayout), 'config|layout_builder_component|node:0a1b-14/7e57-01');
   assert.equal(kindKey(inLayout), 'plugin|layout_builder_component|system_branding_block', 'the same plugin placed by a layout is a kind of its own');
   assert.equal(kindKey(parseIdentity({ kind: 'config', type: 'menu', id: 'main' })!), null, 'a menu has no kind beyond itself');
+  // A WordPress theme's template file: the theme, the file's path in it, and which theme it is.
+  const file = parseIdentity({ kind: 'template', theme: 'acme', path: 'template-parts/header/site-branding.php', role: 'parent' });
+  assert.deepEqual(file, { kind: 'template', theme: 'acme', path: 'template-parts/header/site-branding.php', role: 'parent' });
+  assert.equal(identityKey(file!), 'template|acme|template-parts/header/site-branding.php');
+  assert.equal(identityKey({ ...file!, role: 'theme' } as PartIdentity), identityKey(file!), 'which theme is active does not make it another file');
+  assert.equal(kindKey(file!), null, 'a template file has no kind beyond itself');
+  for (const bad of [
+    { kind: 'template', theme: 'acme', path: '../../wp-config.php', role: 'theme' }, { kind: 'template', theme: 'acme', path: '/etc/hosts', role: 'theme' },
+    { kind: 'template', theme: 'acme', path: 'parts//header.php', role: 'theme' }, { kind: 'template', theme: 'acme/child', path: 'header.php', role: 'child' },
+    { kind: 'template', theme: 'acme', path: 'header.php', role: 'plugin' }, { kind: 'template', theme: 'acme', path: 'header.php' },
+  ]) assert.equal(parseIdentity(bad), null, `never out of the theme, nor a role it does not name: ${JSON.stringify(bad)}`);
   for (const bad of [
     { kind: 'entity', type: 'node' }, { kind: 'entity', type: 'node', id: 'has space' }, { kind: 'entity', type: 'node', id: 'x', item: 'delta:-1' },
     { kind: 'component', name: 'acme:card', within: null, nth: -1 }, { kind: 'block', store: 'post:1', path: [], name: 'core/p' },
