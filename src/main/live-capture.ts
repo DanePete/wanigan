@@ -17,8 +17,13 @@
 //   decoded; captures repeated until two in a row are the same. With GPU rendering a capture taller than 16,384 px
 //   repeats the page from the top: every caller here caps its height well below 8,192 px, so one clip is whole.
 //   Both renders of a comparison run in this process, in one rendering mode and one colour profile.
+// - Every step that waits on the page has a deadline (STEP_MS), and the whole render after loading has one too
+//   (RENDER_MS): a page whose script never yields (a loop waiting on a clock that stands still until it is advanced)
+//   would otherwise hold the render, its hidden window and its debugger forever, and every render queued behind it.
+//   Past a deadline the page is taken as stuck: every later step fails at once, the render answers why, and the
+//   window is closed with its debugger detached, as on every other way out.
 import { createHash } from 'node:crypto';
-import type { Debugger, WebContents } from 'electron';
+import type { BrowserWindowConstructorOptions, Debugger, WebContents } from 'electron';
 import { sameSite } from '../shared/live.ts';
 
 /** Everything moving stopped, so a picture is the same each time it is taken. */
@@ -113,8 +118,32 @@ const QUIET_CSS = '*,*::before,*::after{caret-color:transparent!important;scroll
 const DOCUMENT_HEIGHT = 'Math.ceil(Math.max(document.documentElement.scrollHeight, document.body ? document.body.scrollHeight : 0))';
 const FRAMES = 'new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(() => done(true))))';
 const LOAD_MS = 30_000;
+/** How long one step may wait on the page: a read, a clock tick, a resize, a picture. Settling waits 13 s at most. */
+export const STEP_MS = 20_000;
+/** How long a render may take once its page has loaded. */
+export const RENDER_MS = 180_000;
 
 const pause = (ms: number): Promise<void> => new Promise((done) => setTimeout(done, ms));
+const seconds = (ms: number): string => (ms >= 1_000 ? `${Math.round(ms / 1_000)} seconds` : `${ms} ms`);
+
+/**
+ * `work`, or what `late()` gives (or throws) once `ms` have passed without it settling. The work is not stopped (a
+ * promise cannot be): its caller stops what it was waiting on.
+ */
+export async function deadline<T>(work: Promise<T>, ms: number, late: () => T): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const missed = new Promise<T>((done, fail) => {
+    timer = setTimeout(() => { try { done(late()); } catch (error) { fail(error); } }, ms);
+  });
+  try {
+    return await Promise.race([work, missed]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** A step the page did not answer within its deadline: the page is stuck, and nothing more is asked of it. */
+class Stuck extends Error {}
 const originOf = (url: string): string => { try { return new URL(url).origin; } catch { return 'another address'; } };
 
 /** A project id as a folder name: ids are opaque, so only safe characters are kept, and a hash keeps them apart. */
@@ -152,6 +181,9 @@ export interface HiddenPage {
   left(): string | null;
 }
 
+/** What a render needs of a window: its page, and closing it (Electron's BrowserWindow; a stand-in in tests). */
+export interface HiddenWindow { webContents: WebContents; destroy(): void }
+
 export interface HiddenOptions {
   partition: string;
   url: string;
@@ -166,19 +198,34 @@ export interface HiddenOptions {
   what: string;
   /** What is said when it throws: "The piece could not be pictured". */
   failed: string;
+  /** Test seams: the window (Electron's BrowserWindow), and the deadlines (STEP_MS, RENDER_MS). */
+  open?: (options: BrowserWindowConstructorOptions) => HiddenWindow | Promise<HiddenWindow>;
+  stepMs?: number;
+  renderMs?: number;
 }
 
 /** Render a page of the site in a hidden window and hand it to `during`; the window is always destroyed after. */
 export async function inHiddenWindow<T>(o: HiddenOptions, during: (page: HiddenPage) => Promise<T | { error: string }>): Promise<T | { error: string }> {
   // Loaded here, not at the top: what is built on this runs, and is tested, without Electron's windows.
-  const { BrowserWindow } = await import('electron');
+  const open = o.open ?? (async (options: BrowserWindowConstructorOptions): Promise<HiddenWindow> => new (await import('electron')).BrowserWindow(options));
   const screen = o.width < 600 ? 844 : 900;
   const mobile = o.width < 600;
-  const w = new BrowserWindow({
+  const w = await open({
     show: false, width: o.width, height: screen, useContentSize: true, enableLargerThanScreen: true, paintWhenInitiallyHidden: true,
     webPreferences: { partition: o.partition, sandbox: true, contextIsolation: true, nodeIntegration: false, spellcheck: false, backgroundThrottling: false },
   });
   const wc = w.webContents;
+  const stepMs = o.stepMs ?? STEP_MS;
+  /** Set once a step missed its deadline: every later step fails at once with it. */
+  let stuck: Stuck | null = null;
+  /** One step that waits on the page, with its deadline. */
+  const within = async <R>(step: string, work: () => Promise<R>, ms = stepMs): Promise<R> => {
+    if (stuck) throw stuck;
+    return deadline<R>(work(), ms, () => {
+      stuck ??= new Stuck(`it did not answer within ${seconds(ms)} while ${step}, so its window was closed`);
+      throw stuck;
+    });
+  };
   let left: string | null = null;
   const stay = (event: { preventDefault(): void }, next: string): void => { if (!sameSite(o.base, next)) { event.preventDefault(); left ??= next; } };
   wc.on('will-navigate', stay);
@@ -190,24 +237,29 @@ export async function inHiddenWindow<T>(o: HiddenOptions, during: (page: HiddenP
   /** Document responses as the protocol reported them: which frame, and its headers. */
   const documents: { frameId: string; headers: Record<string, string> }[] = [];
   let mainFrame: string | null = null;
+  // A page that throws answers the fallback; one that does not answer in time is stuck, and that is not swallowed.
   const read = async <R>(code: string, fallback: R, world: number): Promise<R> => {
-    try { return (await wc.executeJavaScriptInIsolatedWorld(world, [{ code }], true)) as R; } catch { return fallback; }
+    try { return (await within('it was read', () => wc.executeJavaScriptInIsolatedWorld(world, [{ code }], true))) as R; } catch (error) {
+      if (error instanceof Stuck) throw error;
+      return fallback;
+    }
   };
-  const metrics = (height: number): Promise<unknown> => cdp.sendCommand('Emulation.setDeviceMetricsOverride', { width: o.width, height, deviceScaleFactor: 1, mobile });
+  const command = (method: string, params?: object): Promise<unknown> => within(`it was sent ${method}`, () => cdp.sendCommand(method, params));
+  const metrics = (height: number): Promise<unknown> => command('Emulation.setDeviceMetricsOverride', { width: o.width, height, deviceScaleFactor: 1, mobile });
   try {
     // A window that has loaded nothing has no page for the protocol to act on: the first Emulation command sent to
     // one crashes Electron's main process (EXC_BAD_ACCESS, seen on 9 October 2026 on the first library picture).
     // An empty page first gives it one.
-    await wc.loadURL('about:blank');
+    await within('an empty page loaded', () => wc.loadURL('about:blank'));
     cdp.attach('1.3');
     await metrics(screen);
-    await cdp.sendCommand('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'reduce' }] });
-    await cdp.sendCommand('Emulation.setFocusEmulationEnabled', { enabled: true });
+    await command('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'reduce' }] });
+    await command('Emulation.setFocusEmulationEnabled', { enabled: true });
     // Classic scrollbars would take their width from the layout, and give it back during a capture.
-    await cdp.sendCommand('Emulation.setScrollbarsHidden', { hidden: true });
+    await command('Emulation.setScrollbarsHidden', { hidden: true });
     if (o.freeze) {
-      await cdp.sendCommand('Page.enable');
-      await cdp.sendCommand('Page.addScriptToEvaluateOnNewDocument', { source: CLOCK });
+      await command('Page.enable');
+      await command('Page.addScriptToEvaluateOnNewDocument', { source: CLOCK });
     }
     if (o.network) {
       cdp.on('message', (_event, method, params: { type?: string; frameId?: string; response?: { headers?: Record<string, unknown> } }) => {
@@ -216,30 +268,34 @@ export async function inHiddenWindow<T>(o: HiddenOptions, during: (page: HiddenP
         for (const [k, v] of Object.entries(params.response?.headers ?? {})) if (typeof v === 'string') headers[k.toLowerCase()] = v.slice(0, 4_000);
         documents.push({ frameId: params.frameId, headers });
       });
-      await cdp.sendCommand('Network.enable');
+      await command('Network.enable');
     }
     // Never the browser's cached copy: the page is drawn as the site's files are now.
     const fresh = { extraHeaders: 'Cache-Control: no-cache\nPragma: no-cache\n' };
-    const loaded = await Promise.race([wc.loadURL(o.url, fresh).then(() => true, () => false), pause(LOAD_MS).then(() => false)]);
+    const loaded = await deadline(wc.loadURL(o.url, fresh).then(() => true, () => false), LOAD_MS, () => false);
     if (left) return { error: `${o.what} sent the browser off the site, to ${originOf(left)}; Wanigan does not follow it.` };
     if (!loaded) return { error: `${o.what} did not load within ${LOAD_MS / 1000} seconds.` };
     if (o.network) {
       try {
-        const tree = await cdp.sendCommand('Page.getFrameTree') as { frameTree?: { frame?: { id?: string } } };
+        const tree = await command('Page.getFrameTree') as { frameTree?: { frame?: { id?: string } } };
         mainFrame = tree.frameTree?.frame?.id ?? null;
-      } catch { mainFrame = null; }
+      } catch (error) {
+        if (error instanceof Stuck) throw error;
+        mainFrame = null;
+      }
     }
     const page: HiddenPage = {
       wc, cdp, width: o.width, screen, read,
       async settle() {
-        await wc.insertCSS(STILL_CSS);
+        await within('its motion was stopped', () => wc.insertCSS(STILL_CSS));
         await read(SETTLE, false, 4_244);
       },
       async freeze() {
         await read(SETTLE, false, 4_244);
-        await wc.executeJavaScript('window.__wlClock ? window.__wlClock.tick(3000) : 0').catch(() => 0);
+        // The page's own timers and frames run in this tick: a script that waits on the clock it stopped never returns.
+        await within('its clock was advanced', () => wc.executeJavaScript('window.__wlClock ? window.__wlClock.tick(3000) : 0').catch(() => 0));
         await read(SETTLE, false, 4_244);
-        await wc.insertCSS(QUIET_CSS);
+        await within('its motion was quieted', () => wc.insertCSS(QUIET_CSS));
         await read(FINISH, 0, 4_244);
         await read(FRAMES, true, 4_244);
       },
@@ -263,9 +319,9 @@ export async function inHiddenWindow<T>(o: HiddenOptions, during: (page: HiddenP
       },
       async shoot(height, stable = false) {
         const take = async (): Promise<Buffer | null> => {
-          const shot = await cdp.sendCommand('Page.captureScreenshot', {
+          const shot = await within('it was pictured', () => cdp.sendCommand('Page.captureScreenshot', {
             format: 'png', captureBeyondViewport: true, fromSurface: true, clip: { x: 0, y: 0, width: o.width, height: Math.max(1, height), scale: 1 },
-          }) as { data?: string };
+          })) as { data?: string };
           return shot.data ? Buffer.from(shot.data, 'base64') : null;
         };
         let last = await take();
@@ -285,7 +341,8 @@ export async function inHiddenWindow<T>(o: HiddenOptions, during: (page: HiddenP
       },
       left: () => left,
     };
-    return await during(page);
+    // The render as a whole, too: what it waits on besides the page (a trace from the site) has an end.
+    return await within('it was rendered', () => during(page), o.renderMs ?? RENDER_MS);
   } catch (error) {
     return { error: `${o.failed}: ${(error as Error).message}` };
   } finally {

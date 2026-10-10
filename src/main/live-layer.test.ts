@@ -89,7 +89,7 @@ function modelPage() {
   return { page, run };
 }
 
-function wire(over: { edits?: LayerEdit[]; url?: string; trace?: LiveTrace | null; trusted?: boolean; enabled?: boolean; render?: LayerRender; saved?: { ok: boolean; error: string | null } } = {}) {
+function wire(over: { edits?: LayerEdit[]; url?: string; trace?: LiveTrace | null; trusted?: boolean; enabled?: boolean; render?: LayerRender; renderMs?: number; saved?: { ok: boolean; error: string | null } } = {}) {
   const handlers = new Map<string, (...args: unknown[]) => unknown>();
   const dataDir = mkdtempSync(join(tmpdir(), 'wanigan-layer-'));
   const { page, run } = modelPage();
@@ -136,6 +136,7 @@ function wire(over: { edits?: LayerEdit[]; url?: string; trace?: LiveTrace | nul
     render: async (r) => { renders.push(r); return over.render ? over.render(r) : { error: 'no render in this test' }; },
     encode: async () => Buffer.from('diff-png'),
     now: () => 1_000,
+    ...(over.renderMs ? { renderMs: over.renderMs } : {}),
   });
   const invoke = <T>(channel: string, ...args: unknown[]): Promise<T> => (handlers.get(channel) as (...a: unknown[]) => Promise<T>)({}, ...args);
   return {
@@ -625,6 +626,20 @@ test('a token verified with other edits does not switch off step 3 for them: a l
     const v = await w.verify(null, { widths: [390] });
     assert.equal(v.failed, 'rest', 'the footer changed, away from the heading: a leak, not a difference near the token');
     assert.ok(v.differences.length > 0 && v.differences.every((d) => d.kind === 'leak'));
+  } finally { w.done(); }
+});
+
+test('a render that never answers fails its verification, saying so, and the next verification still runs', { timeout: 10_000 }, async () => {
+  const e = edit({ state: 'implemented' });
+  const draft = edit();
+  const w = wire({ edits: [e, draft], renderMs: 50, render: () => new Promise(() => {}) });
+  try {
+    const first = w.verify(e.id, { widths: [390] });
+    // Queued behind the stuck one: it runs only once that one has ended.
+    const second = w.verify(draft.id);
+    await assert.rejects(first, /The page did not render at 390 px within 50 ms, so the verification stopped there/);
+    await assert.rejects(second, /Only an implemented edit is verified/);
+    assert.deepEqual(w.marks, [], 'nothing was recorded for a verification that did not finish');
   } finally { w.done(); }
 });
 

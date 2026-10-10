@@ -51,7 +51,7 @@ import type { LiveTraceAnswer } from '../shared/live-lens.ts';
 import { TRACE_ID, identityKey, kindKey, type LiveTrace, type PartIdentity, type TracePart } from '../shared/live-trace.ts';
 import { sameSite, type LiveSite } from '../shared/live.ts';
 import type { Method } from '../shared/protocol.ts';
-import { folderOf, inHiddenWindow } from './live-capture.ts';
+import { RENDER_MS, deadline, folderOf, inHiddenWindow } from './live-capture.ts';
 import type { HelperSaved, LiveCurrent, LiveViewHooks, SaveAt } from './live-view.ts';
 
 interface Client { callRaw(method: Method, params: unknown): Promise<unknown> }
@@ -358,8 +358,9 @@ export interface LiveLayerOptions {
   pageScript: () => string | null;
   /** Wanigan's data folder: verification pictures go under live-layer/ in it. */
   dataDir: string;
-  /** Test seams: what renders a page for a verification, and how a difference picture becomes a PNG. */
+  /** Test seams: what renders a page for a verification (and how long one may take), and how a difference picture becomes a PNG. */
   render?: LayerRender;
+  renderMs?: number;
   encode?: (b: Bitmap) => Promise<Buffer>;
   now?: () => number;
 }
@@ -571,7 +572,13 @@ export function wireLiveLayer(options: LiveLayerOptions): { hooks: LiveViewHooks
     const url = new URL(page, origin).toString();
     if (!sameSite(site.url, url)) throw new Error('That page is not on this site.');
     const partition = options.partition(projectId, site.url, site.token);
-    const ask = (width: number, design: boolean) => render({ projectId, partition, url, base: site.url as string, token: site.token as string, width, path: page, edits, design });
+    // Each render has an end: one that never answers fails this verification, saying so, and the queue moves on (the
+    // hidden window has deadlines of its own, and closes itself).
+    const limit = options.renderMs ?? RENDER_MS + 60_000;
+    const ask = (width: number, design: boolean) => deadline<LayerRendered | { error: string }>(
+      render({ projectId, partition, url, base: site.url as string, token: site.token as string, width, path: page, edits, design }), limit,
+      () => ({ error: `The page did not render at ${width} px within ${limit >= 1_000 ? `${Math.round(limit / 1_000)} seconds` : `${limit} ms`}, so the verification stopped there.` }),
+    );
 
     const found: WidthFindings[] = [];
     const shots: { width: number; design: Buffer; result: Buffer; resultBitmap: Bitmap; d: ReturnType<typeof diffBitmaps> }[] = [];

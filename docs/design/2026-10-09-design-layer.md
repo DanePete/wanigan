@@ -339,7 +339,10 @@ or the project.
    around them, then the rest of the page. Nothing passes for want of a
    comparison: an edit found but gone when the page was measured, a token
    whose value was not read, or an edit for a named breakpoint (phase 1 reads
-   no breakpoints, so the design cannot show it) fails, saying so. It keeps the pictures in the data
+   no breakpoints, so the design cannot show it) fails, saying so. Every step
+   that waits on a hidden page has a deadline, and so does each render: a page
+   that never answers fails the verification, its window is closed, and the
+   next one runs. It keeps the pictures in the data
    folder and tells the core (`verified`, or still `implemented` with the
    verdict, which says what differs: the words are in the site either way).
 
