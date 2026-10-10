@@ -189,13 +189,34 @@ the viewport.
 between a version and itself is the noise floor, and the tolerance is stated
 as two numbers in the manner of the web-platform-tests "fuzzy" annotation (the
 largest colour difference and the number of pixels allowed), never as a
-percentage, with anti-aliasing forgiveness off for the verdict. As built, the
-floor is page-wide: one pair of numbers for the whole page (the largest over
-both versions and every width), applied to each area. A block whose content
-changes between renders anywhere on the page (a random order, a clock)
-therefore forgives as many differing pixels next to an edit as it differs
-by; nothing masks it. Measuring the floor per area would need the verdict to
-state more than one, which it does not yet.
+percentage, with anti-aliasing forgiveness off for the verdict. The verdict
+states one pair of numbers (the largest over both versions and every width),
+measured over what is left once the parts the site says change between
+renders are masked:
+
+- **Drupal**, from each render's own trace: a part built late (a
+  placeholder), never cached, kept for a while (a max-age that is not
+  permanent), or made per user, session, query, cookie, header or address.
+  Core bubbles max-age and contexts up to every part around, so a reason is a
+  part's own only when no part inside it has it, and the innermost part is
+  masked, never the article around a "time ago" field.
+- **WordPress**, which keeps no cache metadata: the helper marks the root tag
+  of the core blocks that differ by type (a gallery in random order, the
+  calendar, a relative date, latest comments, RSS, login/out, a Query Loop
+  ordered by rand) with `data-wanigan-vary`, through `render_block` and
+  `WP_HTML_Tag_Processor`, which changes no layout.
+
+A mask never covers an edited element: its zone is compared in full, and a
+masked part around one says so. Each mask is named in the verdict with why.
+Where core lets the helper remove the change instead, it does, for
+Wanigan's own token requests that carry a verification's hold
+(`X-Wanigan-Steady`: a time no later than now and a seed) and no others:
+Drupal renders the request at that `REQUEST_TIME` (put back before anything
+is kept) and seeds a view's random sort; WordPress measures relative dates to
+that time and orders random queries by `RAND(seed)`. Both say what they held,
+and Wanigan compares a held change between renders held alike rather than
+masking it. Variation nothing declares (a theme calling `rand()`) still
+shows only in the floor.
 
 **In this order, stopping at the first failure:**
 
@@ -205,12 +226,17 @@ state more than one, which it does not yet.
 2. **Pixels.** The two full-page captures, within the calibrated tolerance; a
    difference is boxed and tied to its edit.
 3. **The rest of the page.** Outside the edited elements, the result must equal
-   the design. As built (phase 1), the design is the native page with the
-   layer, so this catches a layer that reaches further than its edits, but a
-   change the native implementation itself made beyond the touched elements
-   is in both renders and is not caught yet. Catching that needs the page as
-   it was before the edits, kept when an edit is made real and compared row by
-   row (text reflows); that is still to build.
+   the design. The design rendered now is the native page with the layer, so
+   a change the native implementation made beyond the touched elements is in
+   both renders. So the page as it was is kept just before an edit is made
+   real (and when a style or token is handed to an agent), rendered without
+   the layer and, in the same load, with that one edit as designed on it; the
+   result must also equal that page outside the touched elements. It carries
+   the edit's own reflow and reach, so text that reflows or a token used
+   everywhere is not a difference, and only what the native change did beyond
+   them is. With no page from before (an edit made real elsewhere), or another
+   edit made real on the page since, the verdict says this could not run, and
+   why.
 4. **States and edges.** Hover, focus and active forced on the touched
    elements; each breakpoint and one pixel either side; dark mode and reduced
    motion where the theme answers them; long, short and empty text for text
@@ -218,9 +244,10 @@ state more than one, which it does not yet.
 
 In this design, an edit is `verified` when all four pass everywhere it reaches
 (pages sampled from Go to's index when it reaches many). Phase 1 builds less,
-and its `verified` means less: steps 1 to 3 as built (step 3 against the
-design, not the page before) passed on the edit's own page at the widths
-asked. Step 4 and reach across pages are not built. The owner then retires it; retired
+and its `verified` means less: steps 1 to 3 passed on the edit's own page at
+the widths asked, step 3 against the page from before too where one was kept
+(the verdict says when it was not). Step 4 and reach across pages are not
+built. The owner then retires it; retired
 edits are archived, not deleted. An agent's implementation gets at most three
 automatic rounds of "verify, give it the failures, try again"; after that the
 evidence goes to the owner.
@@ -255,11 +282,16 @@ before adding it:
 
 ## What this does not promise
 
-- Content that differs between renders (dates, random order, personalisation)
-  is not verified, and is not masked either: it raises the page-wide noise
-  floor, which then forgives as much next to every edit.
+- Content the site says differs between renders (a placeholder, a per-user
+  block, a feed, a random order the helper cannot seed) is masked, not
+  verified, and named in the verdict. What nothing declares (a theme's own
+  `rand()` or `time()`, remote embeds, script-driven content) is not masked:
+  it raises the noise floor.
+- Step 3 against the page from before runs only where one was kept just
+  before the edit was made real, and no other edit has been made real on
+  that page since; otherwise the verdict says it did not run.
 - A page is compared down to 6,000 px; below that nothing is, and the verdict
-  says so (a statement among its differences, even on one that passed).
+  says so (a statement of its own, even on one that passed).
 - A text format may change saved markup (Drupal filters, WordPress kses). The
   verify step shows the difference; it does not hide it.
 - Interaction states (hover, focus) and other content lengths are verified only
@@ -289,8 +321,11 @@ The types are in `src/shared/design-layer.ts` and `src/shared/live-trace.ts`
 and removals as layer edits come later (inserting and removing already work
 directly through the helpers).
 
-**The helpers (version 4, the same bump as removal and the library).** Every
-part a helper can name carries `identity`:
+**The helpers (version 4, the same bump as removal and the library).** For a
+verification's renders only (the view's token and `X-Wanigan-Steady`), they
+hold the request still and say what they held, and the WordPress helper marks
+the blocks that differ by type ("Calibrated noise", above). Every part a
+helper can name carries `identity`:
 
 - Drupal: an entity part is `entity` (type, UUID, bundle, langcode); a field
   part adds `field`; a field item adds `item`, `ref:<type>:<uuid>` for a
@@ -386,27 +421,42 @@ or the project.
      them (named), a changed page, a target the trace says this user may not
      change, or a refusal from the site (passed on as the site said it)
      answers `route: 'none'`, with why.
+   - Just before words are saved, and when a style, a token or formatted
+     words are handed to an agent (once: asking again never keeps a page
+     that may already have the agent's change), the page the edit is on is
+     rendered at the verification widths through the same hidden render as a
+     verification, without the layer and then, in the same load on the same
+     stopped clock, with that one edit as designed on it, held at one time
+     and seed. Both pictures, the touched elements, the masks, the hold and
+     the edits already in the site are kept under the edit's folder
+     (`live-layer/<project>/<edit>/before/`). A render that fails is kept as
+     why, and the edit is made real all the same.
 4. `layerVerify(id)` renders the page with the layer (the design) and without
    it (the result) in hidden windows in the view's session at each width,
+   every render sent one hold (the newest page from before's, or now's),
    measures the noise floor by rendering each version twice (every width is
    judged against the one floor the verdict states, the largest over both
-   versions and every width), then runs the
+   versions and every width, over what the masks leave), then runs the
    steps in order: computed styles and boxes of the touched elements (a token:
    its custom property as the root computes it, in both renders), pixels
-   around them, then the rest of the page. Nothing passes for want of a
-   comparison: an edit found but gone when the page was measured, a token
-   whose value was not read, or an edit for a named breakpoint (phase 1 reads
-   no breakpoints, so the design cannot show it) fails, saying so. Every step
-   that waits on a hidden page has a deadline, and so does each render: a page
-   that never answers fails the verification, its window is closed, and the
-   next one runs. A page taller than 6,000 px is compared down to there, and
-   the verdict says how far, passing or not. It keeps the pictures in the data
-   folder and tells the core (`verified`, or still `implemented` with the
-   verdict, which says what differs: the words are in the site either way).
-   `verified` here is phase 1's: steps 1 to 3 passed on this page at these
-   widths, step 3 against the design rather than the page before the edits,
-   so a change the native implementation made beyond the touched elements is
-   in both renders and is not caught; step 4 and other pages are not checked.
+   around them, then the rest of the page, against the design and against
+   each edit's page from before with that edit designed on it. Nothing passes
+   for want of a comparison: an edit found but gone when the page was
+   measured, a token whose value was not read, or an edit for a named
+   breakpoint (phase 1 reads no breakpoints, so the design cannot show it)
+   fails, saying so. Every step that waits on a hidden page has a deadline,
+   and so does each render: a page that never answers fails the
+   verification, its window is closed, and the next one runs. It keeps the
+   pictures in the data folder and tells the core (`verified`, or still
+   `implemented` with the verdict, which says what differs: the words are in
+   the site either way). Besides its differences, the verdict says (each
+   optional, so a verdict kept before them still reads): what was masked and
+   why (`masked`), whether step 3 compared the page from before or why not
+   (`before`), whether every render was held still (`held`), and how far
+   down a page taller than 6,000 px was compared (`cut`, a statement, never
+   a difference). `verified` here is phase 1's: steps 1 to 3 passed on this
+   page at these widths, step 3 against the page before where one was kept;
+   step 4 and other pages are not checked.
 
 **The window** shows a tray of the project's edits (before and after, the
 page each is on, its state and verdict, fragile ones said so), per-edit
