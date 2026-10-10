@@ -205,11 +205,13 @@ export function useArrange({ project, platform, trace, parts, regions, layers, e
     const name = label(remove.item);
     const answer = await confirmWrite(`Take ${name} out?`, 'Take it out', [from.id], notice.confirm);
     if (answer === 'no') { say(`Not taken out. ${name} stays where it is.`); return; }
-    const check = await checks.prepare('remove', name, watchedIn([from.id]));
+    // Checked by the part itself, gone from the reloaded page; and by what held it, for a part the page cannot count.
+    const item = (parts.regionsOf.get(remove.item) ?? []).map((ix) => regions.find((r) => r.index === ix)).find((r): r is LiveRegion => !!r);
+    const check = await checks.prepare('remove', name, watchedIn([from.id]), undefined, item ? { region: item, present: false } : undefined);
     const r = await live.remove(checked, answer === 'without-ai' ? { noSiteAi: true } : undefined);
     checks.settle(check, { ok: r.ok, ai: r.ai, undo: r.ok ? r.undo : null });
     done(r, `Took ${name} out of ${from.label}`, notice.saved, name, `${name} is back.`);
-  }, [live, trace, cms, done, say, checks, toast]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [live, trace, cms, done, say, checks, toast, regions, parts]); // eslint-disable-line react-hooks/exhaustive-deps
 
   /** A part whose order is in a template: pictures of the order now and the order wanted, as a note for an agent. */
   const request = useCallback(async (region: number, ref: number, place: 'before' | 'after', previewed: boolean): Promise<void> => {

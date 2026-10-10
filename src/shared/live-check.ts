@@ -4,8 +4,10 @@
 // edit is checked by the value the new trace holds for it (the site's own read
 // of what it stored); anything else by what the watched parts of the page show,
 // hashed before the write and after the reload (the page script's
-// fingerprints()). Pure, so the window and the tests read it the same way.
-import { sameRegion, type LiveRegion } from './live.ts';
+// fingerprints()). A part taken out, or put back, is checked first by whether it
+// is on the reloaded page (countOf()). Pure, so the window and the tests read it
+// the same way.
+import { countOf, sameRegion, type LiveRegion } from './live.ts';
 import type { LiveTrace } from './live-trace.ts';
 
 /** `remove`: one item taken out of its collection, read back by what holds it. */
@@ -24,12 +26,17 @@ export interface WriteCheck {
   watched: { region: LiveRegion; print: string | null }[];
   /** The page's regions when they were read, to find the same ones after the reload. */
   scan: LiveRegion[];
+  /**
+   * A part taken out (`present` false) or put back (true): how many of it the page showed when the check was read. The
+   * reloaded page shows one fewer, or one more, when the write landed.
+   */
+  item?: { region: LiveRegion; count: number; present: boolean };
 }
 
 export type CheckVerdict =
-  | { kind: 'landed'; by: 'value' | 'page' }
-  /** The site said it saved, and nothing it shows changed. */
-  | { kind: 'unchanged'; by: 'value' | 'page' }
+  | { kind: 'landed'; by: 'value' | 'page' | 'item' }
+  /** The site said it saved, and nothing it shows changed (`item`: the part is still there, or still not). */
+  | { kind: 'unchanged'; by: 'value' | 'page' | 'item' }
   /** Saved, and the site stored a value of its own (trimmed, made URL-safe, made unique). */
   | { kind: 'stored-as'; value: unknown }
   /** Nothing to check against: the part is not on the reloaded page. */
@@ -51,13 +58,21 @@ export function regionsAfter(check: WriteCheck, scan: readonly LiveRegion[]): (L
   return check.watched.map((w) => sameRegion(w.region, check.scan, scan));
 }
 
+/** How many of the part taken out or put back the reloaded page shows; null when the check has no part to count. */
+export function itemsAfter(check: WriteCheck, scan: readonly LiveRegion[]): number | null {
+  return check.item ? countOf(check.item.region, scan) : null;
+}
+
 /**
  * What a write came to, once the page reloaded with a newer trace: by the
  * value the site now holds for a schema edit's target, else by whether any
  * watched part shows something else. `prints` are the watched regions' hashes
- * after the reload, in the same order (null where a region is gone).
+ * after the reload, in the same order (null where a region is gone). A part
+ * taken out or put back is judged by `items`, how many of it the reloaded page
+ * shows (itemsAfter()): what held it may be gone with it (a region with nothing
+ * left in it is not drawn), and that is the write landing, not a page to guess at.
  */
-export function judge(check: WriteCheck, trace: LiveTrace | null, prints: (string | null)[]): CheckVerdict {
+export function judge(check: WriteCheck, trace: LiveTrace | null, prints: (string | null)[], items: number | null = null): CheckVerdict {
   if (check.target && trace) {
     const now = trace.edits.find((e) => e.id === check.target?.id);
     if (now && now.via === 'schema' && now.value !== undefined) {
@@ -65,6 +80,10 @@ export function judge(check: WriteCheck, trace: LiveTrace | null, prints: (strin
       if (same(now.value, check.target.old)) return { kind: 'unchanged', by: 'value' };
       return { kind: 'stored-as', value: now.value };
     }
+  }
+  if (check.item && items !== null) {
+    const landed = check.item.present ? items > check.item.count : items < check.item.count;
+    return { kind: landed ? 'landed' : 'unchanged', by: 'item' };
   }
   const pairs = check.watched.map((w, i) => [w.print, prints[i] ?? null] as const).filter(([a, b]) => a !== null && b !== null);
   if (!pairs.length) return { kind: 'unseen' };
@@ -85,10 +104,19 @@ export function verdictText(check: WriteCheck, verdict: CheckVerdict): { tone: '
   const did = check.kind === 'remove' ? 'took out' : verb;
   switch (verdict.kind) {
     case 'landed':
+      if (verdict.by === 'item') return { tone: 'ok', text: check.item?.present ? `${check.what}: ${verb}, and it is on the page again after reloading.` : `${check.what}: ${verb}, and it is gone from the page after reloading.` };
       return { tone: 'ok', text: verdict.by === 'value' ? `${check.what}: ${verb}, and the site holds it after reloading.` : `${check.what}: ${verb}, and the page shows the change after reloading.` };
     case 'stored-as':
       return { tone: 'ok', text: `${check.what}: ${verb}. The site stored it as ${shown(verdict.value)}.` };
     case 'unchanged':
+      if (verdict.by === 'item') {
+        return {
+          tone: 'warn',
+          text: check.item?.present
+            ? `The site said it ${did} ${check.what}, but after reloading it is not on the page. A cache may be showing the page as it was.`
+            : `The site said it ${did} ${check.what}, but after reloading it is still on the page. A cache, or code that runs on the save, may have kept it.`,
+        };
+      }
       return {
         tone: 'warn',
         text: verdict.by === 'value'

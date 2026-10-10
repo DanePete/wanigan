@@ -7,7 +7,8 @@
 import { useCallback, useMemo, useRef, type MutableRefObject } from 'react';
 import type { LiveRegion } from '@shared/live';
 import { saveAiSentence, type SaveAi } from '@shared/live-ai';
-import { judge, regionsAfter, verdictText, type WriteCheck, type WriteKind } from '@shared/live-check';
+import { itemsAfter, judge, regionsAfter, verdictText, type WriteCheck, type WriteKind } from '@shared/live-check';
+import { countOf } from '@shared/live';
 import type { LiveTraceAnswer } from '@shared/live-lens';
 import type { liveBridge } from '../../lib/live';
 
@@ -20,13 +21,16 @@ const unique = (regions: readonly LiveRegion[]): LiveRegion[] => [...new Map(reg
 export interface WriteSnapshot { traceId: string | null; scan: LiveRegion[]; prints: Record<number, string | null> }
 
 export interface WriteChecks {
-  /** What the regions show now, before a write is made. */
-  prepare(kind: WriteKind, what: string, regions: readonly LiveRegion[], target?: WriteCheck['target']): Promise<WriteCheck>;
+  /**
+   * What the regions show now, before a write is made. `item`: the part the write takes out (`present` false) or puts
+   * back (true), counted on the page now.
+   */
+  prepare(kind: WriteKind, what: string, regions: readonly LiveRegion[], target?: WriteCheck['target'], item?: { region: LiveRegion; present: boolean }): Promise<WriteCheck>;
   /** What the regions show now, kept for a write made later. */
   snapshot(regions: readonly LiveRegion[]): Promise<WriteSnapshot>;
   /** A check from a snapshot: the regions as they were then. */
   fromSnapshot(snap: WriteSnapshot, kind: WriteKind, what: string, regions: readonly LiveRegion[]): WriteCheck;
-  /** A move or insert's undo: the same parts as the write it undoes, found on the page as it is now. */
+  /** A write's undo: the same parts as the write it undoes, found on the page as it is now (a part taken out, put back). */
   prepareUndo(token: string, what: string): Promise<WriteCheck>;
   /** The write came back: say what the site's AI did, and check it once the page reloads. `undo` keeps it for its undo. */
   settle(check: WriteCheck, result: { ok: boolean; ai?: SaveAi | null; undo?: string | null }): void;
@@ -61,15 +65,17 @@ export function useWriteChecks({ live, scan, traceId, say, written }: {
     kind, what, traceId: snap.traceId, scan: snap.scan, watched: unique(regions).map((r) => ({ region: r, print: snap.prints[r.index] ?? null })),
   }), []);
 
-  const prepare = useCallback(async (kind: WriteKind, what: string, regions: readonly LiveRegion[], target?: WriteCheck['target']): Promise<WriteCheck> => {
+  const prepare = useCallback(async (kind: WriteKind, what: string, regions: readonly LiveRegion[], target?: WriteCheck['target'], item?: { region: LiveRegion; present: boolean }): Promise<WriteCheck> => {
     const check = fromSnapshot(await snapshot(regions), kind, what, regions);
-    return target ? { ...check, target } : check;
-  }, [snapshot, fromSnapshot]);
+    const count = item ? countOf(item.region, scan.current) : null;
+    return { ...check, ...(target ? { target } : {}), ...(item && count !== null ? { item: { ...item, count } } : {}) };
+  }, [snapshot, fromSnapshot, scan]);
 
   const prepareUndo = useCallback(async (token: string, what: string): Promise<WriteCheck> => {
     const done = undos.current.get(token);
     const now = done ? regionsAfter(done, scan.current).filter((r): r is LiveRegion => r !== null) : [];
-    return prepare('undo', what, now);
+    // Undoing a take-out puts the part back: the reloaded page shows one more of it.
+    return prepare('undo', what, now, undefined, done?.item ? { region: done.item.region, present: !done.item.present } : undefined);
   }, [prepare, scan]);
 
   const settle = useCallback((check: WriteCheck, result: { ok: boolean; ai?: SaveAi | null; undo?: string | null }): void => {
@@ -95,7 +101,7 @@ export function useWriteChecks({ live, scan, traceId, say, written }: {
     const after = regionsAfter(p.check, scan.current);
     const indexes = after.filter((r): r is LiveRegion => r !== null).map((r) => r.index);
     const prints = live && indexes.length ? await live.fingerprints(indexes) : {};
-    const verdict = judge(p.check, answer.state === 'ok' ? answer.trace : null, after.map((r) => (r ? prints[r.index] ?? null : null)));
+    const verdict = judge(p.check, answer.state === 'ok' ? answer.trace : null, after.map((r) => (r ? prints[r.index] ?? null : null)), itemsAfter(p.check, scan.current));
     const said = verdictText(p.check, verdict);
     say(p.ai ? `${said.text} ${p.ai}` : said.text, said.tone === 'warn', said.tone === 'warn');
   }, [live, scan, say]);

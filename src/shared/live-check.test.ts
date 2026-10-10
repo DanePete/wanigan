@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { acmePage } from './live-agent-fixture.ts';
-import { judge, regionsAfter, verdictText, type WriteCheck } from './live-check.ts';
+import { itemsAfter, judge, regionsAfter, verdictText, type WriteCheck } from './live-check.ts';
 import { parseTrace } from './live-trace.ts';
 
 const page = acmePage();
@@ -45,4 +45,27 @@ test('a removal is read back by what held the item: changed is taken out, the sa
   assert.equal(verdictText(none, judge(none, null, [])).text, 'Search: taken out. Nothing on the page was there to compare before and after, so Wanigan could not check the reloaded page.');
   // Its undo, with nothing to watch either, does not say the item is missing from the page.
   assert.equal(verdictText({ ...none, kind: 'undo' }, { kind: 'unseen' }).text, 'Search: put back. Nothing on the page was there to compare before and after, so Wanigan could not check the reloaded page.');
+});
+
+test('a part taken out is checked by being gone from the reloaded page, its undo by being back, even when what held it went with it', () => {
+  const holder = page[4]!;
+  const item = page[6]!;
+  const out: WriteCheck = { kind: 'remove', what: 'Free shipping', traceId: null, watched: [{ region: holder, print: 's1' }], scan: page, item: { region: item, count: 1, present: false } };
+  // The region held nothing else, so the reloaded page draws neither: gone is what was asked for.
+  const reloaded = page.filter((r) => r !== holder && r !== item);
+  assert.equal(itemsAfter(out, reloaded), 0);
+  assert.deepEqual(judge(out, null, [null], itemsAfter(out, reloaded)), { kind: 'landed', by: 'item' });
+  assert.equal(verdictText(out, judge(out, null, [null], 0)).text, 'Free shipping: taken out, and it is gone from the page after reloading.');
+  // Still there after the site said it took it out: said, as a warning.
+  const kept = verdictText(out, judge(out, null, ['s1'], itemsAfter(out, page)));
+  assert.equal(kept.tone, 'warn');
+  assert.match(kept.text, /^The site said it took out Free shipping, but after reloading it is still on the page\./);
+  // Its undo: none on the page when it was asked, one after the reload.
+  const back: WriteCheck = { kind: 'undo', what: 'Free shipping', traceId: null, watched: [], scan: reloaded, item: { region: item, count: 0, present: true } };
+  assert.equal(verdictText(back, judge(back, null, [], itemsAfter(back, page))).text, 'Free shipping: put back, and it is on the page again after reloading.');
+  const missing = verdictText(back, judge(back, null, [], itemsAfter(back, reloaded)));
+  assert.equal(missing.tone, 'warn');
+  assert.match(missing.text, /^The site said it put back Free shipping, but after reloading it is not on the page\./);
+  // A check with no part to count is judged as before.
+  assert.equal(itemsAfter({ ...out, item: undefined }, page), null);
 });

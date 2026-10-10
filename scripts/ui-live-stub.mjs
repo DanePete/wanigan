@@ -346,6 +346,8 @@ export function liveStub(f) {
   const wireAt = wireframe;
   window.__wgLive = {
     answer: { state: 'ok', trace: f.trace }, outdated: false, calls: [], drops: [], printGen: 0, unchanged: false,
+    // Parts taken out, which the reloaded page no longer draws, and the undo token that puts each back.
+    gone: [], undoes: {},
     // The design layer: the core's log, whether the page shows it, why an edit is orphaned, which region each edit is
     // on, the verdict a verification gives ('pass', 'styles' or 'pixels'), and whether words have a field to save to.
     layer: { edits: [], done: [], undone: [], seq: 0, on: true, why: {}, region: {} }, verdict: 'pass', picked: null,
@@ -610,7 +612,7 @@ export function liveStub(f) {
   let picking = null;
   let reflow = 0;
   const toRegions = (w) => {
-    const list = layoutAt(w);
+    const list = layoutAt(w).filter((p) => !window.__wgLive.gone.includes(p.part));
     const at = new Map(list.map((p, i) => [p.part, i]));
     return list.map((p, i) => ({
       index: i, file: p.file ?? null, entity: p.entity ?? null, block: p.block ?? null, view: p.view ?? null, element: null, component: p.component ?? null,
@@ -905,8 +907,21 @@ export function liveStub(f) {
     async unpreview() { window.__wgLive.calls.push('unpreview'); },
     async move(m) { window.__wgLive.calls.push(`move ${JSON.stringify(m)}`); const a = window.__wgLive.moveAnswer ?? { ok: true, undo: 'u-1', revision: null }; if (a.ok) written(); return a; },
     async insert(i) { window.__wgLive.calls.push(`insert ${JSON.stringify(i)}`); written(); return { ok: true, undo: 'u-2', revision: null }; },
-    async undo(t) { window.__wgLive.calls.push(`undo ${t}`); written(); return { ok: true, undo: null, revision: null }; },
-    async remove(r) { window.__wgLive.calls.push(`remove ${JSON.stringify(r)}`); written(); return { ok: true, undo: 'u-3', revision: '216' }; },
+    async undo(t) {
+      const w = window.__wgLive;
+      w.calls.push(`undo ${t}`);
+      if (w.undoes[t] && !w.unchanged) { w.gone = w.gone.filter((p) => p !== w.undoes[t]); if (bounds) regions = toRegions(bounds.width); }
+      written();
+      return { ok: true, undo: null, revision: null };
+    },
+    async remove(r) {
+      const w = window.__wgLive;
+      w.calls.push(`remove ${JSON.stringify(r)}`);
+      // Taken out: the reloaded page no longer has it, as a site's would not.
+      if (!w.unchanged) { w.gone.push(r.item); w.undoes['u-3'] = r.item; if (bounds) regions = toRegions(bounds.width); }
+      written();
+      return { ok: true, undo: 'u-3', revision: '216' };
+    },
     // The component library (live-library.ts): the answer the sweep set, pictures drawn here, a little slower than at once.
     async library(id, options) {
       window.__wgLive.calls.push(`library${options?.refresh ? ' refresh' : ''}`);

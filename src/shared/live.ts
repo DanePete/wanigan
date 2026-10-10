@@ -478,6 +478,16 @@ function regionKey(r: LiveRegion): string {
 }
 
 /**
+ * How many regions on a page are the same part as this one (its key): a part taken out is one fewer, put back one more.
+ * Null when nothing on the region knows it by (no component, file, entity, block, view, element or part).
+ */
+export function countOf(region: LiveRegion, scan: readonly LiveRegion[]): number | null {
+  const key = regionKey(region);
+  if (!key.replace(/\|/g, '')) return null;
+  return scan.filter((r) => regionKey(r) === key).length;
+}
+
+/**
  * The region on a newly scanned page that is the same part as one on the old
  * page: the same key, and the same occurrence of it counting from the top
  * (the second product teaser stays the second). Null when the page no longer

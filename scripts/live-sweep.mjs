@@ -1875,12 +1875,15 @@ try {
       if (!(await heard(page, 'Took Quote paragraph out of Paragraphs on Article 12', outAt))) fail(t('take out: a content item was not taken out at once'));
       if (await page.$('.dialog')) fail(t('take out: a content item asked first'));
       if (!(await calls()).slice(before).includes('remove {"collection":"c-paras","item":"p-para-1"}')) fail(t('take out: the removal was not posted'));
-      await page.waitForSelector('.status-line .status-done:has-text("Quote paragraph: taken out.")', { timeout: 4000 })
+      // Read back by the part itself: gone from the reloaded page (not "could not check" because what held it went too).
+      await page.waitForSelector('.status-line .status-done:has-text("Quote paragraph: taken out, and it is gone from the page after reloading.")', { timeout: 4000 })
         .catch(async () => fail(t(`take out: the read-back was not said (${await lastSaid(page)})`)));
       if (!/Took Quote paragraph out/.test(await said())) fail(t('take out: it was not said aloud'));
       await shot('take-out-saved');
       await page.locator('.status-line button', { hasText: 'Undo' }).click().catch(() => fail(t('take out: the read-back did not carry the Undo')));
       await page.waitForFunction(() => window.__wgLive.calls.includes('undo u-3'), null, { timeout: 3000 }).catch(() => fail(t('take out: Undo did not ask the site')));
+      await page.waitForSelector('.status-line .status-done:has-text("Quote paragraph: put back, and it is on the page again after reloading.")', { timeout: 4000 })
+        .catch(async () => fail(t(`take out: its undo was not read back by the part being on the page again (${await lastSaid(page)})`)));
 
       // Taking out a shared placement: asked first, with where it shows; Cancel saves nothing.
       await clearChoice(page);
