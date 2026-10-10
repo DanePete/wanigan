@@ -367,7 +367,11 @@ function useSeen(ref: RefObject<HTMLElement | null>): boolean {
   useEffect(() => {
     const el = ref.current;
     if (!el) return;
-    const io = new IntersectionObserver(([entry]) => setOnScreen(!!entry?.isIntersecting), { rootMargin: '120px' });
+    // Measured against the box that scrolls the tiles, so "near" is near in it. One delivery can carry several
+    // entries for a tile (the grid moved it out and back within a frame): the last is how it is now.
+    const scroller = el.closest<HTMLElement>('.view-body');
+    const io = new IntersectionObserver((entries) => setOnScreen(!!entries[entries.length - 1]?.isIntersecting),
+      { root: scroller, rootMargin: '120px' });
     io.observe(el);
     const onVisibility = (): void => setVisible(!document.hidden);
     document.addEventListener('visibilitychange', onVisibility);
