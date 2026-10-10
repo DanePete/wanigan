@@ -38,7 +38,7 @@ WordPress and other sites can each be on or off.
   are drawn where the page is, and leaving them puts the page back as it was.
 - **Keys for everything**, in the view and in its page while nothing is typed
   into: P picks (and stops picking), ⇧L chooses a lens, 1 2 3 the widths,
-  [ and ] the side panel's tabs, ⇧[ and ⇧] the dock's, ⇧C Compare, ⇧B the
+  [ and ] Structure's tabs, ⇧[ and ⇧] the dock's, ⇧C Compare, ⇧B the
   component library, ⇧S a snap, ⇧R starts or stops a recording; on a chosen
   part E types on its words on the page (or,
   for a part that is more than words, opens Edit ▾), M moves, . opens its
@@ -135,7 +135,7 @@ WordPress and other sites can each be on or off.
   they are: each key shows on the page as you type it, Enter or clicking away
   keeps them, Esc puts back exactly what was there, and the status line says
   you are typing, with Keep and Put back. Retype in a box does the same from
-  the side panel, for the keyboard and screen readers. Try a style shows each
+  the Inspector, for the keyboard and screen readers. Try a style shows each
   value on the page as you move its control (over an edit the layer already
   shows there too), and Show it on the page keeps it. What you keep is kept by
   Wanigan, not written into the site: the page goes on showing it through the
@@ -317,7 +317,7 @@ WordPress and other sites can each be on or off.
 - **Compare.** The page you are on, taken whole on Local and on a hosted
   environment at the same width (phone, tablet or desktop), lined up row by row
   so a section only one side has is a striped band rather than everything below
-  it marked as changed. Drawn where the page is, with the side panel and the
+  it marked as changed. Drawn where the page is, with the panels and the
   dock beside it; Escape (or ⇧C) puts the page back exactly as it was, not
   loaded again. Slider, onion skin, difference, flip and side by side;
   each changed area boxed, counted and named by the local part it overlaps.
