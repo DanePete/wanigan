@@ -891,6 +891,25 @@ test('WordPress: words a theme template writes, and a string it prints through g
   } finally { w.done(); }
 });
 
+test('WordPress: a classic header’s site title, now that header.php is a named part, is the setting it shows, asked first and then saved', async () => {
+  // The helper puts the site title's target on the part that read it while rendering (option_seen): here header.php.
+  const title: EditTarget = { id: 'option-blogname', kind: 'option', label: 'Site title', via: 'schema', schema: { type: 'string', title: 'Site title' }, value: 'Acme Outfitters', revisions: false, shows: 'every page that shows the site’s title' };
+  const t = classicTrace();
+  const traced: LiveTrace = { ...t, parts: t.parts.map((p) => (p.id === 'c1' ? { ...p, edits: [...(p.edits ?? []), title.id] } : p)), edits: [...t.edits, title] };
+  const retitled = retype(headerFile, 'Northwind Outfitters', 'Acme Outfitters', 'p:nth-of-type(1) > a:nth-of-type(1)');
+  const w = wire({ edits: [retitled], trace: traced });
+  try {
+    w.page.parts = { c1: { 'p:nth-of-type(1) > a:nth-of-type(1)': [words('Acme Outfitters')] } };
+    await w.apply();
+    assert.deepEqual(await w.implement(retitled.id), {
+      ok: false, id: retitled.id, route: 'none',
+      why: 'These words are kept in Site title: saving them changes it wherever it shows (every page that shows the site’s title), not only on this page. Make it real again to save them there.',
+    }, 'said first, with where it shows');
+    assert.deepEqual(await w.implement(retitled.id), { ok: true, id: retitled.id, state: 'implemented', revision: '43' });
+    assert.deepEqual(w.posts, [{ path: '/_wanigan/edit/option-blogname', body: { trace: '0123456789abcdef', value: 'Northwind Outfitters' } }]);
+  } finally { w.done(); }
+});
+
 test('WordPress: words a template’s PHP makes, or a template not read, are refused naming the file, and never as “cannot tell”', async () => {
   const computed = retype(headerFile, 'Hi', 'Hello Dana, welcome back', 'p:nth-of-type(2)');
   const huge = retype(hugeFile, 'Less', 'Too much to read', 'p:nth-of-type(1)');
