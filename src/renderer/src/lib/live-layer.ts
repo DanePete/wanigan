@@ -16,8 +16,8 @@
 //   steps and why, whether step 3 compared the page as it was before, what was
 //   held still, and how far down a long page was compared, all in words.
 import type {
-  LayerApplied, LayerCut, LayerDifference, LayerEdit, LayerImplemented, LayerMask, LayerRect, LayerSnapshot, LayerState, LayerTarget, LayerVerdict,
-  VerifyStep,
+  LayerApplied, LayerCut, LayerDifference, LayerEdit, LayerImplemented, LayerMask, LayerReach, LayerRect, LayerSnapshot, LayerState, LayerTarget,
+  LayerVerdict, VerifyStep,
 } from '../../../shared/design-layer.ts';
 import { fragileWhy, kindWords } from '../../../shared/layer-words.ts';
 import type { LiveEdit, LiveRegion } from '../../../shared/live.ts';
@@ -231,8 +231,23 @@ export function differenceWords(d: LayerDifference): string {
     case 'leak': return d.against
       ? `At ${d.width} px, ${many(d.pixels, 'pixel')} away from every edited element differ from the page as it was before it was made real (with it as designed on it), by up to ${d.maxDiff} of 255, in ${boxWords(d.rect)}: the change reached further than it should.`
       : `At ${d.width} px, ${many(d.pixels, 'pixel')} differ away from every edited element, by up to ${d.maxDiff} of 255, in ${boxWords(d.rect)}: the change reached further than it should.`;
+    case 'outside': {
+      const was = 'on the page as it was before it was made real';
+      if (d.property === 'element') return `At ${d.width} px, ${d.element}, away from the edited elements, is ${d.result === 'on the page' ? `in the site but was not ${was}` : `not in the site but was ${was}`}.`;
+      if (d.property === 'text') return `At ${d.width} px, ${d.element}, away from the edited elements, says “${d.result}” in the site, “${d.before}” ${was}.`;
+      return `At ${d.width} px, ${d.element}, away from the edited elements: ${d.property} is ${d.result} in the site, ${d.before} ${was}.`;
+    }
   }
 }
+
+/** Names said as a list: "A and B", "A, B and C". */
+const listed = (names: readonly string[]): string => (names.length > 1 ? `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}` : names[0] ?? '');
+
+/** Where else the saved words show on the page: the save's own reach, said as a statement, never a difference. */
+export const alsoChangedWords = (r: LayerReach): string => {
+  const more = r.count - r.places.length;
+  return `The same words also changed in ${r.count === 1 ? 'one other place' : `${r.count.toLocaleString('en')} other places`} on the page, where the site shows the same stored value: ${listed(r.places)}${more > 0 ? ` and ${more} more` : ''}.`;
+};
 
 /* ── words written to the owner's own template, when nothing the site stores holds them ── */
 

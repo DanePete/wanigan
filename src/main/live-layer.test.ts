@@ -8,7 +8,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { compileLayer, layerTextHash, type LayerApplied, type LayerEdit, type LayerImplemented, type LayerPickTarget, type LayerVerdict } from '../shared/design-layer.ts';
-import { parseVerdict, type Bitmap, type ElementSnap } from '../shared/layer-verify.ts';
+import { parseVerdict, type Bitmap, type ElementSnap, type PageSnap } from '../shared/layer-verify.ts';
 import type { LiveEditSaved } from '../shared/live-lens.ts';
 import type { EditTarget, LiveTrace, PartIdentity, TracePart } from '../shared/live-trace.ts';
 import { folderOf } from './live-capture.ts';
@@ -107,7 +107,7 @@ interface SiteAnswer { status: number; body: unknown }
 function wire(over: {
   edits?: LayerEdit[]; url?: string; trace?: LiveTrace | null; trusted?: boolean; enabled?: boolean; render?: LayerRender; renderBefore?: LayerBeforeRender; renderMs?: number;
   saved?: { ok: boolean; error: string | null }; refuseMark?: string; site?: SiteAnswer; decode?: (png: Buffer) => Promise<Bitmap>;
-  helper?: (at: SaveAt | undefined) => HelperSaved;
+  helper?: (at: SaveAt | undefined) => HelperSaved; now?: () => number;
 } = {}) {
   const handlers = new Map<string, (...args: unknown[]) => unknown>();
   const dataDir = mkdtempSync(join(tmpdir(), 'wanigan-layer-'));
@@ -183,7 +183,7 @@ function wire(over: {
     renderBefore: async (r) => { order.push(`before ${r.width}`); befores.push(r); return over.renderBefore ? over.renderBefore(r) : { error: 'no render in this test' }; },
     ...(over.decode ? { decode: over.decode } : {}),
     encode: async () => Buffer.from('diff-png'),
-    now: () => 1_700_000_000_000,
+    now: over.now ?? (() => 1_700_000_000_000),
     seed: () => 4242,
     ...(over.renderMs ? { renderMs: over.renderMs } : {}),
   });
@@ -541,6 +541,18 @@ test('the same stored thing shown twice is saved once; elements that differ, or 
   } finally { path.done(); }
 });
 
+test('what the site says beside a save is in the answer: the field’s own words saved where the page adds more around them', async () => {
+  const notice = edit({ label: 'Title', change: { type: 'text', value: '© 2026 Northwind Outfitters' }, target: { part: title(), inner: null, selector: null, textHash: layerTextHash('© 2026 Acme Outfitters') } });
+  const note = 'Saved to the field’s own words, “Northwind Outfitters”: the site’s templates or code add “© 2026” before them on the page.';
+  const w = wire({ edits: [notice], helper: () => ({ ok: true, error: null, label: 'Acme settings', revision: null, note }) });
+  try {
+    w.page.parts = { p6: { '': [words('© 2026 Acme Outfitters', 'node:12:title:string:fr')] } };
+    await w.apply();
+    assert.deepEqual(await w.implement(notice.id), { ok: true, id: notice.id, state: 'implemented', revision: null, note });
+    assert.deepEqual(w.saves.map((x) => x.slice(1, 3)), [['© 2026 Acme Outfitters', '© 2026 Northwind Outfitters']], 'the words as the page shows them go to the helper, which maps them');
+  } finally { w.done(); }
+});
+
 /** On a Drupal page, words nothing holds and no template around them writes. */
 const DRUPAL_NOTHING_HOLDS = 'Nothing this page offers to edit holds exactly these words, and Wanigan finds them written in no template around them: code makes them (a formatter, a module or the theme) from something Wanigan does not save from here yet.';
 
@@ -684,12 +696,125 @@ test('WordPress: words no target holds, or that two hold, are refused with why, 
   } finally { b.done(); }
 });
 
+/* ── WordPress: a block's rich text, the HTML its schema says it is ── */
+
+/** A paragraph block in post 12's content, with its target as the helper builds it: `content` is HTML (live-helper-wordpress.ts block_edit()). */
+const paragraph: PartIdentity = { kind: 'block', store: 'post:12', path: [3], name: 'core/paragraph' };
+const paragraphTarget = (content: string, over: Partial<EditTarget> = {}): EditTarget => ({
+  id: 'block-post-12-3', kind: 'block-attributes', label: 'Paragraph block in post “Paddling 101”', via: 'schema', revisions: true,
+  schema: {
+    type: 'object', additionalProperties: false,
+    properties: {
+      content: { type: 'string', source: 'rich-text', contentMediaType: 'text/html', description: 'Its words as HTML, with inline formatting.' },
+      dropCap: { type: 'boolean', default: false },
+    },
+  },
+  value: { content, dropCap: false },
+  ...over,
+});
+const withParagraph = (t: EditTarget): LiveTrace => wpTrace({
+  parts: [{ id: 'w2', kind: 'entity', label: 'Post 12: Paddling 101', identity: postContent, edits: postEdits().map((e) => e.id) }, { id: 'b3', kind: 'block', label: 'Paragraph', parent: 'w2', identity: paragraph, edits: [t.id] }],
+  edits: [...postEdits(), t],
+});
+
+test('WordPress: a paragraph’s words alone are saved as its rich text, escaped as the helper writes text, its other settings as they were', async () => {
+  const target = paragraphTarget('Fish &amp; chips by the lake');
+  const retyped = retype(paragraph, 'Fish & "chips" <3 by the lake', 'Fish & chips by the lake');
+  const w = wire({ edits: [retyped], trace: withParagraph(target) });
+  try {
+    w.page.parts = { b3: { '': [words('Fish & chips by the lake')] } };
+    await w.apply();
+    assert.deepEqual(await w.implement(retyped.id), { ok: true, id: retyped.id, state: 'implemented', revision: '43' });
+    assert.deepEqual(w.posts, [{ path: '/_wanigan/edit/block-post-12-3', body: { trace: '0123456789abcdef', value: { content: 'Fish &amp; &quot;chips&quot; &lt;3 by the lake', dropCap: false } } }],
+      'the typed < and quotes are words, never markup: & < > " \' escaped as WordPress’s HTML processor writes text');
+    assert.deepEqual(w.marks, [{ id: retyped.id, state: 'implemented' }]);
+    assert.deepEqual(w.order, ['before 390', 'before 1440', 'save'], 'the page as it was is kept before the words are saved');
+  } finally { w.done(); }
+
+  // A block attribute read as text (`source: text`, said text/plain): the helper escapes it itself, so the words go as they are.
+  const plain: EditTarget = { ...paragraphTarget('x'), id: 'block-post-12-4', label: 'Code block in post “Paddling 101”', schema: { type: 'object', properties: { content: { type: 'string', source: 'text', contentMediaType: 'text/plain' } } }, value: { content: 'a < b && c' } };
+  const code = retype({ ...paragraph, path: [4], name: 'core/code' }, 'a <= b && c', 'a < b && c');
+  const c = wire({ edits: [code], trace: wpTrace({ parts: [{ id: 'b4', kind: 'block', label: 'Code', identity: { ...paragraph, path: [4], name: 'core/code' }, edits: [plain.id] }], edits: [plain] }) });
+  try {
+    c.page.parts = { b4: { '': [words('a < b && c')] } };
+    await c.apply();
+    assert.equal((await c.implement(code.id)).ok, true);
+    assert.deepEqual(c.posts.map((x) => x.body), [{ trace: '0123456789abcdef', value: { content: 'a <= b && c' } }]);
+  } finally { c.done(); }
+});
+
+test('WordPress: words between a paragraph’s tags are saved in their run with every tag kept; a change across them goes to an agent, saying so', async () => {
+  const html = 'Read <a href="/trails/" class="acme-link">the trail guide</a> before you go.';
+  const shown = 'Read the trail guide before you go.';
+  const target = paragraphTarget(html);
+  const inRun = retype(paragraph, 'Read the trail guide before you set out.', shown);
+  const a = wire({ edits: [inRun], trace: withParagraph(target) });
+  try {
+    a.page.parts = { b3: { '': [words(shown)] } };
+    await a.apply();
+    assert.equal((await a.implement(inRun.id)).ok, true);
+    assert.deepEqual(a.posts.map((x) => x.body), [{ trace: '0123456789abcdef', value: { content: 'Read <a href="/trails/" class="acme-link">the trail guide</a> before you set out.', dropCap: false } }],
+      'the link, its address and class byte for byte; only the words after it changed');
+  } finally { a.done(); }
+
+  const across = retype(paragraph, 'Read our trail notes & go.', shown);
+  const b = wire({ edits: [across], trace: withParagraph(target) });
+  try {
+    b.page.parts = { b3: { '': [words(shown)] } };
+    await b.apply();
+    assert.deepEqual(await b.implement(across.id), {
+      ok: false, id: across.id, route: 'agent',
+      why: 'These words are formatted text (Paragraph block in post “Paddling 101”) and the change it crosses its formatting (a link, bold or another inline tag): Wanigan saves new words between tags only where the change falls within one run of words. An agent can make the change from a brief.',
+    });
+    assert.deepEqual([b.posts, b.marks], [[], []], 'nothing sent, nothing marked');
+    assert.deepEqual(b.order, ['before 390', 'before 1440'], 'handed to an agent, the page as it is is kept for step 3 first');
+  } finally { b.done(); }
+});
+
+test('WordPress: words kept in something shown beyond this page are said with where, and saved only when made real again', async () => {
+  // A paragraph in the single template: its words show on every page that uses the template.
+  const inTemplate: PartIdentity = { kind: 'block', store: 'tpl:acme//single', path: [2], name: 'core/paragraph' };
+  const shared = paragraphTarget('Open daily', {
+    id: 'block-tpl-2', label: 'Paragraph block in the template “Single” (shows on every page that uses this template)', shows: 'every page that uses the template “Single”',
+  });
+  const traced = wpTrace({ parts: [...wpTrace().parts, { id: 'b5', kind: 'block', label: 'Paragraph', parent: 'w0', identity: inTemplate, edits: [shared.id] }], edits: [...postEdits(), titleAttributes, shared] });
+  const retyped = retype(inTemplate, 'Open every day', 'Open daily');
+  let now = 1_000;
+  const w = wire({ edits: [retyped], trace: traced, now: () => now });
+  try {
+    w.page.parts = { b5: { '': [words('Open daily')] } };
+    await w.apply();
+    const asked = 'These words are kept in Paragraph block in the template “Single” (shows on every page that uses this template): saving them changes it wherever it shows (every page that uses the template “Single”), not only on this page. Make it real again to save them there.';
+    assert.deepEqual(await w.implement(retyped.id), { ok: false, id: retyped.id, route: 'none', why: asked });
+    assert.deepEqual([w.posts, w.marks, w.order], [[], [], []], 'nothing rendered or saved until asked again');
+    // Asked again after five minutes: said again, not saved.
+    now += 5 * 60_000 + 1;
+    assert.deepEqual(await w.implement(retyped.id), { ok: false, id: retyped.id, route: 'none', why: asked });
+    assert.equal(w.posts.length, 0, 'said again, not saved');
+    now += 1_000;
+    assert.deepEqual(await w.implement(retyped.id), { ok: true, id: retyped.id, state: 'implemented', revision: '43' });
+    assert.deepEqual(w.posts.map((x) => x.body), [{ trace: '0123456789abcdef', value: { content: 'Open every day', dropCap: false } }]);
+  } finally { w.done(); }
+
+  // Refused as formatted, it says where the words show too: the brief an agent gets carries it.
+  const across = retype(inTemplate, 'See a trail guide', 'Read the trail guide');
+  const linked = { ...shared, value: { content: 'Read <a href="/trails/">the trail guide</a>', dropCap: false } };
+  const b = wire({ edits: [across], trace: { ...traced, edits: [...postEdits(), titleAttributes, linked] } });
+  try {
+    b.page.parts = { b5: { '': [words('Read the trail guide')] } };
+    await b.apply();
+    const refused = await b.implement(across.id);
+    assert.ok(!refused.ok && refused.route === 'agent' && refused.why.endsWith('Saved there, they would change it wherever it shows (every page that uses the template “Single”).'), JSON.stringify(refused));
+  } finally { b.done(); }
+});
+
 test('WordPress: formatted text goes to an agent as a brief, and nothing is saved', async () => {
-  // A heading block in the post's content: its words are rich text in the post's saved block markup.
-  const block: PartIdentity = { kind: 'block', store: 'post:12', path: [2], name: 'core/heading' };
+  // A dynamic block's setting its schema does not call HTML or text: how the site prints it is not known, so its
+  // words are not written from here.
+  const block: PartIdentity = { kind: 'block', store: 'post:12', path: [2], name: 'acme/notice' };
   const rich: EditTarget = {
-    id: 'block-post-12-2', kind: 'block-attributes', label: 'Heading block in post “Paddling 101”', via: 'schema', revisions: true,
-    schema: { type: 'object', properties: { content: { type: 'rich-text' }, level: { type: 'integer' } }, additionalProperties: false },
+    id: 'block-post-12-2', kind: 'block-attributes', label: 'Notice block in post “Paddling 101”', via: 'schema', revisions: true,
+    schema: { type: 'object', properties: { content: { type: 'string' }, level: { type: 'integer' } }, additionalProperties: false },
     value: { content: 'Before the lake', level: 2 },
   };
   const headed = retype(block, 'Before the river', 'Before the lake');
@@ -699,7 +824,7 @@ test('WordPress: formatted text goes to an agent as a brief, and nothing is save
     await a.apply();
     assert.deepEqual(await a.implement(headed.id), {
       ok: false, id: headed.id, route: 'agent',
-      why: 'These words are formatted text (Heading block in post “Paddling 101”): the site keeps them with their markup, which Wanigan does not save from here. An agent can make the change from a brief.',
+      why: 'These words are formatted text (Notice block in post “Paddling 101”): the site keeps them with their markup, which Wanigan does not save from here. An agent can make the change from a brief.',
     });
     assert.deepEqual(a.posts, []);
   } finally { a.done(); }
@@ -1052,6 +1177,23 @@ function pictures() {
 const HEADING = { x: 20, y: 40, width: 40, height: 24 };
 const PARAGRAPH = { x: 0, y: 150, width: 64, height: 20 };
 
+/** One element of a made-up page read whole: its path, name, box, own words, colour, and whether it is edited. */
+interface Whole { path: string; name: string; box: [number, number, number, number]; text?: string | null; color?: string; touched?: boolean }
+/** A made-up page read whole, as the page script's layerPage answers it once checked. */
+function whole(els: readonly Whole[]): PageSnap {
+  const table: string[] = [];
+  const at = (v: string): number => { let i = table.indexOf(v); if (i < 0) { i = table.length; table.push(v); } return i; };
+  return {
+    keys: ['color'], table, cut: false,
+    elements: els.map((e) => ({ path: e.path, name: e.name, box: { x: e.box[0], y: e.box[1], width: e.box[2], height: e.box[3] }, text: e.text ?? null, values: [at(e.color ?? 'rgb(0, 0, 0)')], touched: !!e.touched })),
+  };
+}
+/** The retitled page read whole: the heading (edited) and the paragraph, where they are in every render. */
+const retitledPage = (e: LayerEdit): PageSnap => whole([
+  { path: 'body > h2:nth-of-type(1)', name: 'h2.card__title', box: [20, 40, 100, 24], text: e.change.type === 'text' ? e.change.value : null, touched: true },
+  { path: 'body > p:nth-of-type(1)', name: 'p.lead', box: [PARAGRAPH.x, PARAGRAPH.y, PARAGRAPH.width, PARAGRAPH.height], text: 'Learn the strokes' },
+]);
+
 /**
  * A title made real through the helper: the page from before shows the heading as the layer designed it and nothing
  * else changed; today's design and result show the native change, which `leak` says also reached the paragraph.
@@ -1065,9 +1207,9 @@ function retitled(leak: boolean) {
     edits: [e], decode: pics.decode,
     renderBefore: async () => ({
       page: { png: pics.png(blank(64, 200)), bitmap: blank(64, 200), elements: [heading(e.id, 'rgb(0, 0, 0)')], found: [e.id] },
-      design: { png: pics.png(designed(blank(64, 200))), bitmap: designed(blank(64, 200)), elements: [heading(e.id, 'rgb(18, 52, 86)')], found: [e.id] },
+      design: { png: pics.png(designed(blank(64, 200))), bitmap: designed(blank(64, 200)), elements: [heading(e.id, 'rgb(18, 52, 86)')], found: [e.id], page: retitledPage(e) },
     }),
-    render: async (r) => ({ png: pics.png(now(blank(64, 200))), bitmap: now(blank(64, 200)), elements: [heading(e.id, 'rgb(18, 52, 86)')], found: [e.id], steady: { t: r.hold!.t, s: r.hold!.s, views: [] } }),
+    render: async (r) => ({ png: pics.png(now(blank(64, 200))), bitmap: now(blank(64, 200)), elements: [heading(e.id, 'rgb(18, 52, 86)')], found: [e.id], steady: { t: r.hold!.t, s: r.hold!.s, views: [] }, ...(r.whole ? { page: retitledPage(e) } : {}) }),
   });
   w.page.parts = { p6: { '': [words('Pagayer 101', 'node:12:title:string:fr')] } };
   return { w, e };
@@ -1146,6 +1288,74 @@ test('step 3 compares the result with the page as it was: a native change that r
   } finally { ok.w.done(); }
 });
 
+/**
+ * A made-up page whose title was retyped and saved: the breadcrumb shows the same stored title, so the save changed it
+ * there too, and at a phone's width the longer breadcrumb wraps onto a second line, moving everything below it down.
+ * `leak` adds what a native change beyond the touched elements would do: the lead paragraph turned blue, and the
+ * footer's words changed.
+ */
+function wrapped(leak: boolean) {
+  const pics = pictures();
+  const OLD = 'Paddling 101', NEW = 'Paddling 101, revised from the dock';
+  const e = edit({ label: 'Title', change: { type: 'text', value: NEW }, before: { text: OLD }, target: { part: title(), inner: null, selector: null, textHash: layerTextHash(OLD) } });
+  /** The page, its breadcrumb holding `crumb` and, when it wraps, everything from the title down `shift` pixels lower. */
+  const page = (crumb: string, shift: number, after: { lead?: string; footer?: string } = {}): Whole[] => [
+    { path: 'body > nav:nth-of-type(1)', name: 'nav.breadcrumb', box: [0, 0, 64, 12 + shift] },
+    { path: 'body > nav:nth-of-type(1) > a:nth-of-type(1)', name: 'a.crumb', box: [0, 0, 20, 12], text: 'Home' },
+    { path: 'body > nav:nth-of-type(1) > span:nth-of-type(1)', name: 'span.crumb', box: shift ? [0, 12, 64, 12] : [24, 0, 40, 12], text: crumb },
+    { path: 'body > h1:nth-of-type(1)', name: 'h1.title', box: [0, 16 + shift, 64, 24], text: NEW, touched: true },
+    { path: 'body > p:nth-of-type(1)', name: 'p.lead', box: [0, 44 + shift, 64, 40], text: 'Learn the strokes before the lake.', color: after.lead ?? 'rgb(0, 0, 0)' },
+    { path: 'body > img:nth-of-type(1)', name: 'img.hero', box: [0, 90 + shift, 64, 60] },
+    { path: 'body > footer:nth-of-type(1)', name: 'footer.site', box: [0, 170 + shift, 64, 20], text: after.footer ?? '© Acme Outfitters' },
+  ];
+  /** The page pictured: each element a shade of its own, where it sits. */
+  const drawn = (els: readonly Whole[], height: number): Bitmap => els.reduce((b, x, i) => painted(b, { x: x.box[0], y: x.box[1], width: x.box[2], height: x.box[3] }, 20 + i * 30 + (x.color === 'rgb(0, 0, 255)' ? 7 : 0)), blank(64, height));
+  const then = page(OLD, 0);
+  const now = page(NEW, 12, leak ? { lead: 'rgb(0, 0, 255)', footer: '© Northwind Outfitters' } : {});
+  const titleAt = (y: number): ElementSnap => ({ edit: e.id, n: 0, element: 'h1.title', values: { color: 'rgb(18, 52, 86)', text: NEW }, box: { x: 0, y, width: 64, height: 24 } });
+  const w = wire({
+    edits: [e], decode: pics.decode,
+    renderBefore: async () => ({
+      page: { png: pics.png(drawn(then, 200)), bitmap: drawn(then, 200), elements: [], found: [e.id] },
+      design: { png: pics.png(drawn(then, 200)), bitmap: drawn(then, 200), elements: [titleAt(16)], found: [e.id], page: whole(then) },
+    }),
+    render: async (r) => ({
+      png: pics.png(drawn(now, 212)), bitmap: drawn(now, 212), elements: [titleAt(28)], found: [e.id], steady: { t: r.hold!.t, s: r.hold!.s, views: [] },
+      ...(r.whole ? { page: whole(now) } : {}),
+    }),
+  });
+  w.page.parts = { p6: { '': [words(OLD, 'node:12:title:string:fr')] } };
+  return { w, e };
+}
+
+test('step 3 against the page before: the same words saved in a second place are the save’s reach, and a wrap that moves the rest is no leak', async () => {
+  const { w, e } = wrapped(false);
+  try {
+    await w.apply();
+    assert.equal((await w.implement(e.id)).ok, true);
+    const v = await w.verify(e.id, { widths: [390] });
+    assert.deepEqual([v.ok, v.failed, v.differences], [true, null, []], 'the breadcrumb’s words and the page moved 12 px down are what the save does');
+    assert.deepEqual(v.before, { ran: true, at: 1_700_000_000_000, widths: [390] });
+    assert.deepEqual(v.reach, [{ edit: e.id, count: 1, places: ['span.crumb'] }], 'said: the same words changed in one other place');
+  } finally { w.done(); }
+});
+
+test('step 3 against the page before still fails what changed beyond the edit, named by element, wherever the layout moved it', async () => {
+  const { w, e } = wrapped(true);
+  try {
+    await w.apply();
+    await w.implement(e.id);
+    const v = await w.verify(e.id, { widths: [390] });
+    assert.deepEqual([v.ok, v.failed], [false, 'rest']);
+    const against = { edit: e.id, at: 1_700_000_000_000 };
+    assert.deepEqual(v.differences, [
+      { kind: 'outside', width: 390, element: 'p.lead', property: 'color', before: 'rgb(0, 0, 0)', result: 'rgb(0, 0, 255)', against },
+      { kind: 'outside', width: 390, element: 'footer.site', property: 'text', before: '© Acme Outfitters', result: '© Northwind Outfitters', against },
+    ], 'the paragraph that turned blue and the footer’s other words, nothing for the wrap');
+    assert.deepEqual(v.reach, [{ edit: e.id, count: 1, places: ['span.crumb'] }]);
+  } finally { w.done(); }
+});
+
 test('with no page from before, step 3 says it could not run and why, and the verdict does not claim it', async () => {
   const e = edit({ state: 'implemented' });
   const w = wire({ edits: [e], render: renders(e, { design: (b) => b, result: (b) => b }) });
@@ -1181,7 +1391,7 @@ test('an edit made real on the page after the page from before was kept: step 3 
   } finally { w.done(); }
   // An edit of another page, for that page only, does not count.
   const elsewhere = edit({ page: '/about', state: 'implemented' });
-  const kept: BeforeKept = { at: 1, page: '/paddling', hold: { t: 1, s: 1 }, inSite: [], widths: { 390: { found: true, elements: [], masks: [], steady: null, cut: null } }, failed: {} };
+  const kept: BeforeKept = { at: 1, page: '/paddling', hold: { t: 1, s: 1 }, inSite: [], widths: { 390: { found: true, elements: [], masks: [], steady: null, cut: null, whole: true } }, failed: {} };
   const self = edit({ state: 'implemented' });
   assert.equal(beforeCheck(self, kept, [390, 1440], [self, elsewhere]).ran, true);
   assert.deepEqual(beforeCheck(self, kept, [1440], [self]), { ran: false, why: 'Its page from before was kept at 390 px, not at the widths verified.' });

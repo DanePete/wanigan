@@ -232,9 +232,19 @@ shows only in the floor.
    real (and when a style or token is handed to an agent), rendered without
    the layer and, in the same load, with that one edit as designed on it; the
    result must also equal that page outside the touched elements. It carries
-   the edit's own reflow and reach, so text that reflows or a token used
-   everywhere is not a difference, and only what the native change did beyond
-   them is. With no page from before (an edit made real elsewhere), or another
+   the edit's own reflow and reach (text that reflows, a token used
+   everywhere), but not everything the save does: saving a title also changes
+   the breadcrumb that shows the same stored words, which may wrap and move
+   the rest of the page down. So this comparison is element by element: each
+   element outside the touched ones is matched by its place in the page's
+   structure, and its own words and computed values for the layer's
+   properties (not width and height, which are the layout's) are compared
+   wherever it now sits. Words that changed only from the edit's old words to
+   its new ones are the save's own reach, said in the verdict ("the same
+   words also changed in one other place"), never a failure; anything else
+   that changed is a difference named by its element. Pixels are compared
+   only inside elements that kept their place and size and hold nothing that
+   moved. With no page from before (an edit made real elsewhere), or another
    edit made real on the page since, the verdict says this could not run, and
    why.
 4. **States and edges.** Hover, focus and active forced on the touched
@@ -402,8 +412,21 @@ or the project.
      translation and item the target's identity names (its UUID, langcode and
      item, never the default language or the first item holding the same
      words; a target that names no field is refused), only over the version
-     the page showed (content saved since, a newer draft and any validation
-     violation, the workflow's included, are refused, saying why). A plain
+     the page showed (content saved since and a newer draft are refused,
+     saying why). Validation refuses it as Drupal's own form for that one
+     field would (a violation of the field or of the content as a whole),
+     and besides on any of the workflow's and any the change brings,
+     validated before and after the change and compared; a problem the
+     content already had in a field the edit does not touch is no reason to
+     refuse, and the answer's note says it. Where the page shows the
+     item's words with more around them that the field does not hold (a
+     template or a preprocess adds it), and the field's mark shows the
+     content is as the page rendered it (its revision, and its changed time
+     where it carries one), the edit is made on the field's own words: kept
+     when what is added stays unchanged around the new words, refused as
+     code when the change touches it; without that proof the refusal says
+     Wanigan cannot tell, and nothing is said to have changed since unless
+     it might have. The site's note on a save is in the answer. A plain
      value is the words; in formatted text one run of words inside one stored
      text node is spliced byte for byte and kept only when rendering the old
      and new text through the item's format differs in those words alone
@@ -422,13 +445,14 @@ or the project.
      property of it, equals the words as the site rendered them (whitespace
      folded, wptexturize's quotes, dashes and ellipsis read as typed): a title,
      an excerpt, a string meta, the site title or tagline, a menu link's text
-     (its address sent back as it was); on Drupal a block's title, the site's
-     name or slogan, one run of a view's header, footer or empty text (offered
-     run by run, so its markup is never in the value), or a content menu
-     link's text. Configuration is validated against its typed schema with
-     the rules only Drupal's forms keep, needs the form route's permission, is
-     written to its translation's override when the page showed one, and says
-     that the next configuration import puts back what is exported.
+     (its address sent back as it was), a WordPress block's words; on Drupal a
+     block's title, the site's name or slogan, one run of a view's header,
+     footer or empty text (offered run by run, so its markup is never in the
+     value), or a content menu link's text. Configuration is validated against
+     its typed schema with the rules only Drupal's forms keep, needs the form
+     route's permission, is written to its translation's override when the
+     page showed one, and says that the next configuration import puts back
+     what is exported.
      Never a slug, a status, a choice, an address or a read-only value. It is
      looked for in the parts the edit's identity names, then outward a level
      at a time, the nearest level deciding: each part's parent, and the post
@@ -438,18 +462,39 @@ or the project.
      schema save (`POST /_wanigan/edit/<id>` with the trace's id, checked
      with `checkValue` in main and again by the helper), refused if the view
      holds another trace by then.
-   - Formatted text on WordPress (a block's rich text, words inside a
-     post's content, a value holding markup) answers `route: 'agent'`, as
-     styles and tokens do until phase 3. Every refusal names its cause:
-     Drupal keeps no such thing (words written in a template, which answer
-     `route: 'agent'`; a menu link written in code; a base field's label), or
-     Wanigan does not do it yet (a template's `t()` strings, which are
-     interface translation; a caption; words across formatting; a draft;
-     words code makes from what is not saved here). The Drupal helper lists
-     each template part's own words, read by Drupal's Twig lexer, for this. Nothing holding the words, more than one thing holding
-     them (named), a changed page, a target the trace says this user may not
-     change, or a refusal from the site (passed on as the site said it)
-     answers `route: 'none'`, with why.
+   - A string its schema calls HTML (`contentMediaType: 'text/html'`: a
+     WordPress block's rich text, a field a block binds as rich text, a
+     navigation label) is sent as HTML, never as typed text
+     (`src/shared/rich-text.ts`). Words alone (no tag inside): the new words
+     escaped as the helper's own save writes text (`WP_HTML_Processor`
+     serialization: `&`, `<`, `>`, `"` and `'` as `&amp;`, `&lt;`, `&gt;`,
+     `&quot;` and `&apos;`), so what is sent is what the site keeps. Words
+     between tags: the one stretch where old and new words differ (compared
+     as words) must fall inside one run of text between two tags, at both
+     ends of the slide repeated letters allow; it is written there escaped,
+     every tag and every other run kept byte for byte, the new words taking
+     the formatting of the words they replace.
+   - A target the helper says shows beyond this page (its `shows`: a
+     template or template part, a synced pattern's own words, a navigation
+     menu, a widget, a site setting, a media library alt) is said first,
+     with where (`route: 'none'`, nothing saved or rendered), and saved when
+     the edit is made real again within five minutes for the same target,
+     reach and words. The edit sheet asks the same way (`editNotice()`).
+   - On WordPress a change across formatting (or words added right beside a
+     tag, which could go inside it or outside), words inside a classic
+     post's content, and a block setting whose schema says neither HTML nor
+     text answer `route: 'agent'`, saying which (and where they show, when
+     beyond this page), as styles and tokens do until phase 3. Every refusal
+     names its cause: Drupal keeps no such thing (words written in a
+     template, which answer `route: 'agent'`; a menu link written in code; a
+     base field's label), or Wanigan does not do it yet (a template's `t()`
+     strings, which are interface translation; a caption; words across
+     formatting; a draft; words code makes from what is not saved here). The
+     Drupal helper lists each template part's own words, read by Drupal's
+     Twig lexer, for this. Nothing holding the words, more than one thing
+     holding them (named), a changed page, a target the trace says this user
+     may not change, or a refusal from the site (passed on as the site said
+     it) answers `route: 'none'`, with why.
    - Just before words are saved, and when a style, a token or formatted
      words are handed to an agent (once: asking again never keeps a page
      that may already have the agent's change), the page the edit is on is
@@ -469,7 +514,10 @@ or the project.
    steps in order: computed styles and boxes of the touched elements (a token:
    its custom property as the root computes it, in both renders), pixels
    around them, then the rest of the page, against the design and against
-   each edit's page from before with that edit designed on it. Nothing passes
+   each edit's page from before with that edit designed on it, the latter
+   element by element (the page script's `layerPage` reads each element's
+   path from `<body>`, own words and computed values, in both) and in pixels
+   only where the layout kept still. Nothing passes
    for want of a comparison: an edit found but gone when the page was
    measured, a token whose value was not read, or an edit for a named
    breakpoint (phase 1 reads no breakpoints, so the design cannot show it)
@@ -480,7 +528,7 @@ or the project.
    `implemented` with the verdict, which says what differs: the words are in
    the site either way). Besides its differences, the verdict says (each
    optional, so a verdict kept before them still reads): what was masked and
-   why (`masked`), whether step 3 compared the page from before or why not
+   why (`masked`), where else the saved words changed (`reach`), whether step 3 compared the page from before or why not
    (`before`), whether every render was held still (`held`), and how far
    down a page taller than 6,000 px was compared (`cut`, a statement, never
    a difference). `verified` here is phase 1's: steps 1 to 3 passed on this

@@ -3,7 +3,9 @@
 // and a stand-in live view (scripts/ui-live-stub.mjs): a made-up acme trace
 // over a plain wireframe, never a website. Screenshots go to
 // .artifacts/live/<theme>-<name>.png: the lenses' legends, the Inspector's
-// sections, moving a part by the keyboard, both edit sheets, the request, the
+// sections, moving a part by the keyboard, both edit sheets (and, on a made-up
+// WordPress trace, formatted text edited as words or as its HTML, and a save
+// shown beyond the page asked first with where), the request, the
 // palette, the component library (listed, searched, pictured, an entry's
 // details, placing one, a WordPress library's patterns and styles, an outdated
 // helper), taking a part out (at once, or asked first with its reach), the
@@ -39,6 +41,28 @@ import { LIVE_PAGE_KEYS } from '../src/shared/live-keys.ts';
 import { fitProblems } from './ui-fit.mjs';
 
 const out = join(root, '.artifacts', 'live');
+
+/**
+ * The made-up trace, as a WordPress helper's: the opening hours block offers a paragraph's words alone, a paragraph
+ * with a link and bold in it, each the HTML its schema says it is, and a paragraph kept in a template part.
+ */
+function richTrace(base) {
+  const words = (id, label, content) => ({
+    id, kind: 'block-attributes', label, via: 'schema', revisions: true, value: { content },
+    schema: { type: 'object', additionalProperties: false, properties: { content: { type: 'string', title: 'Words', contentMediaType: 'text/html', description: 'Its words as HTML, with inline formatting (bold, italic, links and the editor’s other formats).' } } },
+  });
+  const added = [
+    words('e-rich-words', 'Paragraph block in page “Hours”', 'Fish &amp; chips on Fridays'),
+    words('e-rich-markup', 'Paragraph block with a link in page “Hours”', 'Ask about <a href="/cakes">cakes</a> &amp; <strong>pies</strong>'),
+    // Kept in a template part: the save shows on every page that uses it (helper 4's `shows`).
+    { ...words('e-rich-shared', 'Paragraph block in the template part “Footer” (shows on every page that uses this template part)', 'Open daily'), shows: 'every page that uses the template part “Footer”' },
+  ];
+  return {
+    ...base, platform: 'wordpress',
+    parts: base.parts.map((p) => (p.id === 'p-hours' ? { ...p, edits: [...(p.edits ?? []), ...added.map((e) => e.id)] } : p)),
+    edits: [...base.edits, ...added],
+  };
+}
 mkdirSync(out, { recursive: true });
 const failures = [];
 const fail = (what) => { failures.push(what); console.error(`✗ ${what}`); };
@@ -754,7 +778,8 @@ try {
       for (const w of ['The rest of the page was also compared with the page as it was just before this was made real, at 390 and 1440 px.',
         'The site’s helper held relative dates and random orders still for every render', 'At 1440 px the page is 9,412 px tall: compared down to 6,000 px',
         'Who’s online (block): made for each user, at 390 and 1440 px.',
-        'Noise floor: up to 3 of 255 in 12 pixels, the most the page with the layer or without it differed from itself when rendered twice, at any width, over what was not left out.']) {
+        'Noise floor: up to 3 of 255 in 12 pixels, the most the page with the layer or without it differed from itself when rendered twice, at any width, over what was not left out.',
+        'The same words also changed in one other place on the page, where the site shows the same stored value: span.breadcrumb__current.']) {
         if (!passing.includes(w)) fail(t(`layer: a passing verdict does not say "${w}"`));
       }
       if (await rowOf('Fresh loaves').locator('.live-tray-differences[aria-label="What differs"]').count()) fail(t('layer: a verdict that passed lists a difference'));
@@ -1212,6 +1237,76 @@ try {
       await ctx.close();
     }
 
+    // Formatted text on a WordPress site (a string the schema calls HTML): words alone are edited as words and sent
+    // escaped, never as markup; inline tags are shown as the HTML they are, with the tags WordPress keeps said.
+    {
+      const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: theme, deviceScaleFactor: 2 });
+      await ctx.addInitScript(BRIDGE);
+      await ctx.addInitScript(`try { localStorage.setItem('wanigan.theme', '${theme}'); } catch {}`);
+      await ctx.addInitScript(liveStub, liveFixture);
+      await ctx.addInitScript(LIVE_DEFAULTS);
+      await ctx.addInitScript((tr) => { window.__wgLive.platform = 'wordpress'; window.__wgLive.answer = { state: 'ok', trace: tr }; }, richTrace(liveFixture.trace));
+      const p5 = await ctx.newPage();
+      const s5 = (name) => p5.screenshot({ path: join(out, `${theme}-${name}.png`), animations: 'disabled' });
+      await p5.goto(`${base}#/p/NS/live`);
+      await p5.waitForSelector('.live-tree', { timeout: 15_000 }).catch(() => fail(t('rich: no layers')));
+      const openTarget = async (label) => {
+        // From the layers, or from the part's details when it is still the chosen one after a save.
+        const edit = p5.getByRole('button', { name: /^Edit Opening hours/ });
+        if (!(await edit.isVisible().catch(() => false))) await p5.locator('.live-layer', { hasText: 'Opening hours' }).first().click();
+        await edit.click();
+        await p5.getByRole('menuitem', { name: new RegExp(`^${label}`) }).click();
+        await p5.waitForSelector('.live-sheet form', { timeout: 3000 }).catch(() => fail(t(`rich: ${label} did not open its sheet`)));
+      };
+      await openTarget('Paragraph block in page “Hours”');
+      const box = p5.getByLabel('Words', { exact: true });
+      if ((await box.inputValue().catch(() => null)) !== 'Fish & chips on Fridays') fail(t(`rich: words alone were not shown as words (${await box.inputValue().catch(() => 'no box')})`));
+      if (!(await p5.locator('.live-sheet').innerText()).includes('What you type is saved as words: an & or a < stays a character, never markup.')) fail(t('rich: the sheet does not say typed words are saved as words'));
+      await box.fill('Fish & chips <b>every</b> Friday');
+      await s5('edit-rich-words');
+      await p5.locator('.live-sheet button[type="submit"]').click();
+      await p5.waitForSelector('.toast-info:has-text("Saved Paragraph block")', { timeout: 3000 }).catch(() => fail(t('rich: saving the words did not say so')));
+      const sent = await p5.evaluate(() => window.__wgLive.calls.find((c) => c.startsWith('editSave e-rich-words')));
+      if (sent !== 'editSave e-rich-words {"content":"Fish &amp; chips &lt;b&gt;every&lt;/b&gt; Friday"}') fail(t(`rich: typed text went as ${sent}`));
+      await p5.waitForSelector('.live-status-said:has-text("saved, and the site holds it after reloading")', { timeout: 4000 })
+        .catch(async () => fail(t(`rich: the escaped words were not read back as held (${await p5.locator('.live-status-said').first().innerText().catch(() => 'no status line')})`)));
+
+      await openTarget('Paragraph block with a link in page “Hours”');
+      const html = p5.getByLabel('Words (HTML)', { exact: true });
+      if ((await html.inputValue().catch(() => null)) !== 'Ask about <a href="/cakes">cakes</a> &amp; <strong>pies</strong>') fail(t('rich: inline tags were not shown as the HTML they are'));
+      const said = await p5.locator('.live-sheet').innerText();
+      for (const want of ['Only these inline tags are kept: <strong> <em> <a>', 'WordPress refuses any other tag']) if (!said.includes(want)) fail(t(`rich: the HTML sheet does not say "${want}"`));
+      await s5('edit-rich-markup');
+      await p5.keyboard.press('Escape');
+      await p5.waitForSelector('.live-sheet', { state: 'detached', timeout: 3000 }).catch(() => fail(t('rich: Escape did not close the sheet')));
+      if ((await p5.evaluate(() => window.__wgLive.calls.filter((c) => c.startsWith('editSave')).length)) !== 1) fail(t('rich: closing the HTML sheet saved something'));
+
+      // Something shown beyond this page: the Edit menu and the sheet say so, and Save asks first; Back saves nothing.
+      await p5.getByRole('button', { name: /^Edit Opening hours/ }).click();
+      const item = p5.getByRole('menuitem', { name: /^Paragraph block in the template part “Footer”/ });
+      if (!(await item.innerText().catch(() => '')).includes('shows beyond this page')) fail(t('reach: the Edit menu does not say the target shows beyond this page'));
+      await item.click();
+      await p5.waitForSelector('.live-sheet form', { timeout: 3000 }).catch(() => fail(t('reach: the sheet did not open')));
+      if (!(await p5.locator('.live-sheet-reach').innerText().catch(() => '')).includes('Saving it changes every page that uses the template part “Footer”, not only this page.')) fail(t('reach: the sheet does not say where the save shows'));
+      const saves = () => p5.evaluate(() => window.__wgLive.calls.filter((c) => c.startsWith('editSave')).length);
+      await p5.getByLabel('Words', { exact: true }).fill('Open every day');
+      await p5.locator('.live-sheet button[type="submit"]').click();
+      const ask = p5.locator('.live-sheet-foot.ask');
+      await ask.waitFor({ timeout: 3000 }).catch(() => fail(t('reach: Save did not ask first')));
+      if (!(await ask.innerText()).includes('This changes it wherever it shows (every page that uses the template part “Footer”), not only on this page. Save it there?')) fail(t(`reach: the question reads "${await ask.innerText()}"`));
+      if ((await p5.evaluate(() => document.activeElement?.textContent ?? '')) !== 'Save wherever it shows') fail(t('reach: the question did not take the focus to its answer'));
+      if ((await saves()) !== 1) fail(t('reach: something was saved before the owner said yes'));
+      await s5('edit-reach-ask');
+      await ask.getByRole('button', { name: 'Back' }).click();
+      if ((await saves()) !== 1 || !(await p5.locator('.live-sheet form').isVisible())) fail(t('reach: Back saved, or closed the sheet'));
+      await p5.locator('.live-sheet button[type="submit"]').click();
+      await p5.getByRole('button', { name: 'Save wherever it shows' }).click();
+      await p5.waitForSelector('.toast-info:has-text("Saved Paragraph block in the template part")', { timeout: 3000 }).catch(() => fail(t('reach: the yes did not save')));
+      const shared = await p5.evaluate(() => window.__wgLive.calls.find((c) => c.startsWith('editSave e-rich-shared')));
+      if (shared !== 'editSave e-rich-shared {"content":"Open every day"}') fail(t(`reach: saved ${shared}`));
+      await ctx.close();
+    }
+
     // The dock is kept on this Mac: what it shows, its side and that it is open come back after the window reloads.
     // Elsewhere in the project, a tab only the live view has is not shown: the dock steps aside, and comes back with it.
     {
@@ -1406,6 +1501,32 @@ try {
     { reason: 'relative-date', held: 'time', name: 'core/post-date', box: { x: 0, y: 240, width: 900, height: 20 } },
   ])) fail(`page script: the blocks marked as changing between renders were ${vary}`);
   await areas.close();
+
+  // Step 3 against the page as it was reads the whole page element by element: each by its path from <body> (however
+  // the layout moves), its own words (not its children's), its computed values as indexes into one table, whether it
+  // is an edited element or inside one; never the page script's own overlay or what is never shown.
+  const whole = await browser.newPage({ viewport: { width: 900, height: 700 } });
+  await whole.setContent(`<!doctype html><html><body style="margin:0;font:14px sans-serif">
+<nav style="height:20px"><a style="color:rgb(0, 0, 255)">Home</a> / <span>Paddling 101</span></nav>
+<script>void 0</script>
+<h1 data-wl-edit="e1" style="margin:0;height:30px">Paddling <em>101</em></h1>
+<p style="margin:0;height:40px">Learn the strokes.</p>
+</body></html>`);
+  await whole.addScriptTag({ content: script });
+  const read = await whole.evaluate(() => window.__wl.layerPage(['color', 'margin-top'], 100));
+  const shape = (read?.elements ?? []).map((e) => [e.p, e.t, e.e, read.table[e.v[0]]]);
+  if (JSON.stringify(shape) !== JSON.stringify([
+    ['body > nav:nth-of-type(1)', '/', false, 'rgb(0, 0, 0)'],
+    ['body > nav:nth-of-type(1) > a:nth-of-type(1)', 'Home', false, 'rgb(0, 0, 255)'],
+    ['body > nav:nth-of-type(1) > span:nth-of-type(1)', 'Paddling 101', false, 'rgb(0, 0, 0)'],
+    ['body > h1:nth-of-type(1)', 'Paddling', true, 'rgb(0, 0, 0)'],
+    ['body > h1:nth-of-type(1) > em:nth-of-type(1)', '101', true, 'rgb(0, 0, 0)'],
+    ['body > p:nth-of-type(1)', 'Learn the strokes.', false, 'rgb(0, 0, 0)'],
+  ]) || JSON.stringify(read?.keys) !== '["color","margin-top"]' || read?.cut !== false) fail(`page script: the page read whole was ${JSON.stringify({ keys: read?.keys, shape, cut: read?.cut })}`);
+  const p1 = read?.elements?.find((e) => e.p === 'body > p:nth-of-type(1)');
+  if (JSON.stringify(p1?.b) !== JSON.stringify([0, 50, 900, 40])) fail(`page script: an element's box when read whole was ${JSON.stringify(p1?.b)}`);
+  if ((await whole.evaluate(() => window.__wl.layerPage(['color'], 2)))?.cut !== true) fail('page script: a page past the limit was not said to be cut');
+  await whole.close();
 } finally {
   await browser.close();
   gateway.kill('SIGTERM');
