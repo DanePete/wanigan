@@ -1697,7 +1697,8 @@ try {
     await page.click('.settings .check-row input');
     const app = await page.evaluate(() => window.__wgApp.settings);
     if (app.notifications !== 'urgent' || app.keepAwake !== false) failures.push(`${theme}/settings: patches did not reach the app (${JSON.stringify(app)})`);
-    if (!/Off: the Mac sleeps/.test(await page.textContent('#set-general ~ *, .settings-group'))) failures.push(`${theme}/settings: turning keep-awake off is not said`);
+    // The General group by its heading (Appearance comes first on the page now).
+    if (!/Off: the Mac sleeps/.test(await page.textContent('section[aria-labelledby="set-general"]'))) failures.push(`${theme}/settings: turning keep-awake off is not said`);
 
     // Local models: LM Studio found, its server's real port, Qwen on this Mac; the demo downloads nothing.
     const localSection = await page.waitForSelector('section[aria-labelledby="set-local"] .local-module', { timeout: 5000 })

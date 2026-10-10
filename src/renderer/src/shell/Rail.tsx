@@ -39,7 +39,7 @@ export function Rail({ projects, needs, location, onAddProject, onPalette }: {
 
   return (
     <nav className="rail" aria-label="Wanigan">
-      <a className="rail-mark" href={href({ name: 'needs' })} aria-label={`Wanigan: what needs you. ${core}`} {...tipProps(`Wanigan · ${core}`, null, 'right')}>
+      <a className="rail-mark rail-orb" href={href({ name: 'needs' })} aria-label={`Wanigan: what needs you. ${core}`} {...tipProps(`Wanigan · ${core}`, null, 'right')}>
         {/* His water says agents are at work; it never turns amber here (Needs you does). */}
         <Orb size={34} signal={running ? 'working' : 'quiet'} material={material} />
         <span className={`core-status core-${status}`}>

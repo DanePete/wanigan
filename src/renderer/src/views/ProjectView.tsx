@@ -106,8 +106,8 @@ export function ProjectView({ project, projects, view, setDialog }: { project: P
         </span>
         <div className="topbar-tools">
           {project.pausedAt
-            ? <Button tone="primary" icon="resume" onClick={resume}>Resume</Button>
-            : <Button icon="pause" onClick={() => setPausing(true)} data-tip="Pause new sessions and claims here">Pause</Button>}
+            ? <Button tone="primary" size="s" icon="resume" onClick={resume}>Resume</Button>
+            : <Button size="s" icon="pause" onClick={() => setPausing(true)} data-tip="Pause new sessions and claims here">Pause</Button>}
         </div>
       </header>
       {project.pausedAt ? (

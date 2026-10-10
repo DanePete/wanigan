@@ -153,7 +153,7 @@ function ViewsPanel({ id, anchor, projectId, views, current, shownId, onApply, o
   useEffect(() => {
     const away = (e: MouseEvent): void => {
       const t = e.target as Node;
-      if (!box.current?.contains(t) && !anchor.current?.contains(t) && !(t instanceof Element && t.closest('.toasts'))) onClose();
+      if (!box.current?.contains(t) && !anchor.current?.contains(t) && !(t instanceof Element && t.closest('.toasts, .status-host'))) onClose();
     };
     const moved = (): void => onClose();
     document.addEventListener('mousedown', away, true);

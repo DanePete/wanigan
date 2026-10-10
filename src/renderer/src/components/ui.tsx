@@ -576,14 +576,17 @@ export function ToastProvider({ children }: { children: ReactNode }) {
     };
   }, [list, latestId, dismiss, settle, act, lines, ownLines, showLine, ownLine, slot]);
 
-  // A failure waiting for its Retry floats only where no status line can hold it.
-  const urgentFloating = lines > 0 && ownLines === 0 ? [] : value.urgent.filter((n) => !floating.some((t) => t.id === n.id));
+  // A failure waiting for its Retry floats only where no status line can hold it; where one can, it moves there.
+  const lineShown = lines > 0 && ownLines === 0;
+  const urgentIds = new Set(value.urgent.map((n) => n.id));
+  const urgentFloating = lineShown ? [] : value.urgent.filter((n) => !floating.some((t) => t.id === n.id));
+  const floats = lineShown ? floating.filter((t) => !urgentIds.has(t.id)) : floating;
   return (
     <ToastContext.Provider value={push}>
       <NoticesContext.Provider value={value}>
         {children}
         <div className="toasts" role="status" aria-live="polite">
-          {[...floating, ...urgentFloating.map((n) => ({ id: n.id, text: n.text, tone: n.tone, action: n.action, count: n.count }))].map((t) => (
+          {[...floats, ...urgentFloating.map((n) => ({ id: n.id, text: n.text, tone: n.tone, action: n.action, count: n.count }))].map((t) => (
             t.tone === 'error' ? (
               <div key={t.id} className="toast toast-error" role="alert">
                 <Icon name="alert" size={15} className="toast-icon" />

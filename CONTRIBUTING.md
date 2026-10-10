@@ -69,7 +69,9 @@ skill, adding project MCP configuration, setup commands and git operations
 retain their stated filesystem effects.
 
 **The interface uses its own parts.** Build from
-`src/renderer/src/components/ui.tsx`. Colours, spacing and type come from
+`src/renderer/src/components/ui.tsx` and the parts beside it;
+[docs/design/studio-components.md](docs/design/studio-components.md) says what
+each is for. Colours, spacing and type come from
 `src/renderer/src/styles/tokens.css`, not literals. Amber means "needs you" and
 nothing else. Every control has an accessible name. For a visible change, look
 at the sweep's screenshots in `.artifacts/ui/` and put before and after, in both
