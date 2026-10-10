@@ -204,14 +204,22 @@ state more than one, which it does not yet.
 2. **Pixels.** The two full-page captures, within the calibrated tolerance; a
    difference is boxed and tied to its edit.
 3. **The rest of the page.** Outside the edited elements, the result must equal
-   the page as it was before the edits, so a change that leaked is caught.
+   the design. As built (phase 1), the design is the native page with the
+   layer, so this catches a layer that reaches further than its edits, but a
+   change the native implementation itself made beyond the touched elements
+   is in both renders and is not caught yet. Catching that needs the page as
+   it was before the edits, kept when an edit is made real and compared row by
+   row (text reflows); that is still to build.
 4. **States and edges.** Hover, focus and active forced on the touched
    elements; each breakpoint and one pixel either side; dark mode and reduced
    motion where the theme answers them; long, short and empty text for text
    edits. Drupal pages are checked with CSS aggregation off and on.
 
-An edit is `verified` when all four pass everywhere it reaches (pages sampled
-from Go to's index when it reaches many). The owner then retires it; retired
+In this design, an edit is `verified` when all four pass everywhere it reaches
+(pages sampled from Go to's index when it reaches many). Phase 1 builds less,
+and its `verified` means less: steps 1 to 3 as built (step 3 against the
+design, not the page before) passed on the edit's own page at the widths
+asked. Step 4 and reach across pages are not built. The owner then retires it; retired
 edits are archived, not deleted. An agent's implementation gets at most three
 automatic rounds of "verify, give it the failures, try again"; after that the
 evidence goes to the owner.
@@ -358,6 +366,10 @@ or the project.
    the verdict says how far, passing or not. It keeps the pictures in the data
    folder and tells the core (`verified`, or still `implemented` with the
    verdict, which says what differs: the words are in the site either way).
+   `verified` here is phase 1's: steps 1 to 3 passed on this page at these
+   widths, step 3 against the design rather than the page before the edits,
+   so a change the native implementation made beyond the touched elements is
+   in both renders and is not caught; step 4 and other pages are not checked.
 
 **The window** shows a tray of the project's edits (before and after, the
 page each is on, its state and verdict, fragile ones said so), per-edit
