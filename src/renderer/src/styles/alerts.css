@@ -41,6 +41,10 @@
   box-shadow: inset var(--track-pad) 0 0 var(--red);
 }
 
+.alert-review {
+  box-shadow: inset var(--track-pad) 0 0 var(--water);
+}
+
 .alert.is-leaving {
   animation: alert-out var(--dur) var(--ease-in) both;
   pointer-events: none;
@@ -55,6 +59,10 @@
 
 .alert-failed .alert-icon {
   color: var(--red);
+}
+
+.alert-review .alert-icon {
+  color: var(--water-text);
 }
 
 .alert-text {

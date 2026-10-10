@@ -246,6 +246,7 @@
 }
 
 .account .setting-text > p {
+  color: var(--muted);
   font-size: var(--text-sm);
 }
 
@@ -334,6 +335,10 @@
 /* A dialog's sections space themselves (components.css); a dialog's row of a control and its word. */
 .dialog .section {
   margin-top: var(--space-4);
+}
+
+.dialog .section > p {
+  margin: 0;
 }
 
 .dialog-row {

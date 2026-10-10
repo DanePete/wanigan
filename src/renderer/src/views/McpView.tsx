@@ -161,7 +161,7 @@ function ServerRow({ server: s, result, project, onRemove }: { server: McpServer
         <p className="mcp-name">
           <span>{s.name}</span>
           <Badge>{s.transport === 'unknown' ? '?' : s.transport}</Badge>
-          <span className="mcp-scope" tabIndex={0} {...tipProps(scopeHint(s))}><Badge>{scope}</Badge></span>
+          <span className="mcp-scope" {...tipProps(scopeHint(s))}><Badge>{scope}</Badge></span>
           {!s.enabled ? <Badge>off</Badge> : null}
           {s.notInWanigan ? <Badge>not in Wanigan’s sessions</Badge> : null}
         </p>

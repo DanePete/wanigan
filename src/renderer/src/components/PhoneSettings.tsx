@@ -130,7 +130,7 @@ function PairRow({ status }: { status: PhoneStatus }) {
 
   if (!code) {
     return (
-      <SettingRow label="Pair a phone" hint="A code works once, for ten minutes. Your phone needs Tailscale on, signed in to the same account as this computer."
+      <SettingRow hint="A code works once, for ten minutes. Your phone needs Tailscale on, signed in to the same account as this computer."
         control={<Button size="s" icon="phone" onClick={show}>Show a pairing code</Button>} />
     );
   }

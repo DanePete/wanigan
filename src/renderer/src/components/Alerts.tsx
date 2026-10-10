@@ -127,7 +127,8 @@ function AlertCard({ alert, onRemove }: { alert: Alert; onRemove: (key: string, 
     return () => clearTimeout(timer);
   }, [urgent, key, onRemove]);
 
-  const tone = need.kind === 'failed' || need.kind === 'interrupted' ? 'failed' : 'needs';
+  // As Needs you marks them: red for what failed, water for a review, amber for an agent waiting on you.
+  const tone = need.kind === 'failed' || need.kind === 'interrupted' ? 'failed' : need.kind === 'review' ? 'review' : 'needs';
   return (
     <article
       className={`alert alert-${tone}${urgent ? ' alert-urgent' : ''}${leaving ? ' is-leaving' : ''}`}

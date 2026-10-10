@@ -24,8 +24,13 @@
 
 .phone-pairing-text {
   display: grid;
+  align-content: start;
   gap: var(--space-3);
   min-width: 0;
+}
+
+.phone-pairing-text p {
+  margin: 0;
 }
 
 .qr {
