@@ -114,6 +114,26 @@ const PART_ICON: Record<string, LiveKind> = {
   form: 'form', shortcode: 'element', pattern: 'component', menu: 'menu', widget: 'block',
 };
 
+/** One of a kind of part the site helper reports, said as a thing on the page: what a run of them is called. */
+const PART_ONE: Record<string, string> = {
+  template: 'Template', component: 'Component', block: 'Block', entity: 'Content', field: 'Field', view: 'View', region: 'Region',
+  form: 'Form', shortcode: 'Shortcode', pattern: 'Pattern', menu: 'Menu link', widget: 'Widget',
+};
+
+/** What a region is called when the markup says nothing about it: Layers' "A part of the page". */
+export const UNNAMED_PART = 'A part of the page';
+
+/**
+ * What a run of parts of one kind is called ("Event ×3"): the markup's name for the kind; where the markup knows
+ * nothing (a menu's links, which only the site helper's trace names), the kind the trace gives them, so the run is
+ * "Menu link ×3" and not "A part of the page ×3".
+ */
+export function kindName(r: LiveRegion, componentName?: string | null, part?: { label: string; kind: string } | null): PartName {
+  const named = markupName(r, componentName);
+  if (named.title !== UNNAMED_PART || !part) return named;
+  return { title: PART_ONE[part.kind] ?? human(part.kind), kind: `${human(part.kind)} · from the trace`, icon: PART_ICON[part.kind] ?? 'template', origin: null, wrapper: false, small: false };
+}
+
 /**
  * What to call a region, from what made it. `componentName` is the component's
  * own name, when the site has it on disk; `part` is the site helper's label and
@@ -196,7 +216,7 @@ function markupName(r: LiveRegion, componentName?: string | null): PartName {
   if (folder) return { title: human(folder[1] as string), kind: 'Component · template', icon: 'component', origin, wrapper: false, small: false };
   if (r.file) return { title: human(base(r.file)), kind: hook ? `Template · ${hook}` : 'Template', icon: 'template', origin, wrapper: false, small: false };
   if (r.entity === null && r.piece) return { title: human(r.piece.split('/')[0] ?? 'Part'), kind: 'Part', icon: 'template', origin: null, wrapper: false, small: false };
-  return { title: 'A part of the page', kind: '', icon: 'template', origin: null, wrapper: false, small: false };
+  return { title: UNNAMED_PART, kind: '', icon: 'template', origin: null, wrapper: false, small: false };
 }
 
 /**

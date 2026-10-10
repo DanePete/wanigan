@@ -87,3 +87,20 @@ test('a component by its own name; a parent the scan did not return is the top',
   const layers = layersOf([r(0, 77, null, null, { component: 'acme:text_block' })], { componentName: () => 'Text | Plain' });
   assert.deepEqual(layers.map((l) => [l.name.title, l.name.icon]), [['Text · Plain', 'component']]);
 });
+
+test('a run of parts the markup cannot name is called by the kind the trace gives them, not "A part of the page"', () => {
+  y = 0;
+  // Two top-level links of a mega menu, drawn by a theme hook with no template of its own: only the trace names them.
+  const regions = [
+    r(0, null, 'region', 'themes/custom/acme/templates/region--header.html.twig', { suggestions: ['region--header'] }),
+    r(1, 0, 'acme_mega_item', null, { part: 'p1' }),
+    r(2, 0, 'acme_mega_item', null, { part: 'p2' }),
+  ];
+  const labels: Record<string, { label: string; kind: string }> = { p1: { label: 'Journal', kind: 'menu' }, p2: { label: 'Workshop', kind: 'menu' } };
+  const layers = layersOf(regions, { partName: (id) => labels[id] ?? null });
+  const run = layers[0]!.children[0]!;
+  assert.equal(run.regions.length, 2);
+  assert.equal(run.name.title, 'Menu link');
+  assert.equal(run.name.icon, 'menu');
+  assert.deepEqual(run.children.map((l) => l.name.title), ['Journal', 'Workshop'], 'each still by its own name');
+});

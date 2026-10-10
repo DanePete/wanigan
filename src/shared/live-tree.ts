@@ -5,7 +5,7 @@
 // for, and a run of the same kind of part (five location teasers) is one row
 // that opens onto each of them. Pure: the window draws it, the tests read it.
 import type { LiveRegion } from './live.ts';
-import { entityOf, fieldOf, nameOf, type PartName } from './live-names.ts';
+import { entityOf, fieldOf, kindName, nameOf, type PartName } from './live-names.ts';
 
 export interface Layer {
   /** A stable key for the row: the first region's index, or the group's. */
@@ -112,7 +112,7 @@ export function layersOf(regions: readonly LiveRegion[], options: {
       };
       if (group.length === 1) return one(first);
       // A run of one kind is named by its kind, not by its first ("Event ×3", not one event's title ×3).
-      const markup = nameOf(first, first.component ? options.componentName?.(first.component) ?? null : null);
+      const markup = kindName(first, first.component ? options.componentName?.(first.component) ?? null : null, first.part ? options.partName?.(first.part) ?? null : null);
       const kind = markup.icon === 'content' ? { ...markup, title: markup.title.replace(/ \d+$/, '') } : markup;
       return { key: `group ${first.index}`, region: first, name: kind, regions: group, children: group.map(one), merged: [] };
     });
