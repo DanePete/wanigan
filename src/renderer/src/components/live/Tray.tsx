@@ -27,8 +27,8 @@ import type { ProjectSummary } from '@shared/model';
 import { call, useQuery } from '../../lib/api';
 import { ago } from '../../lib/format';
 import {
-  STATE_WORDS, alsoChangedWords, beforeWords, byPage, changeLines, cutWords, differenceWords, elementWords, failedWords, fragileOf, heldWords, maskWords,
-  noiseWords, orphanWhy, reachWords, redoLabel, stateDetail, templateOf, templateOffered, undoLabel, verdictHeadline,
+  STATE_WORDS, alsoChangedWords, beforeWords, byPage, cardDetail, cardLines, cardState, cardVerdict, cardsOf, cutWords, differenceWords, elementWords, failedWords, fragileOf, heldWords, maskWords,
+  noiseWords, orphanWhy, reachWords, redoLabel, templateOf, templateOffered, undoLabel, verdictHeadline,
 } from '../../lib/live-layer';
 import { liveBridge } from '../../lib/live';
 import { Button, Dialog, EmptyState, IconButton, useSingleFlight, useToast } from '../ui';
@@ -87,8 +87,10 @@ export function LayerTray({ onClose, ...ctx }: TrayContext & { onClose: () => vo
     e.preventDefault();
     onClose();
   };
+  // Counted by card, one per element, as the tray shows them.
+  const states = cardsOf(edits).map(cardState);
   const counts = (['draft', 'implemented', 'verified', 'orphaned'] as const)
-    .map((s) => [s, edits.filter((e) => e.state === s).length] as const).filter(([, n]) => n > 0)
+    .map((s) => [s, states.filter((x) => x === s).length] as const).filter(([, n]) => n > 0)
     .map(([s, n]) => `${n} ${s === 'draft' ? (n === 1 ? 'draft' : 'drafts') : s === 'implemented' ? 'in the site, not verified' : s}`);
 
   return (
@@ -128,7 +130,7 @@ export function LayerTray({ onClose, ...ctx }: TrayContext & { onClose: () => vo
         <section key={g.page} className="live-tray-page" aria-label={`Edits made on ${g.page}`}>
           <h3 className="live-section-title">{g.page === '/' ? 'The front page, /' : g.page}{g.here ? <span className="live-tray-here"> · this page</span> : null}</h3>
           <ul className="live-tray-edits">
-            {g.edits.map((e) => <TrayEdit key={e.id} edit={e} here={g.here} ctx={{ ...ctx, saved: savedByHand.data }} />)}
+            {cardsOf(g.edits).map((c) => <TrayCard key={c[0]!.id} edits={c} here={g.here} ctx={{ ...ctx, saved: savedByHand.data }} />)}
           </ul>
         </section>
       ))}
@@ -137,23 +139,41 @@ export function LayerTray({ onClose, ...ctx }: TrayContext & { onClose: () => vo
   );
 }
 
-function TrayEdit({ edit: e, here, ctx }: { edit: LayerEdit; here: boolean; ctx: TrayContext }) {
+/**
+ * One element's card: every edit made on it, however many, as one thing. One Make it real (its words through the
+ * site, then its styles to an agent in one brief), one Verify (every edit of it in the same renders), one verdict.
+ */
+function TrayCard({ edits: card, here, ctx }: { edits: LayerEdit[]; here: boolean; ctx: TrayContext }) {
   const { project, layer, readOnly } = ctx;
   const live = liveBridge();
   const toast = useToast();
   const once = useSingleFlight();
-  /** What runs for this edit now (kept by the layer, so closing the tray loses nothing and never starts it twice). */
-  const busy = layer.running[e.id];
-  const [answer, setAnswer] = useState<LayerImplemented | null>(null);
+  // The card is named and keyed by the first edit made on its element.
+  const e = card[0]!;
+  const state = cardState(card);
+  const text = card.find((m) => m.change.type === 'text') ?? null;
+  const drafts = card.filter((m) => m.state === 'draft');
+  /** A style or token draft: made in the theme outside Wanigan (an agent from its brief, or by hand); Verify finds it there. */
+  const outside = (m: LayerEdit): boolean => m.state === 'draft' && (m.change.type === 'style' || m.change.type === 'token');
+  // Verify asks about one edit, and main checks every edit of its element with it: the one in the site, else a style.
+  const verifyId = (card.find((m) => m.state === 'implemented') ?? card.find(outside))?.id ?? null;
+  /** What runs for this card now (kept by the layer, so closing the tray loses nothing and never starts it twice). */
+  const busy = layer.running[e.id] ?? (verifyId ? layer.running[verifyId] : undefined);
+  const [answers, setAnswers] = useState<LayerImplemented[]>([]);
   const [noting, setNoting] = useState(false);
   const [written, setWritten] = useState<TemplateWritten | null>(null);
-  const lines = changeLines(e);
+  const lines = cardLines(card);
   const reach = reachWords(e, ctx.trace, layer.applied);
   // Words a template save wrote: the edit reaches every page that uses that template, not only this element.
-  const inTemplate = templateOf(e, ctx.saved);
+  const inTemplate = text ? templateOf(text, ctx.saved) : null;
   const fragile = fragileOf(e);
+  const orphan = card.find((m) => m.state === 'orphaned') ?? null;
+  const verdict = cardVerdict(card);
   const name = `“${e.label}”`;
-  // The regions on the page shown that are this edit's part, and what they sit in: what a note to an agent points at.
+  // What making it real said that is not a save: the words' answer first (a template to offer, why not), then a style's.
+  const textAnswer = text ? answers.find((a) => a.id === text.id) ?? null : null;
+  const answer = (textAnswer && !textAnswer.ok ? textAnswer : null) ?? answers.find((a) => !a.ok) ?? null;
+  // The regions on the page shown that are this element's part, and what they sit in: what a note to an agent points at.
   const regions = useMemo(() => {
     const part = e.target.part;
     if (!here || !part) return [];
@@ -164,48 +184,56 @@ function TrayEdit({ edit: e, here, ctx }: { edit: LayerEdit; here: boolean; ctx:
     return r ? [r, ...ancestors(ctx.regions, r.index)] : [];
   }, [e.target.part, here, ctx.trace, ctx.parts, ctx.regions]);
 
+  // The card made real at once: its words saved through the site first, then every style handed over in one brief.
   const real = (): Promise<unknown> => layer.task(e.id, 'real', async () => {
     if (!live) return;
-    const a = await layer.change(() => live.layerImplement(e.id));
-    if (!a) return;
-    setAnswer(a);
-    if (a.ok) { toast(`Saved ${name} in the site${a.revision ? `, as revision ${a.revision}` : ''}. Verify compares the site with the design.`); return; }
-    if (a.route === 'agent') setNoting(true);
+    const got: LayerImplemented[] = [];
+    for (const m of [...drafts.filter((x) => x.change.type === 'text'), ...drafts.filter((x) => x.change.type !== 'text')]) {
+      const a = await layer.change(() => live.layerImplement(m.id));
+      if (!a) break;
+      got.push(a);
+      if (a.ok) toast(`Saved ${name} in the site${a.revision ? `, as revision ${a.revision}` : ''}. Verify compares the site with the design.`);
+    }
+    setAnswers(got);
+    if (got.some((a) => !a.ok && a.route === 'agent')) setNoting(true);
   });
   // Kept by the layer per edit: closed and opened again, the tray still says it runs, and never starts it twice.
-  const verifying = busy === 'verify';
-  const verify = (): Promise<unknown> => layer.verify(e.id);
-  // What stopped the last verification, said only while the edit is still waiting for one.
-  // A style or token draft is made in the theme outside Wanigan (an agent from its brief, or by hand): Verify is how
-  // the layer finds it in the site, and a pass makes it verified.
-  const outside = e.state === 'draft' && (e.change.type === 'style' || e.change.type === 'token');
-  const failure = e.state === 'implemented' || outside ? layer.failures[e.id] ?? null : null;
-  const discard = (): Promise<unknown> => once(() => layer.discard(e.id));
+  const verifying = !!verifyId && layer.running[verifyId] === 'verify';
+  const verify = (): Promise<unknown> => (verifyId ? layer.verify(verifyId) : Promise.resolve());
+  // What stopped the last verification, said only while the card is still waiting for one.
+  const failure = verifyId && state !== 'verified' ? layer.failures[verifyId] ?? null : null;
+  const discard = (): Promise<unknown> => once(async () => {
+    for (const m of card) if (m.state === 'draft' || m.state === 'orphaned') await layer.discard(m.id);
+  });
   const retire = (): Promise<unknown> => once(async () => {
-    const done = await layer.change(() => call('live.layerMark', { projectId: project.id, id: e.id, state: 'retired' }));
+    let done = false;
+    for (const m of card) if (m.state === 'verified') done = !!(await layer.change(() => call('live.layerMark', { projectId: project.id, id: m.id, state: 'retired' }))) || done;
     if (done) toast(`Retired ${name}: archived, and out of the tray.`);
   });
-  // The brief: the edit's own page, its element as the site names it, and a picture only when the view shows that page.
+  // The brief: the element's own page, as the site names it, and a picture only when the view shows that page. Words
+  // only when they go to the agent too; the style is every style of the card still to be made.
+  const styleDrafts = drafts.filter((m) => m.change.type !== 'text');
   const noteDraft = {
     url: (() => { try { return new URL(e.page, ctx.siteUrl).toString(); } catch { return e.page; } })(),
     regions, pick: null,
-    words: e.change.type === 'text' ? { before: e.before.text ?? '', after: e.change.value, file: null } : null,
-    style: e.change.type === 'text' ? [] : lines.map((l) => ({ property: l.what, from: l.before, to: l.after })),
+    words: text && textAnswer && !textAnswer.ok && textAnswer.route === 'agent' && text.change.type === 'text'
+      ? { before: text.before.text ?? '', after: text.change.value, file: null } : null,
+    style: cardLines(styleDrafts.length ? styleDrafts : card.filter((m) => m.change.type !== 'text')).map((l) => ({ property: l.what, from: l.before, to: l.after })),
     layer: {
       label: e.label, reach, element: elementWords(e),
       noPicture: here ? null : `it was made on ${e.page}, and the live view shows ${ctx.page || 'another page'}`,
       // What making it real found (the template and line that write its words, a string's text domain): the agent's start.
-      why: answer && !answer.ok ? answer.why : null,
+      why: answer ? answer.why : null,
     },
   };
 
   return (
-    <li className="live-tray-edit" data-edit={e.id} data-state={e.state}>
+    <li className="live-tray-edit" data-edit={e.id} data-edits={card.length > 1 ? card.map((m) => m.id).join(' ') : undefined} data-state={state}>
       <div className="live-tray-edit-head">
         <span className="live-tray-label">{e.label}</span>
-        <span className={`live-tray-state ${e.state}`}>{STATE_WORDS[e.state]}</span>
+        <span className={`live-tray-state ${state}`}>{STATE_WORDS[state]}</span>
       </div>
-      <p className="faint small live-tray-state-detail">{stateDetail(e)}</p>
+      <p className="faint small live-tray-state-detail">{cardDetail(card)}</p>
       <ul className="live-layer-lines" aria-label="Before and after">
         {lines.map((l) => (
           <li key={l.what} className="small">
@@ -218,17 +246,17 @@ function TrayEdit({ edit: e, here, ctx }: { edit: LayerEdit; here: boolean; ctx:
           For every page that uses <span className="mono">{inTemplate.path.split('/').pop()}</span>: its words were saved to that template, line {inTemplate.line}, not only
           to this element. Verify compares this page only.
         </p>
-      ) : <p className="small live-tray-reach">For {reach}.{e.by === 'agent' ? <span className="faint"> Made by an agent.</span> : null}</p>}
+      ) : <p className="small live-tray-reach">For {reach}.{card.some((m) => m.by === 'agent') ? <span className="faint"> Made by an agent.</span> : null}</p>}
       {fragile ? <p className="small live-layer-fragile">Fragile: {fragile}</p> : null}
-      {e.state === 'orphaned' ? <p className="small live-tray-why">Orphaned: {orphanWhy(e, layer.applied)} It is not shown, and never put on whatever is there now.</p> : null}
+      {orphan ? <p className="small live-tray-why">Orphaned: {orphanWhy(orphan, layer.applied)} It is not shown, and never put on whatever is there now.</p> : null}
       {written ? <TemplateWrittenNote written={written} /> : null}
-      {e.verdict ? <Verdict verdict={e.verdict} /> : null}
+      {verdict ? <Verdict verdict={verdict} /> : null}
       {failure ? <p className="small live-tray-why" role="alert">Not verified: {failure}</p> : null}
-      {answer && !answer.ok ? (
+      {answer ? (
         <div className="live-tray-answer">
           <p className="small" role="status">{answer.why}</p>
-          {templateOffered(e, answer) ? (
-            <TemplateSave edit={e} project={project} layer={layer} onReload={ctx.onReload} onWritten={(w) => { setAnswer(null); setWritten(w); }} />
+          {text && textAnswer && templateOffered(text, textAnswer) ? (
+            <TemplateSave edit={text} project={project} layer={layer} onReload={ctx.onReload} onWritten={(w) => { setAnswers((a) => a.filter((x) => x.id !== text.id)); setWritten(w); }} />
           ) : null}
           {!noting ? (
             <div className="live-actions"><Button size="s" tone="quiet" icon="note" onClick={() => setNoting(true)}>Tell an agent…</Button></div>
@@ -238,23 +266,27 @@ function TrayEdit({ edit: e, here, ctx }: { edit: LayerEdit; here: boolean; ctx:
         </div>
       ) : null}
       <div className="live-actions">
-        {e.state === 'draft' ? (
+        {drafts.length ? (
           <Button size="s" icon="check" disabled={readOnly || !live || !!busy} onClick={real} aria-label={`Make it real: ${name}`}
-            data-tip={e.change.type === 'text' ? 'Save the words in the site, through the site helper' : 'Goes to an agent as intent, on your click'}>Make it real</Button>
+            data-tip={drafts.every((m) => m.change.type === 'text') ? 'Save the words in the site, through the site helper'
+              : drafts.some((m) => m.change.type === 'text') ? 'Save the words in the site, and hand the style to an agent as intent, on your click'
+                : 'Goes to an agent as intent, on your click'}>Make it real</Button>
         ) : null}
-        {e.state === 'implemented' || outside ? (
+        {verifyId ? (
           <Button size="s" icon="compare" disabled={readOnly || !live || verifying} onClick={verify} aria-label={`${verifying ? 'Verifying…' : 'Verify'}: ${name}`}
-            data-tip={outside ? 'Once an agent, or you, has put it in the theme: render the site without the layer and compare it with the design'
+            data-tip={card.some(outside) ? 'Once an agent, or you, has put the style in the theme: render the site without the layer and compare it with the design'
               : 'Render the site without the layer and compare it with the design, at a phone’s and a desktop’s width'}>
             {verifying ? 'Verifying…' : 'Verify'}
           </Button>
         ) : null}
-        {e.state === 'verified' ? <Button size="s" tone="quiet" icon="check" onClick={retire} aria-label={`Retire: ${name}`}>Retire</Button> : null}
-        {e.state === 'draft' || e.state === 'orphaned' ? (
+        {state === 'verified' ? <Button size="s" tone="quiet" icon="check" onClick={retire} aria-label={`Retire: ${name}`}>Retire</Button> : null}
+        {card.some((m) => m.state === 'draft' || m.state === 'orphaned') ? (
           <Button size="s" tone="quiet" icon="trash" onClick={discard} disabled={layer.writing} aria-label={`Discard: ${name}`}>Discard</Button>
         ) : null}
       </div>
-      {busy === 'real' ? <p className="faint small" role="status">{e.change.type === 'text' ? 'Saving the words in the site…' : 'Keeping the page as it is now, for Verify, and writing the brief…'}</p> : null}
+      {busy === 'real' ? <p className="faint small" role="status">{drafts.every((m) => m.change.type === 'text') ? 'Saving the words in the site…'
+        : drafts.some((m) => m.change.type === 'text') ? 'Saving the words in the site, then writing the brief for the style…'
+          : 'Keeping the page as it is now, for Verify, and writing the brief…'}</p> : null}
       {busy === 'template' ? <p className="faint small" role="status">Saving the words to the template…</p> : null}
       {verifying ? <p className="faint small" role="status">Rendering the page with and without the layer, twice for the noise floor, at each width…</p> : null}
     </li>

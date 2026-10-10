@@ -73,7 +73,7 @@ import { RecordAnnounce, RecordButton, RecordReview, useRecordEscape, useRecorde
 import { LiveVoice } from './live/Voice';
 import { LayerTray } from './live/Tray';
 import { useLayer } from './live/use-layer';
-import { pagePath } from '../lib/live-layer';
+import { cardsOf, pagePath } from '../lib/live-layer';
 import { EditSheet, type EditRequest } from './live/EditSheet';
 import { LensPicker, LensStrip, usePaintLens } from './live/Lenses';
 import { RequestTab } from './live/Request';
@@ -866,6 +866,10 @@ function LiveShown({ site, url, project, follow, card, compact, following, shots
   const pageEdits = (layer.snapshot?.edits ?? []).filter((e) => e.page === pageNow);
   const drafts = pageEdits.filter((e) => e.state === 'draft');
   const made = pageEdits.filter((e) => e.state === 'implemented');
+  // Counted and verified by card, one per element, as Edits shows them: the title's words and its style are one.
+  const cards = cardsOf(pageEdits);
+  const draftCards = cards.filter((c) => c.some((e) => e.state === 'draft')).length;
+  const madeCards = cards.filter((c) => c.some((e) => e.state === 'implemented'));
   const makeAllReal = async (): Promise<void> => {
     let ok = 0;
     let first: string | null = null;
@@ -881,12 +885,13 @@ function LiveShown({ site, url, project, follow, card, compact, following, shots
     toast(`${ok ? `Saved ${plural(ok, 'edit')} in the site. ` : ''}${plural(left.length, 'edit')} need${left.length === 1 ? 's' : ''} you in Edits${first ? `: ${first}` : '.'}`, ok ? 'info' : 'error');
   };
   const verifyAll = async (): Promise<void> => {
-    for (const e of made) await layer.verify(e.id);
+    // One Verify per card: main checks every edit of its element with the one asked about.
+    for (const c of madeCards) { const asked = c.find((e) => e.state === 'implemented'); if (asked) await layer.verify(asked.id); }
     const now = await layer.fresh();
     const after = (now.snapshot?.edits ?? []).filter((e) => made.some((m) => m.id === e.id));
-    const passed = after.filter((e) => e.state === 'verified').length;
-    if (passed === made.length) toast(`Verified ${plural(passed, 'edit')} at 390 and 1440 px: the site renders ${passed === 1 ? 'it' : 'them'} as designed.`, 'done');
-    else { openTray(true); toast(`${passed} of ${plural(made.length, 'edit')} verified. Edits says what differs.`, 'error'); }
+    const passed = madeCards.filter((c) => c.every((m) => m.state !== 'implemented' || after.find((x) => x.id === m.id)?.state === 'verified')).length;
+    if (passed === madeCards.length) toast(`Verified ${plural(passed, 'edit')} at 390 and 1440 px: the site renders ${passed === 1 ? 'it' : 'them'} as designed.`, 'done');
+    else { openTray(true); toast(`${passed} of ${plural(madeCards.length, 'edit')} verified. Edits says what differs.`, 'error'); }
   };
 
   // The live view's own keys (shared/live-keys.ts), here and from the page, and the page's action bar: each does what
@@ -1103,12 +1108,12 @@ function LiveShown({ site, url, project, follow, card, compact, following, shots
               aria-label={`Edits${layer.drafts ? `, ${plural(layer.drafts, 'draft')}` : ''}: the design layer`} onClick={() => openTray(!tray)}>
               <span className="live-edits-name">Edits</span>{layer.drafts ? <Count n={layer.drafts} tone={tray ? 'sunk' : 'water'} /> : null}
             </Button>
-            <MenuButton className="btn-primary btn-s live-real" label={`Make real: ${drafts.length ? plural(drafts.length, 'draft') : 'nothing'} on this page`} align="end" width={340}
+            <MenuButton className="btn-primary btn-s live-real" label={`Make real: ${draftCards ? plural(draftCards, 'draft') : 'nothing'} on this page`} align="end" width={340}
               disabled={!!env || (!drafts.length && !made.length)} tip={env ? 'A hosted environment is read-only' : !drafts.length && !made.length ? 'Nothing on this page waits to be made real or verified' : 'Save this page’s edits in the site, or verify them'}
               items={[
-                { id: 'real', icon: 'check', label: drafts.length ? `Make ${plural(drafts.length, 'edit')} on this page real` : 'Nothing on this page to make real', disabled: !drafts.length,
+                { id: 'real', icon: 'check', label: draftCards ? `Make ${plural(draftCards, 'edit')} on this page real` : 'Nothing on this page to make real', disabled: !draftCards,
                   detail: 'Words are saved through the site’s own core; a style goes to an agent as a brief, on your click in Edits', run: () => void makeAllReal() },
-                { id: 'verify', icon: 'compare', label: made.length ? `Verify ${plural(made.length, 'edit')} on this page` : 'Nothing on this page to verify', disabled: !made.length,
+                { id: 'verify', icon: 'compare', label: madeCards.length ? `Verify ${plural(madeCards.length, 'edit')} on this page` : 'Nothing on this page to verify', disabled: !madeCards.length,
                   detail: 'Renders the page with and without the layer at 390 and 1440 px, and compares', run: () => void verifyAll() },
                 { id: 'edits', icon: 'brush', label: 'Open Edits', keys: ['Shift', 'E'], detail: 'Every edit, each with its reach, state and what it needs', run: () => openTray(true) },
               ]}>

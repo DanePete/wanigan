@@ -1599,6 +1599,27 @@ try {
       await stateIs('color', 'verified', 'a style draft put in the theme was not verified');
       if (await rowOf('color').getByRole('button', { name: /^Make it real/ }).count()) fail(t('layer: a verified style can still be made real'));
 
+      // One element, one card (Dane: "if you make 50 updates to an element its still just 1 card"): a style tried on the
+      // copyright, whose words are in the layer already, joins that card; one Make it real, one Discard, both changes listed.
+      const cardsBefore = (await page.$$('.live-tray-edit')).length;
+      await page.evaluate(() => {
+        const l = window.__wgLive.layer;
+        const words = l.edits.find((x) => x.listed && x.change.type === 'text' && x.change.value === '© 2026 Acme Bakery');
+        l.edits.push({ ...words, id: 'e-card-style', seq: Math.max(...l.edits.map((x) => x.seq ?? 0)) + 1, change: { type: 'style', values: { color: '#c0392b' } }, before: { color: 'rgb(20, 20, 20)' }, state: 'draft', verdict: null });
+      });
+      await closeTray();
+      await openTray();
+      if ((await page.$$('.live-tray-edit')).length !== cardsBefore) fail(t(`layer: a second change on the copyright made a card of its own (${(await page.$$('.live-tray-edit')).length} cards, not ${cardsBefore})`));
+      const card = rowOf('Acme Bakery');
+      if (!((await card.getAttribute('data-edits').catch(() => '')) ?? '').includes('e-card-style')) fail(t('layer: the copyright’s card does not hold its style'));
+      const cardText = (await card.innerText().catch(() => '')).replace(/\s+/g, ' ');
+      for (const w of ['Words', '© 2026 Acme Bakery', 'color', '#c0392b', 'Draft']) if (!cardText.includes(w)) fail(t(`layer: the copyright’s one card does not say "${w}" (${cardText})`));
+      if ((await card.getByRole('button', { name: /^Make it real/ }).count()) !== 1 || (await card.getByRole('button', { name: /^Discard/ }).count()) !== 1) fail(t('layer: one element’s card does not have one Make it real and one Discard'));
+      await layerShot('layer-one-card', '.live-tray-edit[data-edits]');
+      await page.evaluate(() => { const l = window.__wgLive.layer; l.edits = l.edits.filter((x) => x.id !== 'e-card-style'); });
+      await closeTray();
+      await openTray();
+
       // An orphaned edit says why, and can only be discarded; it is never shown on what is there now.
       await page.evaluate(() => { const l = window.__wgLive.layer; const e = l.edits.find((x) => x.scope === 'kind'); e.state = 'orphaned'; l.why[e.id] = 'Its element shows other words now.'; });
       await page.getByRole('button', { name: /^Reload/ }).first().click();

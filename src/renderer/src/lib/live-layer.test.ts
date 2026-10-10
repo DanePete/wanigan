@@ -7,7 +7,7 @@ import type { LayerApplied, LayerEdit, LayerImplemented, LayerSnapshot, LayerVer
 import type { LiveEdit } from '../../../shared/live.ts';
 import type { EditTarget, LiveTrace, PartIdentity } from '../../../shared/live-trace.ts';
 import {
-  NOTHING_HOLDS, alsoChangedWords, beforeWords, byPage, changeLines, cutWords, differenceWords, draftsOf, elementWords, failedWords, fragileOf, heldInLayer,
+  NOTHING_HOLDS, alsoChangedWords, beforeWords, byPage, cardDetail, cardLines, cardState, cardVerdict, cardsOf, changeLines, cutWords, differenceWords, draftsOf, elementWords, failedWords, fragileOf, heldInLayer,
   heldWords, isFragile, layerNoteLines, madeOn, maskWords, noiseWords, orphanWhy, ownTemplate, pagePath, placesOf, reachWords, redoLabel, sameTarget,
   sendsTyped, stateDetail, templateOf, templateOffered, templateSaveRefused, thisReach, undoLabel, verdictHeadline,
 } from './live-layer.ts';
@@ -37,7 +37,8 @@ test('an edit belongs to the page it was made on, and the tray lists the page sh
   const a = edit({ id: 'a', page: '/about' }), b = edit({ id: 'b', page: '/events' }), c = edit({ id: 'c', page: '/about' });
   const groups = byPage([a, b, c], '/events');
   assert.deepEqual(groups.map((g) => [g.page, g.here, g.edits.map((e) => e.id).join()]), [['/events', true, 'b'], ['/about', false, 'a,c']]);
-  assert.equal(draftsOf({ projectId: 'p', edits: [a, edit({ state: 'implemented' }), c], undo: null, redo: null }), 2);
+  assert.equal(draftsOf({ projectId: 'p', edits: [a, edit({ state: 'implemented' }), c], undo: null, redo: null }), 1, 'a and c are one element of one page: one card');
+  assert.equal(draftsOf({ projectId: 'p', edits: [a, b, c], undo: null, redo: null }), 2, 'cards, not edits');
 });
 
 test('what an edit reaches is said in words, a kind in the main process’s own words', () => {
@@ -240,6 +241,25 @@ test('an edit for one element shown in more than one place says so, as the layer
   assert.equal(reachWords(one, twice, applied({ shown: [{ id: 'o', elements: 2 }], off: true })), 'this element', 'switched off, nothing is shown');
   assert.equal(reachWords(edit({ id: 's', target: { part: null, inner: null, selector: 'html > body > h3', textHash: null } }), null, applied({ shown: [{ id: 's', elements: 2 }] })),
     'this element (2 matches on this page)');
+});
+
+test('one card per element: every edit made on it together, however many, its changes at their last value', () => {
+  const title = { part: { kind: 'entity', type: 'node', id: 'u-1', bundle: 'article', langcode: 'en', field: 'title' }, inner: null, selector: null, textHash: 'abc' } as LayerEdit['target'];
+  const words = edit({ id: 'w', target: title, change: { type: 'text', value: 'New' }, before: { text: 'Old' }, state: 'implemented' });
+  const size = edit({ id: 's1', target: title, change: { type: 'style', values: { 'font-size': '40px' } }, before: { 'font-size': '32px' } });
+  const colour = edit({ id: 's2', target: title, change: { type: 'style', values: { color: 'red', 'font-size': '48px' } }, before: { color: 'black', 'font-size': '40px' } });
+  const other = edit({ id: 'o' });
+  const cards = cardsOf([words, other, size, colour]);
+  assert.deepEqual(cards.map((c) => c.map((e) => e.id)), [['w', 's1', 's2'], ['o']], 'the title is one card, in the order it was first edited');
+  assert.deepEqual(cardLines(cards[0]!), [
+    { what: 'Words', before: 'Old', after: 'New' }, { what: 'font-size', before: '32px', after: '48px' }, { what: 'color', before: 'black', after: 'red' },
+  ], 'a value changed twice: as it was first, and as it is last');
+  assert.equal(cardState(cards[0]!), 'draft', 'a draft holds the card back');
+  assert.equal(cardDetail(cards[0]!), 'The words: in the site, not verified. The style: draft.');
+  assert.equal(cardState([{ state: 'verified' }, { state: 'verified' }]), 'verified');
+  assert.equal(cardDetail([words]), 'Made in the site. Verify compares the site with the design.', 'one edit says what its state means');
+  const older = { at: 1 } as LayerVerdict, newer = { at: 2 } as LayerVerdict;
+  assert.equal(cardVerdict([{ verdict: older }, { verdict: null }, { verdict: newer }]), newer);
 });
 
 test('a state says what it means, and a style draft says an agent puts it in the theme and Verify finds it there', () => {

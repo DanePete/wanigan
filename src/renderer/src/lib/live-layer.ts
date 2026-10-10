@@ -19,6 +19,7 @@ import type {
   LayerApplied, LayerCut, LayerDifference, LayerEdit, LayerImplemented, LayerMask, LayerReach, LayerRect, LayerSnapshot, LayerState, LayerTarget,
   LayerVerdict, VerifyStep,
 } from '../../../shared/design-layer.ts';
+import { layerElementKey } from '../../../shared/design-layer.ts';
 import { fragileWhy, kindWords } from '../../../shared/layer-words.ts';
 import type { LiveEdit, LiveRegion } from '../../../shared/live.ts';
 import { identityKey, kindKey, type LiveTrace, type PartIdentity, type TracePart } from '../../../shared/live-trace.ts';
@@ -48,7 +49,8 @@ export function byPage(edits: readonly LayerEdit[], shown: string): PageGroup[] 
 }
 
 /** Edits only in the layer: what the bar's count says is waiting. */
-export const draftsOf = (snapshot: LayerSnapshot | null | undefined): number => (snapshot?.edits ?? []).filter((e) => e.state === 'draft').length;
+/** The cards still to be made real: one per element, as Edits shows them. */
+export const draftsOf = (snapshot: LayerSnapshot | null | undefined): number => cardsOf((snapshot?.edits ?? []).filter((e) => e.state === 'draft')).length;
 
 export const STATE_WORDS: Record<LayerState, string> = {
   draft: 'Draft',
@@ -137,6 +139,52 @@ export function changeLines(edit: Pick<LayerEdit, 'change' | 'before'>): ChangeL
     default: return [];
   }
 }
+
+/**
+ * The tray's cards: one per element, every edit made on it together however many there are, in the order the element
+ * was first edited (Dane: "if you make 50 updates to an element its still just 1 card").
+ */
+export function cardsOf(edits: readonly LayerEdit[]): LayerEdit[][] {
+  const cards = new Map<string, LayerEdit[]>();
+  for (const e of edits) {
+    const key = layerElementKey(e);
+    const card = cards.get(key);
+    if (card) card.push(e); else cards.set(key, [e]);
+  }
+  return [...cards.values()];
+}
+
+/** How far a card has come: its least advanced edit's state (a draft holds it back; it is verified once all are). */
+export function cardState(card: readonly Pick<LayerEdit, 'state'>[]): LayerState {
+  for (const s of ['draft', 'orphaned', 'implemented', 'verified'] as const) if (card.some((e) => e.state === s)) return s;
+  return 'retired';
+}
+
+/** Every change on a card, a line per value: each value as it was first and as it is last, however many edits made it. */
+export function cardLines(card: readonly Pick<LayerEdit, 'change' | 'before'>[]): ChangeLine[] {
+  const lines = new Map<string, ChangeLine>();
+  for (const e of card) {
+    for (const l of changeLines(e)) {
+      const was = lines.get(l.what);
+      lines.set(l.what, was ? { ...was, after: l.after } : l);
+    }
+  }
+  return [...lines.values()];
+}
+
+/** What a card's state means, said under it: one edit's meaning, or each kind of change's state when they differ. */
+export function cardDetail(card: readonly Pick<LayerEdit, 'state' | 'change'>[]): string {
+  const states = new Set(card.map((e) => e.state));
+  if (states.size === 1) return stateDetail(card.find((e) => e.state === cardState(card)) ?? card[0]!);
+  const kind = (e: Pick<LayerEdit, 'change'>): string => (e.change.type === 'text' ? 'The words' : e.change.type === 'token' ? 'The token' : 'The style');
+  const said = new Map<string, LayerState>();
+  for (const e of card) said.set(kind(e), e.state);
+  return `${[...said].map(([what, st]) => `${what}: ${STATE_WORDS[st].toLowerCase()}`).join('. ')}.`;
+}
+
+/** The newest verdict any edit of the card was given: one Verify gives them all the same. */
+export const cardVerdict = (card: readonly Pick<LayerEdit, 'verdict'>[]): LayerVerdict | null =>
+  card.map((e) => e.verdict).filter((v): v is LayerVerdict => !!v).sort((a, b) => b.at - a.at)[0] ?? null;
 
 /** Why an orphaned edit is one: what its page said the last time the layer was shown there, else what is known. */
 export function orphanWhy(edit: LayerEdit, applied: LayerApplied | null): string {

@@ -96,7 +96,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync,
 import { join, resolve, sep } from 'node:path';
 import type { IpcMain, IpcMainInvokeEvent, WebContents } from 'electron';
 import {
-  LAYER_PROPERTIES, compileLayer, layerEdit, layerTextHash, trySheet, tryValues,
+  LAYER_PROPERTIES, compileLayer, layerEdit, layerElementKey, layerTextHash, trySheet, tryValues,
   type LayerApplied, type LayerBeforeCheck, type LayerCut, type LayerDifference, type LayerEdit, type LayerImplemented, type LayerPickTarget, type LayerRect, type LayerSnapshot,
   type LayerTarget, type LayerTyped, type LayerUndone, type LayerVerdict,
 } from '../shared/design-layer.ts';
@@ -994,8 +994,6 @@ export function beforeKept(raw: unknown): BeforeKept | null {
 const reaches = (e: LayerEdit, path: string): boolean => e.scope !== 'this' || madeOn(e, path);
 /** In the site: what a page from before shows, or does not, of an edit. */
 const inSite = (e: LayerEdit): boolean => e.state === 'implemented' || e.state === 'verified';
-/** Which element an edit is on: its part's identity, the element inside it, or its selector. */
-const elementOf = (e: LayerEdit): string => `${e.target.part ? identityKey(e.target.part) : ''}|${e.target.inner ?? ''}|${e.target.selector ?? ''}`;
 /** A style or a token: made in the theme by an agent from its brief, or by hand, never saved by Wanigan itself. */
 const madeOutside = (e: LayerEdit): boolean => e.change.type === 'style' || e.change.type === 'token';
 /** One difference, in a sentence, for a draft whose verdict is said rather than kept. */
@@ -1355,9 +1353,16 @@ export function wireLiveLayer(options: LiveLayerOptions): { hooks: LiveViewHooks
    * comes later, so asking again never takes a page that already has it. A render that fails is kept as why, and the
    * edit is made real all the same: its step 3 will say it could not run.
    */
+  /**
+   * The page as it is now, kept for step 3, once for the edit's card: rendered with every draft of that element as
+   * designed on it (its words and its styles together, as Make it real makes them real together), and kept under each
+   * of them, so the card has one page from before. `fresh` keeps it again even where one was kept.
+   */
   const keepBefore = (projectId: string, edit: LayerEdit, all: readonly LayerEdit[], fresh: boolean): Promise<void> => inTurn(async () => {
-    const dir = join(editDir(projectId, edit.id), 'before');
     if (!fresh && readKept(projectId, edit.id)) return;
+    const key = layerElementKey(edit);
+    const card = all.filter((x) => x.id === edit.id || (x.state === 'draft' && layerElementKey(x) === key));
+    const keep = card.filter((x) => fresh || x.id === edit.id || !readKept(projectId, x.id));
     let site: LiveSite;
     try { site = await core<LiveSite>('live.site', { projectId }); } catch { return; }
     if (!site.url || !site.token) return;
@@ -1366,28 +1371,36 @@ export function wireLiveLayer(options: LiveLayerOptions): { hooks: LiveViewHooks
     const partition = options.partition(projectId, site.url, site.token);
     const hold: Hold = { t: Math.floor(clock() / 1_000), s: seed() };
     const limit = options.renderMs ?? RENDER_MS + 60_000;
-    const kept: BeforeKept = {
-      at: clock(), page: edit.page, hold, widths: {}, failed: {},
-      inSite: all.filter((x) => x.id !== edit.id && inSite(x) && reaches(x, edit.page)).map((x) => x.id),
-    };
-    rmSync(dir, { recursive: true, force: true });
-    mkdirSync(dir, { recursive: true, mode: 0o700 });
+    const at = clock();
+    const renders = new Map<number, LayerBeforeRendered | { error: string }>();
     for (const width of VERIFY_WIDTHS) {
-      const got = await deadline<LayerBeforeRendered | { error: string }>(
-        renderBefore({ projectId, partition, url, base: site.url, token: site.token, width, path: edit.page, edits: [{ ...edit, state: 'draft' }], log: all, design: true, hold, whole: true }), limit,
+      renders.set(width, await deadline<LayerBeforeRendered | { error: string }>(
+        renderBefore({ projectId, partition, url, base: site.url, token: site.token, width, path: edit.page, edits: card.map((x) => ({ ...x, state: 'draft' as const })), log: all, design: true, hold, whole: true }), limit,
         () => ({ error: `The page did not render at ${width} px in time.` }),
-      ).catch((error: unknown) => ({ error: error instanceof Error ? error.message : String(error) }));
-      if ('error' in got) { kept.failed[String(width)] = got.error.slice(0, 500); continue; }
-      writeFileSync(join(dir, `${width}-page.png`), got.page.png, { mode: 0o600 });
-      writeFileSync(join(dir, `${width}-design.png`), got.design.png, { mode: 0o600 });
-      if (got.design.page) writeFileSync(join(dir, `${width}-elements.json`), JSON.stringify(pageRaw(got.design.page)), { mode: 0o600 });
-      kept.widths[String(width)] = {
-        whole: !!got.design.page,
-        found: got.design.found.includes(edit.id) || edit.change.type === 'token', elements: got.design.elements,
-        masks: [...(got.page.masks ?? []), ...(got.design.masks ?? [])], steady: got.design.steady ?? null, cut: got.design.cut?.full ?? null,
-      };
+      ).catch((error: unknown) => ({ error: error instanceof Error ? error.message : String(error) })));
     }
-    writeFileSync(join(dir, 'meta.json'), JSON.stringify(kept), { mode: 0o600 });
+    for (const member of keep) {
+      const dir = join(editDir(projectId, member.id), 'before');
+      const kept: BeforeKept = {
+        at, page: edit.page, hold, widths: {}, failed: {},
+        inSite: all.filter((x) => !card.some((c) => c.id === x.id) && inSite(x) && reaches(x, edit.page)).map((x) => x.id),
+      };
+      rmSync(dir, { recursive: true, force: true });
+      mkdirSync(dir, { recursive: true, mode: 0o700 });
+      for (const width of VERIFY_WIDTHS) {
+        const got = renders.get(width) as LayerBeforeRendered | { error: string };
+        if ('error' in got) { kept.failed[String(width)] = got.error.slice(0, 500); continue; }
+        writeFileSync(join(dir, `${width}-page.png`), got.page.png, { mode: 0o600 });
+        writeFileSync(join(dir, `${width}-design.png`), got.design.png, { mode: 0o600 });
+        if (got.design.page) writeFileSync(join(dir, `${width}-elements.json`), JSON.stringify(pageRaw(got.design.page)), { mode: 0o600 });
+        kept.widths[String(width)] = {
+          whole: !!got.design.page,
+          found: got.design.found.includes(member.id) || member.change.type === 'token', elements: got.design.elements,
+          masks: [...(got.page.masks ?? []), ...(got.design.masks ?? [])], steady: got.design.steady ?? null, cut: got.design.cut?.full ?? null,
+        };
+      }
+      writeFileSync(join(dir, 'meta.json'), JSON.stringify(kept), { mode: 0o600 });
+    }
   });
 
   /** Words the site has, on an edit the core would not mark: said, so they are not saved twice. */
@@ -1628,8 +1641,8 @@ export function wireLiveLayer(options: LiveLayerOptions): { hooks: LiveViewHooks
       // One element, one verification: its words saved through the site and a style handed to an agent are checked
       // together, in the same renders, and each card is told the verdict. A style not handed to anyone yet is left
       // out unless it is the one asked about, so making words real and verifying them never waits on a style.
-      const here = elementOf(edit);
-      edits = snap.edits.filter((e) => e.id === edit.id || (e.page === edit.page && elementOf(e) === here
+      const here = layerElementKey(edit);
+      edits = snap.edits.filter((e) => e.id === edit.id || (layerElementKey(e) === here
         && (e.state === 'implemented' || (e.state === 'draft' && madeOutside(e) && readKept(projectId, e.id) !== null))));
       page = edit.page;
     }
@@ -1643,6 +1656,17 @@ export function wireLiveLayer(options: LiveLayerOptions): { hooks: LiveViewHooks
     // seed: the newest page from before's, so that page and today's show the same "3 days ago" and the same order.
     const kept = new Map(edits.map((e) => [e.id, readKept(projectId, e.id)]));
     const checks = new Map(edits.map((e) => [e.id, beforeCheck(e, kept.get(e.id) ?? null, widths, snap.edits)]));
+    // One card per element: its edits share one page from before, the newest (kept when the card was made real, with
+    // every change of it as designed; or, for a change made real later, kept then, with the others in the site), and
+    // step 3 runs once for the card, every edit of it told the same. Each against its own older page, a later change
+    // of the same element read as one that reached too far, and Dane saw every difference twice.
+    const lead = new Map<string, string>();
+    for (const e of edits) {
+      if (!checks.get(e.id)?.ran) continue;
+      const key = layerElementKey(e), was = lead.get(key);
+      if (!was || (kept.get(e.id) as BeforeKept).at > (kept.get(was) as BeforeKept).at) lead.set(key, e.id);
+    }
+    const leadOf = (e: LayerEdit): string => lead.get(layerElementKey(e)) ?? e.id;
     const newest = edits.filter((e) => checks.get(e.id)?.ran).map((e) => kept.get(e.id) as BeforeKept).sort((a, b) => b.at - a.at)[0];
     const hold: Hold = newest?.hold ?? { t: Math.floor(clock() / 1_000), s: seed() };
     // Each render has an end: one that never answers fails this verification, saying so, and the queue moves on (the
@@ -1717,6 +1741,7 @@ export function wireLiveLayer(options: LiveLayerOptions): { hooks: LiveViewHooks
       const outside: WidthFindings['outside'] = [];
       let picture = d;
       for (const e of edits) {
+        if (leadOf(e) !== e.id) continue;
         const k = kept.get(e.id);
         const check = checks.get(e.id);
         const at = k?.widths[String(width)];
@@ -1788,10 +1813,10 @@ export function wireLiveLayer(options: LiveLayerOptions): { hooks: LiveViewHooks
         writeFileSync(file('design'), i.design, { mode: 0o600 });
         writeFileSync(file('result'), i.result, { mode: 0o600 });
         if (i.diff.length) writeFileSync(file('diff'), i.diff, { mode: 0o600 });
-        const then = join(dir, 'before', `${i.width}-page.png`);
+        const then = join(editDir(projectId, leadOf(e)), 'before', `${i.width}-page.png`);
         return { width: i.width, design: file('design'), result: file('result'), diff: i.diff.length ? file('diff') : null, before: existsSync(then) ? then : null };
       });
-      verdicts.set(e.id, { ...base, before: checks.get(e.id) as LayerBeforeCheck, pictures });
+      verdicts.set(e.id, { ...base, before: checks.get(leadOf(e)) as LayerBeforeCheck, pictures });
     }
     // The core is told: verified, or still implemented with the verdict. The words are in the site either way; a
     // failed verdict says what differs, and never makes an edit a draft again (from where it could be discarded).

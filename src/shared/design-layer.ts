@@ -18,7 +18,7 @@
 // the cascade is what the verify step proves. A style being tried, before it
 // is an edit, shows through a second sheet of the same kind that outranks it
 // (trySheet): one preview the page script owns, put on and taken off by marks.
-import { kindKey, parseIdentity, type PartIdentity } from './live-trace.ts';
+import { identityKey, kindKey, parseIdentity, type PartIdentity } from './live-trace.ts';
 
 /** Style properties an edit may set. Each is something the owner can see and a theme can implement natively. */
 export const LAYER_PROPERTIES = [
@@ -524,4 +524,14 @@ export interface LayerVerdict {
   cut?: LayerCut[];
   /** Where else the saved words show on the page, per edit (LayerReach): a statement, never a difference. */
   reach?: LayerReach[];
+}
+
+/**
+ * Which element an edit is on, on its page, and how far it reaches: its part's identity and the element inside it, or
+ * its selector, and its scope. Every edit with one key is one card in the tray, made real together and verified
+ * together, however many there are (Dane: "if you make 50 updates to an element its still just 1 card"). An edit for
+ * every one of its kind is a card of its own: it changes every element of that kind, and its card says so.
+ */
+export function layerElementKey(e: Pick<LayerEdit, 'page' | 'target' | 'scope'>): string {
+  return [e.page, e.scope, e.target.part ? identityKey(e.target.part) : '', e.target.inner ?? '', e.target.selector ?? ''].join('|');
 }
