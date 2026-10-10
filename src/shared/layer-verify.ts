@@ -301,8 +301,53 @@ export const varyWhy = (reason: string): string => VARY[reason] ?? `changes betw
 /** One element of a page, as the page script's layerPage read it: its path from <body>, its name, box, own words, computed values (indexes into its page's table), and whether it is an edited element or inside one. */
 export interface PageElement { path: string; name: string; box: LayerRect; text: string | null; values: number[]; touched: boolean }
 
-/** A whole page element by element: the properties read, their values' table, the elements in document order, and whether the page went on past what was read. */
-export interface PageSnap { keys: string[]; table: string[]; elements: PageElement[]; cut: boolean }
+/**
+ * A whole page element by element: the properties read, their values' table, the elements in document order, and
+ * whether the page went on past what was read. `late`: the elements a script added after the server sent the page
+ * (absent from its HTML), each the outermost of what it added, with its box; they and everything in them are not among
+ * `elements`, nor counted in the paths of their siblings. Absent when the page script could not tell (no HTML from
+ * the server to tell by).
+ */
+export interface PageSnap { keys: string[]; table: string[]; elements: PageElement[]; cut: boolean; late?: { name: string; box: LayerRect }[] }
+
+/** Why a script-added element is set aside: it is not in the page the server sent, and shows as the script decides. */
+export const LATE_WHY = 'added by a script after the page loaded';
+/** Why an element is set aside when the page differs from itself: two renders of the same version did not agree on it. */
+export const UNSTABLE_WHY = 'differs between two renders of the same page';
+
+/** The elements a script added after the page loaded, as masks: named, with why, left out of every pixel comparison. */
+export const lateMasks = (page: Pick<PageSnap, 'late'> | null | undefined): RenderMask[] =>
+  (page?.late ?? []).filter((l) => l.box.width > 0 && l.box.height > 0).map((l) => ({ label: l.name, why: LATE_WHY, rects: [l.box], held: false }));
+
+/**
+ * What differs between two renders of the same version of the page (the two the noise floor is measured from):
+ * elements in one and not the other (the outermost of each), and elements whose own words or computed values differ.
+ * The page decides those itself on each visit, so nothing about them is the save's doing: step 3 sets them aside,
+ * with everything inside them, and names them.
+ */
+export function unstableOf(a: PageSnap, b: PageSnap): { paths: string[]; masks: RenderMask[] } {
+  const byA = new Map(a.elements.map((e) => [e.path, e]));
+  const byB = new Map(b.elements.map((e) => [e.path, e]));
+  const value = (snap: PageSnap, el: PageElement, key: string): string | undefined => {
+    const i = snap.keys.indexOf(key);
+    return i < 0 ? undefined : snap.table[el.values[i] ?? -1];
+  };
+  const keys = a.keys.filter((k) => b.keys.includes(k));
+  const paths: string[] = [];
+  const masks: RenderMask[] = [];
+  const under = (path: string): boolean => paths.some((p) => path.startsWith(`${p} > `));
+  for (const el of [...a.elements, ...b.elements.filter((e) => !byA.has(e.path))]) {
+    if (paths.includes(el.path) || under(el.path)) continue;
+    const x = byA.get(el.path), y = byB.get(el.path);
+    const differs = !x || !y || x.text !== y.text || keys.some((k) => value(a, x, k) !== value(b, y, k));
+    if (!differs || x?.touched || y?.touched) continue;
+    paths.push(el.path);
+    const rects = [x?.box, y?.box].filter((r): r is LayerRect => !!r && r.width > 0 && r.height > 0);
+    if (rects.length) masks.push({ label: el.name, why: UNSTABLE_WHY, rects, held: false });
+    if (paths.length >= 500) break;
+  }
+  return { paths, masks };
+}
 
 /**
  * The layer's properties step 3 compares outside the touched elements: all but width and height, whose computed
@@ -357,6 +402,8 @@ const parentPath = (path: string): string => path.slice(0, Math.max(0, path.last
 export function compareOutside(o: {
   before: PageSnap; result: PageSnap; width: number; against: { edit: string; at: number };
   words: { was: string; now: string } | null; masked: { before: readonly LayerRect[]; result: readonly LayerRect[] };
+  /** Paths the page did not agree on with itself (unstableOf): set aside with everything inside them. */
+  unstable?: readonly string[];
 }): OutsideFound {
   const { before: A, result: B } = o;
   const byA = new Map(A.elements.map((e) => [e.path, e]));
@@ -374,9 +421,11 @@ export function compareOutside(o: {
     changed.add(el.path);
     if (differences.length < MAX_ELEMENT_DIFFERENCES) differences.push({ kind: 'outside', width: o.width, element: el.name, property, before: before.slice(0, 2_000), result: result.slice(0, 2_000), against: o.against });
   };
+  const unstable = o.unstable ?? [];
+  const aside = (path: string): boolean => unstable.some((u) => path === u || path.startsWith(`${u} > `));
   for (const path of paths) {
     const a = byA.get(path), b = byB.get(path);
-    if (a?.touched || b?.touched) continue;
+    if (a?.touched || b?.touched || aside(path)) continue;
     if ((a && o.masked.before.some((m) => contains(m, a.box))) || (b && o.masked.result.some((m) => contains(m, b.box)))) continue;
     if (!a || !b) {
       // A whole subtree on one page and not the other: its outermost element says it.

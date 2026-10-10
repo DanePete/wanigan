@@ -1754,6 +1754,37 @@ try {
   if (JSON.stringify(p1?.b) !== JSON.stringify([0, 50, 900, 40])) fail(`page script: an element's box when read whole was ${JSON.stringify(p1?.b)}`);
   if ((await whole.evaluate(() => window.__wl.layerPage(['color'], 2)))?.cut !== true) fail('page script: a page past the limit was not said to be cut');
   await whole.close();
+
+  // What a script added after the page arrived is found from the HTML the server sent: lined up child by child, a
+  // form put in front of the server's own div is the one added (a class added to a server element does not make it
+  // the script's), left out of the page read whole without moving its siblings' paths, and answered apart. A server
+  // element whose words changed is still read, so step 3 still fails it.
+  const sentHtml = `<!doctype html><html><body style="margin:0;font:14px sans-serif"><main><p class="lead" style="margin:0;height:40px">Learn the strokes.</p><div class="note" style="height:20px">Open daily</div></main><footer style="height:20px">© Acme</footer></body></html>`;
+  const lateTab = await browser.newPage({ viewport: { width: 900, height: 700 } });
+  await lateTab.setContent(sentHtml);
+  // What a marketing script does after the page arrives: a form in front of the server's own div, and a class on one of them.
+  await lateTab.evaluate(() => {
+    const form = document.createElement('div');
+    form.className = 'acme-signup-frame';
+    form.style.height = '30px';
+    form.innerHTML = '<form><input aria-label="Email"><button>Sign up</button></form>';
+    document.querySelector('main').insertBefore(form, document.querySelector('.note'));
+    document.querySelector('.lead').classList.add('is-ready');
+    document.querySelector('footer').textContent = '© Northwind';
+  });
+  await lateTab.addScriptTag({ content: script });
+  const lateAdded = await lateTab.evaluate((html) => window.__wl.layerLate(html), sentHtml);
+  if (JSON.stringify(lateAdded) !== JSON.stringify([{ n: 'div.acme-signup-frame', b: [0, 40, 900, 30] }])) fail(`page script: what a script added after the page arrived was ${JSON.stringify(lateAdded)}`);
+  const lateRead = await lateTab.evaluate(() => window.__wl.layerPage(['color'], 100));
+  const latePaths = (lateRead?.elements ?? []).map((e) => [e.p, e.t]);
+  if (JSON.stringify(latePaths) !== JSON.stringify([
+    ['body > main:nth-of-type(1)', null],
+    ['body > main:nth-of-type(1) > p:nth-of-type(1)', 'Learn the strokes.'],
+    ['body > main:nth-of-type(1) > div:nth-of-type(1)', 'Open daily'],
+    ['body > footer:nth-of-type(1)', '© Northwind'],
+  ])) fail(`page script: read whole beside a script's form, the page was ${JSON.stringify(latePaths)} (the form left out, the note still the first div, the footer's new words kept)`);
+  if (JSON.stringify(lateRead?.late) !== JSON.stringify([{ n: 'div.acme-signup-frame', b: [0, 40, 900, 30] }])) fail(`page script: the page read whole did not answer the script's form apart: ${JSON.stringify(lateRead?.late)}`);
+  await lateTab.close();
 } finally {
   await browser.close();
   gateway.kill('SIGTERM');

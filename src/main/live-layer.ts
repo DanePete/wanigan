@@ -77,7 +77,10 @@
 //   may rightly change the layout there (the breadcrumb showing the same title wraps and moves the page down, seen on
 //   both demos): each element outside the touched ones matched by its path, its words and computed values compared
 //   wherever it sits, the edit's old words become its new ones elsewhere said as the save's reach (`reach`), anything
-//   else named by its element, and pixels only inside what kept its place. Where there is no page from before (made real elsewhere),
+//   else named by its element, and pixels only inside what kept its place. What the page decides for itself is set
+//   aside and named as masked: what a script added after it arrived (not in the HTML the server sent, read back
+//   through the protocol and lined up with the page by the page script's layerLate), and what its two result renders
+//   did not agree on (unstableOf). Where there is no page from before (made real elsewhere),
 //   or another edit was made real on the page since, the verdict says step 3 could not run against it, and why.
 //   Pictures are kept in the data folder under live-layer/<project>/<edit>/, and the core is told: verified, or still
 //   implemented with the failed verdict (its words are in the site; the verdict says what differs).
@@ -99,7 +102,8 @@ import {
 } from '../shared/design-layer.ts';
 import {
   MAX_DIFFERENCES, OUTSIDE_PROPERTIES, VERIFY_WIDTHS, against, applyMask, compareElements, compareOutside, comparePixels, compareTokens, diffBitmaps, diffPicture,
-  heldAlike, judge, maskedOf, masksAmong, noiseFloor, onlyWhere, reachOf, traceMasks, unionDiff, varyWhy, verdictNoise, verifyWidths, widestNoise, zonesOf,
+  heldAlike, judge, lateMasks, maskedOf, masksAmong, noiseFloor, onlyWhere, reachOf, traceMasks, unionDiff, unstableOf, varyWhy, verdictNoise, verifyWidths,
+  widestNoise, zonesOf,
   type Bitmap, type ElementSnap, type PageSnap, type PixelArea, type PixelDiff, type RenderMask, type Steady, type WidthFindings, type Zone,
 } from '../shared/layer-verify.ts';
 import type { LiveEditSaved, LiveTraceAnswer } from '../shared/live-lens.ts';
@@ -621,7 +625,20 @@ const PAGE_MAX = 8_000;
 const pageRaw = (p: PageSnap): unknown => ({
   keys: p.keys, table: p.table, cut: p.cut,
   elements: p.elements.map((e) => ({ p: e.path, n: e.name, b: [e.box.x, e.box.y, e.box.width, e.box.height], t: e.text, v: e.values, e: e.touched })),
+  ...(p.late ? { late: p.late.map((l) => ({ n: l.name, b: [l.box.x, l.box.y, l.box.width, l.box.height] })) } : {}),
 });
+
+/** What a script added after the page arrived, as the page script answered (layerLate, or layerPage's `late`), checked: each element's name and box. Null when it could not tell. */
+export function lateOf(raw: unknown): { name: string; box: LayerRect }[] | null {
+  if (!Array.isArray(raw)) return null;
+  const num = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) && Math.abs(v) <= 1_000_000 ? v : 0);
+  return raw.slice(0, 500).flatMap((x) => {
+    const l = x && typeof x === 'object' ? x as Record<string, unknown> : null;
+    if (!l || !Array.isArray(l.b)) return [];
+    const [bx, by, bw, bh] = (l.b as unknown[]).map(num);
+    return [{ name: typeof l.n === 'string' && l.n ? l.n.slice(0, 200) : 'element', box: { x: bx ?? 0, y: by ?? 0, width: bw ?? 0, height: bh ?? 0 } }];
+  });
+}
 
 /** What the page script's layerPage answered, checked; null when it is not one. */
 export function pageOf(raw: unknown): PageSnap | null {
@@ -641,7 +658,8 @@ export function pageOf(raw: unknown): PageSnap | null {
       text: typeof e.t === 'string' ? e.t.slice(0, 2_000) : null, values: (e.v as unknown[]).slice(0, keys.length).map((i) => (Number.isInteger(i) ? i as number : -1)), touched: e.e === true,
     });
   }
-  return { keys, table, elements, cut: r.cut === true };
+  const late = lateOf(r.late);
+  return { keys, table, elements, cut: r.cut === true, ...(late ? { late } : {}) };
 }
 
 export type LayerRender = (r: LayerRenderRequest) => Promise<LayerRendered | { error: string }>;
@@ -787,6 +805,10 @@ function onPage<T>(deps: RenderDeps, r: LayerRenderRequest, take: (page: HiddenP
       const res = await resolveLayer(run, trace, r.edits, r.path);
       const picture = async (whole: boolean): Promise<LayerRendered | { error: string }> => {
         const { height, cut, full } = await page.grow(VERIFY_MAX_HEIGHT);
+        // What a script added after the page arrived: not in the HTML the server sent, so the page decides it, not the
+        // save. Left out of the pixel steps and, read whole, of the page's elements.
+        const html = await page.html();
+        const added = lateOf(html ? await run<unknown>(call('layerLate', html), null) : null);
         // The whole page element by element, for step 3: read before the picture, on the same layout.
         const snapshot = whole ? pageOf(await run<unknown>(call('layerPage', OUTSIDE_PROPERTIES, PAGE_MAX), null)) : undefined;
         const elements = snapsOf(await run<unknown>(call('layerSnap', r.edits.map((e) => e.id), LAYER_PROPERTIES), []));
@@ -797,7 +819,7 @@ function onPage<T>(deps: RenderDeps, r: LayerRenderRequest, take: (page: HiddenP
           : {};
         // What the site says changes between renders, where it is in this render: left out of the pixel steps.
         const ids = trace ? traceMasks(trace, steady).map((m) => m.part) : [];
-        const masks = masksOf(trace, steady, areasOf(await run<unknown>(call('layerAreas', ids), null)));
+        const masks = [...masksOf(trace, steady, areasOf(await run<unknown>(call('layerAreas', ids), null))), ...lateMasks(added ? { late: added } : null)];
         const png = await page.shoot(height, true);
         if (!png) return { error: 'The page could not be pictured.' };
         return { png, bitmap: await deps.decode(png), elements, found: res.resolved, tokens, cut: cut ? { full } : null, masks, steady, ...(whole ? { page: snapshot ?? null } : {}) };
@@ -1606,10 +1628,12 @@ export function wireLiveLayer(options: LiveLayerOptions): { hooks: LiveViewHooks
     /** Whether every render compared was held as asked. */
     let allHeld = true;
     for (const width of widths) {
-      // The first result is read whole too where step 3 compares it with a page from before.
-      const first = await ask(width, false, edits.some((e) => { const c = checks.get(e.id); return !!c?.ran && c.widths.includes(width); }));
+      // Both results are read whole too where step 3 compares them with a page from before: what the page does not
+      // agree on with itself between the two is set aside there.
+      const whole = edits.some((e) => { const c = checks.get(e.id); return !!c?.ran && c.widths.includes(width); });
+      const first = await ask(width, false, whole);
       if ('error' in first) throw new Error(first.error);
-      const second = await ask(width, false);
+      const second = await ask(width, false, whole);
       if ('error' in second) throw new Error(second.error);
       const design = await ask(width, true);
       if ('error' in design) throw new Error(design.error);
@@ -1641,7 +1665,10 @@ export function wireLiveLayer(options: LiveLayerOptions): { hooks: LiveViewHooks
       const keep = zones.map((z) => z.rect);
       // What the site says changes between renders is left out of every pixel comparison, never a touched element; the
       // noise floor is measured over what is left. A change the helper held still is compared: all four were held alike.
-      const masks = masksAmong([first, second, design, again]);
+      // So is what a script added after the page loaded, and what the page did not agree on with itself in its two
+      // results: neither is the save's doing.
+      const unstable = first.page && second.page ? unstableOf(first.page, second.page) : { paths: [], masks: [] };
+      const masks = [...masksAmong([first, second, design, again]), ...lateMasks(first.page), ...lateMasks(second.page), ...unstable.masks];
       const out = masks.flatMap((m) => m.rects);
       const noise = widestNoise([noiseFloor(first.bitmap, second.bitmap, out, keep), noiseFloor(design.bitmap, again.bitmap, out, keep)]);
       const d = applyMask(diffBitmaps(design.bitmap, first.bitmap), out, keep);
@@ -1671,16 +1698,24 @@ export function wireLiveLayer(options: LiveLayerOptions): { hooks: LiveViewHooks
           checks.set(e.id, { ran: false, why: `${!thenPage ? 'Its page from before' : 'Today’s page'} could not be read element by element at ${width} px, so step 3 compared the design only.` });
           continue;
         }
+        // What a script added is left out of a page's elements and of its paths only where the HTML the server sent
+        // was read: one page told apart that way and the other not cannot be lined up, so it is said, not guessed.
+        if ((thenPage.late === undefined) !== (first.page.late === undefined)) {
+          checks.set(e.id, { ran: false, why: thenPage.late === undefined
+            ? 'Its page from before was kept by an earlier Wanigan, which could not tell what a script added to the page after it arrived, so step 3 compared the design only.'
+            : `The HTML the site sent today could not be read back at ${width} px, so what a script added after it arrived could not be told apart; step 3 compared the design only.` });
+          continue;
+        }
         const was = { masks: at.masks, steady: at.steady };
         const alike = [second, design, again, was].every((x) => heldAlike(first.steady, x.steady));
         const left = (masks: readonly RenderMask[] | undefined): LayerRect[] => (masks ?? []).filter((m) => !(alike && m.held)).flatMap((m) => m.rects);
         const zonesThen = zonesOf([...design.elements, ...at.elements], first.elements);
         const keepThen = zonesThen.map((z) => z.rect);
-        const masksThen = masksAmong([first, second, design, again, was]);
+        const masksThen = [...masksAmong([first, second, design, again, was]), ...lateMasks(thenPage), ...lateMasks(first.page), ...lateMasks(second.page), ...unstable.masks];
         const words = e.change.type === 'text' && typeof e.before.text === 'string' ? { was: e.before.text, now: e.change.value } : null;
         const found3 = compareOutside({
-          before: thenPage, result: first.page, width, against: { edit: e.id, at: k.at }, words,
-          masked: { before: left(was.masks), result: [first, second, design, again].flatMap((x) => left(x.masks)) },
+          before: thenPage, result: first.page, width, against: { edit: e.id, at: k.at }, words, unstable: unstable.paths,
+          masked: { before: [...left(was.masks), ...lateMasks(thenPage).flatMap((m) => m.rects)], result: [first, second, design, again].flatMap((x) => left(x.masks)) },
         });
         outside.push(...found3.differences);
         reached.push({ edit: e.id, reach: found3.reach });

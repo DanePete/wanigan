@@ -16,7 +16,7 @@ import type { EditTarget, LiveTrace, PartIdentity, TracePart } from '../shared/l
 import { folderOf } from './live-capture.ts';
 import { saveSchemaEdit } from './live-edit-save.ts';
 import {
-  areasOf, beforeCheck, beforeKept, madeBy, madeOn, masksOf, pathOf, steadyOf, traceProblem, wireLiveLayer,
+  areasOf, beforeCheck, beforeKept, lateOf, madeBy, madeOn, masksOf, pageOf, pathOf, steadyOf, traceProblem, wireLiveLayer,
   type BeforeKept, type LayerBeforeRender, type LayerRender, type LayerRenderRequest,
 } from './live-layer.ts';
 import type { HelperSaved, SaveAt } from './live-view.ts';
@@ -1644,6 +1644,118 @@ test('step 3 against the page before still fails what changed beyond the edit, n
     ], 'the paragraph that turned blue and the footer’s other words, nothing for the wrap');
     assert.deepEqual(v.reach, [{ edit: e.id, count: 1, places: ['span.crumb'] }]);
   } finally { w.done(); }
+});
+
+/**
+ * A made-up page whose title was retyped and saved, with a third-party form that a script adds after the page loads,
+ * on some visits and not others. `widget`: which renders show it (the first of each version's two, or every one);
+ * `late`: the page script found it was not in the HTML the server sent, so it is reported apart from the page's
+ * elements; `footer`: the footer's words in today's renders (a server-rendered element the save changed).
+ */
+function marketing(o: { widget: 'first' | 'every'; late: boolean; footer?: string }) {
+  const pics = pictures();
+  const OLD = 'Paddling 101', NEW = 'Paddling 102', ACME = '© Acme Outfitters';
+  const e = edit({ label: 'Title', change: { type: 'text', value: NEW }, before: { text: OLD }, target: { part: title(), inner: null, selector: null, textHash: layerTextHash(OLD) } });
+  const FORM = { x: 0, y: 180, width: 64, height: 20 };
+  const page = (footer: string): Whole[] => [
+    { path: 'body > h1:nth-of-type(1)', name: 'h1.title', box: [0, 0, 64, 24], text: NEW, touched: true },
+    { path: 'body > p:nth-of-type(1)', name: 'p.lead', box: [0, 30, 64, 40], text: 'Learn the strokes.' },
+    { path: 'body > footer:nth-of-type(1)', name: 'footer.site', box: [0, 150, 64, 20], text: footer },
+  ];
+  const snap = (form: boolean, footer: string): PageSnap => {
+    // Where the page script read the HTML the server sent, it says what was added: nothing, or the form.
+    if (!form) return o.late ? { ...whole(page(footer)), late: [] } : whole(page(footer));
+    if (o.late) return { ...whole(page(footer)), late: [{ name: 'div.acme-signup-frame', box: FORM }] } as PageSnap;
+    return whole([...page(footer), { path: 'body > div:nth-of-type(1)', name: 'div.acme-signup-frame', box: [FORM.x, FORM.y, FORM.width, FORM.height], text: 'Sign up for our newsletter' }]);
+  };
+  const drawn = (form: boolean, footer: string): Bitmap => {
+    const b = painted(painted(blank(64, 200), { x: 0, y: 30, width: 64, height: 40 }, 60), { x: 0, y: 150, width: 64, height: 20 }, footer === ACME ? 200 : 120);
+    return form ? painted(b, FORM, 90) : b;
+  };
+  const titled: ElementSnap = { edit: e.id, n: 0, element: 'h1.title', values: { color: 'rgb(18, 52, 86)', text: NEW }, box: { x: 0, y: 0, width: 64, height: 24 } };
+  const count = { design: 0, result: 0 };
+  const w = wire({
+    edits: [e], decode: pics.decode,
+    renderBefore: async () => ({
+      page: { png: pics.png(drawn(false, ACME)), bitmap: drawn(false, ACME), elements: [], found: [e.id] },
+      design: { png: pics.png(drawn(false, ACME)), bitmap: drawn(false, ACME), elements: [titled], found: [e.id], page: snap(false, ACME) },
+    }),
+    render: async (r) => {
+      // The first of each version's two renders at a width, or every render, shows the form.
+      const n = r.design ? count.design++ : count.result++;
+      const form = o.widget === 'every' || n % 2 === 0;
+      const footer = o.footer ?? ACME;
+      return {
+        png: pics.png(drawn(form, footer)), bitmap: drawn(form, footer), elements: [titled], found: [e.id], steady: { t: r.hold!.t, s: r.hold!.s, views: [] },
+        ...(r.whole ? { page: snap(form, footer) } : {}),
+      };
+    },
+  });
+  w.page.parts = { p6: { '': [words(OLD, 'node:12:title:string:fr')] } };
+  return { w, e };
+}
+
+test('an element in one of the two renders of the same page and not the other is set aside as unstable, named among what was left out', async () => {
+  const { w, e } = marketing({ widget: 'first', late: false });
+  try {
+    await w.apply();
+    await w.implement(e.id);
+    const v = await w.verify(e.id, { widths: [390] });
+    assert.deepEqual([v.ok, v.failed, v.differences], [true, null, []], 'a form that shows on one visit and not the next is no difference the save made');
+    assert.deepEqual(v.masked, [{ label: 'div.acme-signup-frame', why: 'differs between two renders of the same page', widths: [390], nearEdit: false }]);
+  } finally { w.done(); }
+});
+
+test('an element a script added after the page loaded, absent from the HTML the server sent, is set aside and named, never compared', async () => {
+  const { w, e } = marketing({ widget: 'every', late: true });
+  try {
+    await w.apply();
+    await w.implement(e.id);
+    const v = await w.verify(e.id, { widths: [390] });
+    assert.deepEqual([v.ok, v.failed, v.differences], [true, null, []]);
+    assert.deepEqual(v.masked, [{ label: 'div.acme-signup-frame', why: 'added by a script after the page loaded', widths: [390], nearEdit: false }]);
+  } finally { w.done(); }
+});
+
+test('a page from before that could not tell what scripts added, against one that could, is not lined up: step 3 says so', async () => {
+  const { w, e } = marketing({ widget: 'every', late: true });
+  try {
+    await w.apply();
+    await w.implement(e.id);
+    // Kept by an earlier Wanigan: its page read whole says nothing of what scripts added.
+    const file = join(w.dataDir, 'live-layer', folderOf('p1'), e.id, 'before', '390-elements.json');
+    const raw = JSON.parse(readFileSync(file, 'utf8')) as Record<string, unknown>;
+    delete raw.late;
+    writeFileSync(file, JSON.stringify(raw));
+    const v = await w.verify(e.id, { widths: [390] });
+    assert.ok(v.before && !v.before.ran && v.before.why.startsWith('Its page from before was kept by an earlier Wanigan, which could not tell what a script added'), JSON.stringify(v.before));
+  } finally { w.done(); }
+});
+
+test('what the page script says a script added is read back checked, and kept with the page read whole', () => {
+  assert.deepEqual(lateOf([{ n: 'div.acme-signup-frame', b: [0, 40, 900, 30] }, 'nonsense', { n: 7, b: [0, 0, 'x', 1] }]), [
+    { name: 'div.acme-signup-frame', box: { x: 0, y: 40, width: 900, height: 30 } }, { name: 'element', box: { x: 0, y: 0, width: 0, height: 1 } },
+  ]);
+  assert.equal(lateOf(null), null, 'the page script could not tell');
+  const read = pageOf({ keys: ['color'], table: ['rgb(0, 0, 0)'], cut: false, elements: [{ p: 'body > main:nth-of-type(1)', n: 'main', b: [0, 0, 900, 70], t: null, v: [0], e: false }], late: [{ n: 'div.acme-signup-frame', b: [0, 40, 900, 30] }] });
+  assert.deepEqual(read?.late, [{ name: 'div.acme-signup-frame', box: { x: 0, y: 40, width: 900, height: 30 } }]);
+  assert.equal(pageOf({ keys: [], table: [], cut: false, elements: [] })?.late, undefined, 'none said: not known, rather than none');
+});
+
+test('set aside as unstable or not, an element the server sent that the save changed still fails', async () => {
+  for (const late of [false, true]) {
+    const { w, e } = marketing({ widget: late ? 'every' : 'first', late, footer: '© Northwind Outfitters' });
+    try {
+      await w.apply();
+      await w.implement(e.id);
+      const v = await w.verify(e.id, { widths: [390] });
+      assert.deepEqual([v.ok, v.failed], [false, 'rest'], late ? 'with a script-added form' : 'with a form in one render');
+      assert.deepEqual(v.differences.filter((d) => d.kind === 'outside'), [
+        { kind: 'outside', width: 390, element: 'footer.site', property: 'text', before: '© Acme Outfitters', result: '© Northwind Outfitters', against: { edit: e.id, at: 1_700_000_000_000 } },
+      ], 'the footer’s other words, and nothing for the form');
+      assert.equal(v.masked?.length, 1);
+    } finally { w.done(); }
+  }
 });
 
 test('with no page from before, step 3 says it could not run and why, and the verdict does not claim it', async () => {
