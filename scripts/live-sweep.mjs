@@ -1548,6 +1548,15 @@ try {
       if (await rowOf('Fresh loaves').getByRole('button', { name: /^Discard/ }).count()) fail(t('layer: an edit in the site can be discarded'));
       await layerShot('layer-verified', '.live-tray-edit[data-state="verified"] .live-tray-verdict');
 
+      // A reload of a page with edits in the layer runs under the page's last frame until it is traced and the layer is
+      // back: a slow one too. Held at most 4 s, a save's slow reload showed the page without its edits (editor-e13, 41 s).
+      await page.evaluate(() => { window.__wgLive.traceDelay = 5000; window.__wgLive.reloadAs(300); });
+      await page.waitForSelector('.live-device .live-frame', { timeout: 2000 }).catch(() => fail(t('layer: a reload with edits on the page was not held under its last frame')));
+      await page.waitForTimeout(4600);
+      if (!(await page.$('.live-device .live-frame'))) fail(t('layer: a slow reload with edits on the page let go of its last frame before the layer was back'));
+      await page.evaluate(() => { window.__wgLive.traceDelay = 0; });
+      await page.waitForSelector('.live-device .live-frame', { state: 'detached', timeout: 6000 }).catch(() => fail(t('layer: the held reload never let go once traced')));
+
       // A block's words that nothing the site stores holds. On Drupal the helper says its template writes them, and a
       // template is code: they go to an agent, and no template is offered here.
       const block = 'themes/custom/acme/templates/block--copyright.html.twig';

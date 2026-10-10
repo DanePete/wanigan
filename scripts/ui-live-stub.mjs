@@ -768,6 +768,8 @@ export function liveStub(f) {
   };
   const state = () => ({ projectId, url: 'https://acme.example.test/', title: 'Acme Bakery', loading: false, canGoBack: false, canGoForward: false, error: null, logged: 0 });
   const tell = () => { for (const l of listeners.state) l(state()); };
+  // A reload as a slow site makes one (live-sweep: a save's reload held under the page's last frame): loading for `ms`.
+  window.__wgLive.reloadAs = (ms) => { for (const l of listeners.state) l({ ...state(), loading: true }); setTimeout(tell, ms); };
   // A write the site saved: the page reloads (loading, then loaded), and its trace and what it shows change with it,
   // unless the sweep asks for a write that changes nothing.
   const written = (target = null, value = undefined) => {

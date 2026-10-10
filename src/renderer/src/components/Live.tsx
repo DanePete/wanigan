@@ -613,13 +613,14 @@ function LiveShown({ site, url, project, follow, card, compact, following, shots
 
   // A reload of the page shown with edits of the layer on it (a save, an agent's edit): its last frame is held until
   // the reload is traced and the layer is back on it. Shown as it loaded, the page flashed without its edits and with
-  // its pictures not yet drawn (a frame of it in every take that saved). Released at most 4 s on.
+  // its pictures not yet drawn (a frame of it in every take that saved). Released at most 10 s on: a save's reload can
+  // take longer than the 4 s it once was, and the page showed without its edits as it let go (editor-e13, 41 s).
   const [holding, setHolding] = useState(false);
   const holdable = useRef(false);
   const shownUrl = useRef<string | null>(null);
   useEffect(() => {
     if (!holding) return undefined;
-    const late = window.setTimeout(() => setHolding(false), 4000);
+    const late = window.setTimeout(() => setHolding(false), 10_000);
     return () => window.clearTimeout(late);
   }, [holding]);
   useEffect(() => live.onState((s) => {
