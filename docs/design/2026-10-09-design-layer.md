@@ -71,7 +71,8 @@ helpers already report:
   path and block name (WordPress);
 - components: the single-directory component id or block name, plus its path
   among its siblings;
-- configuration: block id, menu link id, template part slug;
+- configuration: block id, menu link id, menu name, a Layout Builder
+  component's UUID, template part slug;
 - fallback, for markup no helper explains: a CSS selector path plus a hash of
   the element's text, and the edit is marked `fragile`.
 
@@ -277,7 +278,21 @@ part a helper can name carries `identity`:
   single-directory component is `component` (its id, the identity key of the
   nearest identified part it is inside, and which of that id it is there). A
   block placement is `config` `block` (its id, its plugin); a menu link is
-  `config` `menu_link`; a view display is `config` `view`.
+  `config` `menu_link`; a menu is `config` `menu` (its machine name, as its
+  template is given it); a view display is `config` `view`. A Layout Builder
+  component is `config` `layout_builder_component`: its UUID, the key
+  `Section::toRenderArray()` gives it in its region, so a reorder or a move
+  to another section or region keeps it, on the stored entity it is rendered
+  for (`<entity type>:<entity UUID>/<component UUID>`), with its block plugin
+  so `kind` reaches every component of that plugin in a layout. The entity is
+  part of it because one UUID can name two stored things: a display's
+  default layout is shared by every entity without its own, and an entity's
+  own layout starts as a copy of the default, UUIDs and all. A placement and
+  a component of one plugin are two kinds, and the library's "where it is
+  used" counts both. A menu has no kind beyond itself, as a menu link has
+  none, and the same menu shown twice is one identity reached twice, as an
+  entity in two view modes is. Content not saved yet, a key that is not a
+  UUID or a value that is not plain names nothing.
 - WordPress: a post is `entity` `post` (its ID, post type as bundle), a term
   `entity` `term`; `post_title`, `post_content`, `post_excerpt` or a
   registered meta key as `field`. A block in stored markup is `block` (its

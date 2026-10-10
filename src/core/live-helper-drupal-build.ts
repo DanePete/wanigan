@@ -308,7 +308,9 @@ use Drupal\Core\Render\Markup;
  * - Layout Builder's sections ('_layout_builder' in an entity's content,
  *   LayoutBuilderEntityViewDisplay::buildMultiple(); each section keyed by
  *   delta, its regions by name and their components by uuid,
- *   Section::toRenderArray()): each component is told where it sits.
+ *   Section::toRenderArray()): each component is told where it sits, and
+ *   which stored entity it is rendered for (its type and UUID; none for
+ *   content not saved yet), so Identity can name it.
  */
 final class Marks {
 
@@ -324,7 +326,8 @@ final class Marks {
       $key = $frame->info['key'];
       $entity = $key !== NULL ? Describe::entityOf($variables[$key] ?? NULL) : NULL;
       if ($entity !== NULL) {
-        self::layout($variables['content']['_layout_builder'], $entity->getEntityTypeId() . ':' . $entity->id(), (string) ($variables[$key]['#view_mode'] ?? 'full'));
+        $for = $entity->isNew() ? NULL : [$entity->getEntityTypeId(), $entity->uuid()];
+        self::layout($variables['content']['_layout_builder'], $entity->getEntityTypeId() . ':' . $entity->id(), (string) ($variables[$key]['#view_mode'] ?? 'full'), $for);
       }
     }
   }
@@ -395,7 +398,7 @@ final class Marks {
     }
   }
 
-  private static function layout(array &$sections, string $entity, string $view_mode): void {
+  private static function layout(array &$sections, string $entity, string $view_mode, ?array $for): void {
     foreach ($sections as $delta => &$section) {
       if (!is_int($delta) || !is_array($section)) {
         continue;
@@ -410,7 +413,7 @@ final class Marks {
           if (!is_string($uuid) || $uuid === '' || $uuid[0] === '#' || !is_array($component) || isset($component['#lazy_builder'])) {
             continue;
           }
-          $component['#wanigan_live_lb'] = ['entity' => $entity, 'viewMode' => $view_mode, 'delta' => $delta, 'region' => $region, 'uuid' => $uuid];
+          $component['#wanigan_live_lb'] = ['entity' => $entity, 'viewMode' => $view_mode, 'delta' => $delta, 'region' => $region, 'uuid' => $uuid, 'for' => $for];
         }
       }
     }
@@ -464,6 +467,15 @@ use Drupal\Core\Field\FieldItemInterface;
  *   once the page is read).
  * - A block placement (its config id and plugin), a menu link (its plugin
  *   id), a view display (view:display).
+ * - A Layout Builder component (layout_builder_component): its UUID, which
+ *   its section storage keeps through a reorder or a move to another section
+ *   or region, on the stored entity it is rendered for
+ *   (<entity type>:<entity UUID>/<component UUID>), with its block plugin.
+ *   The entity is part of it because one UUID can name two stored things:
+ *   a display's default layout is shared by every entity without its own,
+ *   and an entity's own layout starts as a copy of the default, UUIDs and
+ *   all (PrepareLayout::onPrepareLayout()).
+ * - A menu (menu): its machine name.
  *
  * Named only from what the render already holds: nothing is loaded to name
  * it. Every value must be a plain name as parseIdentity() accepts it; a part
@@ -481,6 +493,11 @@ final class Identity {
    * A field item: what it refers to, or its delta.
    */
   public const ITEM = '~^(?:ref:[A-Za-z0-9_.:/@+-]{1,200}|delta:\d{1,6})$~';
+
+  /**
+   * A UUID, as core's Uuid::VALID_PATTERN has it.
+   */
+  public const UUID = '~^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$~';
 
   /**
    * A value fit to name a part by, or NULL.
@@ -543,7 +560,8 @@ final class Identity {
   }
 
   /**
-   * One configuration item: a block placement, a menu link, a view display.
+   * One configuration item: a block placement, a Layout Builder component, a
+   * menu, a menu link, a view display.
    */
   public static function config(string $type, mixed $id, mixed $plugin = NULL): ?array {
     $out = ['kind' => 'config', 'type' => $type, 'id' => self::name($id)];
@@ -551,6 +569,28 @@ final class Identity {
       $out['plugin'] = self::name($plugin);
     }
     return in_array(NULL, $out, TRUE) ? NULL : $out;
+  }
+
+  /**
+   * A Layout Builder component, from what Marks::layout() told it: its UUID
+   * (the key Section::toRenderArray() gives it in its region, which the
+   * layout plugin's build keeps), the stored entity it is rendered for, and
+   * its block plugin ('#plugin_id', BlockComponentRenderArray). NULL when
+   * any of them is missing or not plain.
+   */
+  public static function layoutComponent(array $layout, mixed $plugin): ?array {
+    $for = $layout['for'] ?? NULL;
+    $uuid = $layout['uuid'] ?? NULL;
+    if (!is_array($for) || count($for) !== 2 || !is_string($uuid) || preg_match(self::UUID, $uuid) !== 1) {
+      return NULL;
+    }
+    [$type, $owner] = array_values($for);
+    $type = self::name($type);
+    $owner = self::name($owner);
+    if ($type === NULL || $owner === NULL) {
+      return NULL;
+    }
+    return self::config('layout_builder_component', $type . ':' . $owner . '/' . $uuid, $plugin ?? '');
   }
 
   /**
@@ -583,13 +623,23 @@ final class Identity {
         return ($entity instanceof EntityInterface && isset($p['meta']['field']['name'])) ? self::entity($entity, (string) $p['meta']['field']['name']) : NULL;
 
       case 'block':
-        // A placement: a block config entity's own id. A Layout Builder
-        // component, or a block built in code, has none.
         $block = $p['meta']['block'] ?? [];
-        return (!empty($block['id']) && empty($block['layout'])) ? self::config('block', $block['id'], $block['plugin'] ?? '') : NULL;
+        if (!empty($block['layout'])) {
+          // A Layout Builder component has no placement of its own.
+          return is_array($block['layout']) ? self::layoutComponent($block['layout'], $block['plugin'] ?? NULL) : NULL;
+        }
+        // A placement: a block config entity's own id. A block built in code
+        // has none.
+        return !empty($block['id']) ? self::config('block', $block['id'], $block['plugin'] ?? '') : NULL;
 
       case 'menu':
-        return isset($p['link']['plugin']) ? self::config('menu_link', $p['link']['plugin']) : NULL;
+        if (isset($p['link'])) {
+          return isset($p['link']['plugin']) ? self::config('menu_link', $p['link']['plugin']) : NULL;
+        }
+        // The menu itself, by the name MenuLinkTree::build() gives it
+        // ('#menu_name'); a menu template given none is not named.
+        $name = $p['meta']['menu']['name'] ?? '';
+        return $name !== '' ? self::config('menu', $name) : NULL;
 
       case 'view':
         $view = self::name($p['meta']['view']['id'] ?? NULL);

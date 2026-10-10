@@ -39,6 +39,9 @@ test('an edit from outside is checked field by field, and says why it is refused
   assert.match(why({ id: 'e1', target: at(null, { selector: 'h1 { color: red }' }) }), /target/, 'a path the page script wrote, nothing more');
   assert.match(why({ id: 'e1', target: at(null, { selector: 'main > h1' }), scope: 'kind', breakpoint: 'all', change: { type: 'style', values: { color: 'red' } } }), /every instance/);
   assert.match(why({ id: 'e1', target: at({ kind: 'config', type: 'menu_link', id: 'main.about' }), scope: 'kind', breakpoint: 'all', change: { type: 'style', values: { color: 'red' } } }), /every instance/, 'a menu link has no kind');
+  assert.match(why({ id: 'e1', target: at({ kind: 'config', type: 'menu', id: 'main' }), scope: 'kind', breakpoint: 'all', change: { type: 'style', values: { color: 'red' } } }), /every instance/, 'nor has a menu');
+  const component = at({ kind: 'config', type: 'layout_builder_component', id: 'node:0a1b-14/7e57-01', plugin: 'inline_block:card' });
+  assert.equal(layerEdit({ id: 'e1', target: component, scope: 'kind', breakpoint: 'all', change: { type: 'style', values: { color: 'red' } } }).edit?.scope, 'kind', 'a Layout Builder component has its plugin’s kind');
   assert.equal(layerEdit({ id: 'e1', target: at(null, { selector: 'main > h1:nth-of-type(1)', textHash: 'a1b2c3d4e5f60718' }), scope: 'this', breakpoint: 'all', change: { type: 'text', value: 'Hi' } }).edit?.target.selector, 'main > h1:nth-of-type(1)');
   assert.match(why({ id: 'e1', target: branding, scope: 'everywhere' }), /scope/);
   assert.match(why({ id: 'e1', target: branding, scope: 'this', breakpoint: 'all', change: { type: 'style', values: { position: 'fixed' } } }), /does not set position/);
@@ -130,6 +133,10 @@ test('a part’s identity is checked, keyed the same on every load, and says wha
   assert.equal(kindKey(parseIdentity({ kind: 'block', store: 'post:12', path: [0, 2], name: 'core/paragraph' })!), 'component|core/paragraph', 'a block type is a component kind');
   assert.equal(kindKey(parseIdentity({ kind: 'config', type: 'menu_link', id: 'main.about' })!), null);
   assert.equal(kindKey(parseIdentity({ kind: 'config', type: 'block', id: 'acme_branding', plugin: 'system_branding_block' })!), 'plugin|block|system_branding_block');
+  const inLayout = parseIdentity({ kind: 'config', type: 'layout_builder_component', id: 'node:0a1b-14/7e57-01', plugin: 'system_branding_block' })!;
+  assert.equal(identityKey(inLayout), 'config|layout_builder_component|node:0a1b-14/7e57-01');
+  assert.equal(kindKey(inLayout), 'plugin|layout_builder_component|system_branding_block', 'the same plugin placed by a layout is a kind of its own');
+  assert.equal(kindKey(parseIdentity({ kind: 'config', type: 'menu', id: 'main' })!), null, 'a menu has no kind beyond itself');
   for (const bad of [
     { kind: 'entity', type: 'node' }, { kind: 'entity', type: 'node', id: 'has space' }, { kind: 'entity', type: 'node', id: 'x', item: 'delta:-1' },
     { kind: 'component', name: 'acme:card', within: null, nth: -1 }, { kind: 'block', store: 'post:1', path: [], name: 'core/p' },

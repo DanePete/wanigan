@@ -159,7 +159,9 @@ export type PageUses = { known: true; uses: PageUse[] } | { known: false; why: s
 
 /**
  * Where the page shown uses an entry: the trace's parts that are it (by their identity, helper 4), and, for a
- * Drupal component or block, the parts the page itself marks with it. Named as the trace names them.
+ * Drupal component or block, the parts the page itself marks with it. Named as the trace names them. A Drupal block
+ * is used where it is placed in a region (`config` `block`) and where a layout places it (`config`
+ * `layout_builder_component`), both by its plugin.
  */
 export function usesOnPage(entry: LibraryEntry, platform: 'drupal' | 'wordpress', trace: LiveTrace | null, regions: readonly LiveRegion[], parts: PartIndex): PageUses {
   if (entry.kind === 'pattern') return { known: false, why: 'A pattern is copied in as ordinary blocks when it is placed, so the page does not say where one was used.' };
@@ -173,7 +175,7 @@ export function usesOnPage(entry: LibraryEntry, platform: 'drupal' | 'wordpress'
     const i = p.identity;
     const is = !!i && (
       (sdc !== null && i.kind === 'component' && i.name === sdc)
-      || (plugin !== null && i.kind === 'config' && i.type === 'block' && i.plugin === plugin)
+      || (plugin !== null && i.kind === 'config' && (i.type === 'block' || i.type === 'layout_builder_component') && i.plugin === plugin)
       || (blockName !== null && (i.kind === 'block' || i.kind === 'component') && i.name === blockName));
     if (is) out.set(`part:${p.id}`, { part: p.id, label: p.label, regions: parts.regionsOf.get(p.id) ?? [] });
   }

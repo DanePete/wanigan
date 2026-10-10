@@ -336,6 +336,48 @@ test('the picked element is keyed to the innermost part with an identity, with w
   } finally { w.done(); }
 });
 
+test('a Layout Builder component’s kind is every component of its plugin in a layout, apart from the same block placed in a region, and each says which', async () => {
+  const promo = 'block_content:0a1b2c3d-0000-4000-8000-0000000000e5';
+  const inLayout = (uuid: string, plugin: string): PartIdentity => ({ kind: 'config', type: 'layout_builder_component', id: `node:0a1b2c3d-0000-4000-8000-000000000014/${uuid}`, plugin });
+  const spring = inLayout('7e57ab1e-0000-4000-8000-000000000001', 'inline_block:card');
+  const promoInLayout = inLayout('7e57ab1e-0000-4000-8000-000000000003', promo);
+  const lbTrace: LiveTrace = {
+    ...trace(),
+    parts: [
+      { id: 'p1', kind: 'block', label: 'Spring sale', identity: spring },
+      { id: 'p2', kind: 'block', label: 'Summer sale', identity: inLayout('7e57ab1e-0000-4000-8000-000000000002', 'inline_block:card') },
+      { id: 'p3', kind: 'block', label: 'Promo in a layout', identity: promoInLayout },
+      { id: 'p4', kind: 'block', label: 'Promo in a region', identity: { kind: 'config', type: 'block', id: 'acme_promo', plugin: promo } },
+      { id: 'p5', kind: 'menu', label: 'Main navigation', identity: { kind: 'config', type: 'menu', id: 'main' } },
+      { id: 'p6', kind: 'block', label: 'Body', identity: inLayout('7e57ab1e-0000-4000-8000-000000000004', 'field_block:node:landing_page:body') },
+    ],
+  };
+  const cards = edit({ scope: 'kind', target: { part: spring, inner: 'p:nth-of-type(1)', selector: null, textHash: layerTextHash('Spring') } });
+  const promos = edit({ scope: 'kind', target: { part: promoInLayout, inner: null, selector: null, textHash: null } });
+  const w = wire({ edits: [cards, promos], trace: lbTrace });
+  try {
+    w.page.parts = {
+      p1: { 'p:nth-of-type(1)': [words('Spring')], '': [holding('Spring')] }, p2: { 'p:nth-of-type(1)': [words('Summer')], '': [holding('Summer')] },
+      p3: { '': [holding('Promo')] }, p4: { '': [holding('Promo')] }, p5: { '': [holding('Home About')] }, p6: { '': [holding('Body')] },
+    };
+    await w.apply();
+    const asked = w.page.calls.find((c) => c.name === 'layerFind')?.args[0] as { id: string; parts: string[] }[];
+    assert.deepEqual(asked.map((s) => [s.id, s.parts]), [[cards.id, ['p1', 'p2']], [promos.id, ['p3']]], 'every card in a layout; the promo in a layout, not where it is placed in a region');
+
+    const pick = async (part: string, inner: string | null, tag: string): Promise<LayerPickTarget | null> => {
+      w.page.pick = { parts: [{ part, inner }], selector: 'html > body:nth-of-type(1) > div:nth-of-type(1)', text: null, tag, values: {} };
+      return w.target();
+    };
+    const card = await pick('p1', 'p:nth-of-type(1)', 'p');
+    assert.deepEqual([card?.target.part, card?.label, card?.kindLabel, card?.kindCount, card?.fragile], [spring, 'Paragraph in Spring sale (block)', 'the paragraph in every card inline block placed in a layout', 2, false]);
+    assert.equal((await pick('p3', null, 'div'))?.kindLabel, 'this reusable block wherever it is placed in a layout');
+    assert.equal((await pick('p4', null, 'div'))?.kindLabel, 'this reusable block wherever it is placed in a region');
+    assert.equal((await pick('p6', null, 'div'))?.kindLabel, 'every landing_page body field block placed in a layout');
+    const menu = await pick('p5', null, 'nav');
+    assert.deepEqual([menu?.target.part, menu?.kindLabel, menu?.kindCount, menu?.fragile], [{ kind: 'config', type: 'menu', id: 'main' }, null, 0, false], 'a menu is named, and has no kind beyond itself');
+  } finally { w.done(); }
+});
+
 test('making an edit real: words go through the helper’s save, a style goes to an agent, and the core is told', async () => {
   const retyped = edit({ change: { type: 'text', value: 'Paddling 102' } });
   const style = edit();
