@@ -2628,35 +2628,38 @@ final class Wanigan_Live {
 	/* widgets and menus */
 
 	/**
-	 * A widget's settings, when its widget class shares them with core's REST API (show_instance_in_rest): saved
-	 * through /wp/v2/widgets, which runs the widget's own update() to clean them.
+	 * A widget's settings, saved through /wp/v2/widgets, which runs the widget's own update() to clean them
+	 * (class-wp-rest-widgets-controller.php save_widget()). A widget class that shares its instance with REST
+	 * (show_instance_in_rest) takes it raw; any other WP_Widget takes it serialized with its wp_hash(), as a GET in
+	 * edit context hands it out. A widget registered outside WP_Widget saves only through its own form's fields, and one
+	 * registered to display only has no update callback: core keeps nothing for it.
 	 */
 	private static function finish_widget(array $p, array $m): array {
-		global $wp_registered_widgets;
+		global $wp_registered_widgets, $wp_registered_widget_updates, $wp_registered_sidebars;
 		$wid = $m['widget'];
 		$id = 'widget-' . self::short($wid);
-		$target = array('id' => $id, 'kind' => 'config', 'label' => 'Settings of the ' . $p['label'], 'via' => 'schema', 'revisions' => false);
+		$area = isset($m['sidebar']) && isset($wp_registered_sidebars[$m['sidebar']]['name']) ? (string) $wp_registered_sidebars[$m['sidebar']]['name'] : '';
+		$target = array('id' => $id, 'kind' => 'config', 'label' => 'Settings of the ' . $p['label'] . ($area !== '' ? ' (shows on every page that shows the widget area “' . $area . '”)' : ''), 'via' => 'schema', 'revisions' => false);
 		$widget = isset($wp_registered_widgets[$wid]['callback'][0]) ? $wp_registered_widgets[$wid]['callback'][0] : null;
 		$parsed = function_exists('wp_parse_widget_id') ? wp_parse_widget_id($wid) : array();
 		if ($widget instanceof WP_Widget && isset($parsed['number'])) {
 			$settings = $widget->get_settings();
 			$instance = isset($settings[$parsed['number']]) ? $settings[$parsed['number']] : array();
 			$p['variables'] = self::variables(is_array($instance) ? $instance : array(), 'instance');
-			if (!empty($widget->widget_options['show_instance_in_rest'])) {
-				$props = array();
-				foreach ((array) $instance as $k => $v) {
-					if (is_scalar($v) && !preg_match(self::SECRET, (string) $k)) $props[$k] = array('type' => is_bool($v) ? 'boolean' : (is_int($v) ? 'integer' : (is_float($v) ? 'number' : 'string')));
-				}
-				$target['schema'] = array('type' => 'object', 'properties' => $props);
-				$target['value'] = (object) array_intersect_key((array) $instance, $props);
-				if (!$props) $target['why'] = 'This widget has no simple settings to change here; use Appearance › Widgets.';
-			} else {
-				$target['why'] = 'This widget does not share its settings with core’s API (show_instance_in_rest is off); change it in Appearance › Widgets.';
+			$props = array();
+			foreach ((array) $instance as $k => $v) {
+				if (is_scalar($v) && !preg_match(self::SECRET, (string) $k)) $props[$k] = array('type' => is_bool($v) ? 'boolean' : (is_int($v) ? 'integer' : (is_float($v) ? 'number' : 'string')));
 			}
+			$target['schema'] = array('type' => 'object', 'properties' => $props);
+			$target['value'] = (object) array_intersect_key((array) $instance, $props);
+			if (!$props) $target['why'] = self::NOT_YET . 'this widget has no simple settings (text, numbers, switches) to change here. Use Appearance › Widgets.';
 			$d = self::describe(array($widget, 'widget'));
 			if ($d['source']) $p['source'] = $d['source'];
 		} else {
-			$target['why'] = 'This widget is not a WP_Widget, so core’s widget API cannot change it; use Appearance › Widgets.';
+			$base = isset($parsed['id_base']) ? $parsed['id_base'] : $wid;
+			$target['why'] = isset($wp_registered_widget_updates[$base])
+				? self::NOT_YET . 'this widget is not a WP_Widget, so its settings are whatever its own form posts, which Wanigan cannot read. Change it in Appearance › Widgets.'
+				: self::NO_SUCH . 'this widget was registered to display only, with no update callback, so WordPress keeps no settings for it to save. Its words are its code’s.';
 		}
 		if (!isset($target['why']) && ($w = self::cannot('edit_theme_options', 'change widgets'))) $target['why'] = $w;
 		self::$edits[$id] = $target;
@@ -4696,7 +4699,11 @@ final class Wanigan_Live {
 		if (!$widget instanceof WP_Widget || !isset($parsed['number'])) return new WP_Error('wanigan', 'That widget is gone.');
 		$settings = $widget->get_settings();
 		$instance = isset($settings[$parsed['number']]) ? (array) $settings[$parsed['number']] : array();
-		return self::rest('POST', '/wp/v2/widgets/' . $wid, array('instance' => array('raw' => array_merge($instance, $value))));
+		$new = array_merge($instance, $value);
+		if (!empty($widget->widget_options['show_instance_in_rest'])) return self::rest('POST', '/wp/v2/widgets/' . $wid, array('instance' => array('raw' => $new)));
+		// Any other WP_Widget: its instance serialized, with wp_hash() of it, as the controller hands it out and checks it.
+		$serialized = serialize($new);
+		return self::rest('POST', '/wp/v2/widgets/' . $wid, array('instance' => array('encoded' => base64_encode($serialized), 'hash' => wp_hash($serialized))));
 	}
 
 	/**

@@ -937,6 +937,30 @@ describe('what a WordPress page offers to change, and what saving it writes, und
     assert.match(fallback.why ?? '', /^WordPress keeps no such thing: /);
   });
 
+  test('a WP_Widget that keeps its instance out of REST saves through /wp/v2/widgets as encoded and hash, running its own update(); a display-only widget says core keeps nothing to save', () => {
+    const r = run(page('<!-- wp:paragraph -->\n<p>Hello</p>\n<!-- /wp:paragraph -->', {
+      widgets: {
+        'text-2': { class: 'text', name: 'Text', update: true },
+        acme_hours: { class: 'none', name: 'Acme Hours' },
+        acme_legacy: { class: 'none', name: 'Acme Legacy', update: true },
+      },
+      options: { widget_text: { 2: { title: 'Hours', text: 'Open <b>daily</b>', filter: true, visual: true } }, sidebars_widgets: { 'sidebar-1': ['text-2', 'acme_hours', 'acme_legacy'] } },
+      saves: [{ find: 'Settings of the Text widget', value: { title: 'Opening hours', text: 'Open <b>every</b> day<script>x()</script>' } }],
+    }));
+    const text = target(r, 'Settings of the Text widget');
+    assert.equal(text.why, undefined, 'show_instance_in_rest is off, and that no longer stops it');
+    assert.match(text.label, /shows on every page that shows the widget area “Sidebar”/);
+    assert.deepEqual(text.value, { title: 'Hours', text: 'Open <b>daily</b>', filter: true, visual: true });
+    assert.ok(r.answers[0]?.data.ok, r.answers[0]?.data.error);
+    const [method, route, params] = r.rest[0] ?? [];
+    assert.deepEqual([method, route], ['POST', '/wp/v2/widgets/text-2']);
+    const instance = (params as { instance: Record<string, string> }).instance;
+    assert.deepEqual(Object.keys(instance).sort(), ['encoded', 'hash'], 'never raw, which core refuses for this widget');
+    assert.deepEqual((r.options.widget_text as Record<string, unknown>)[2], { title: 'Opening hours', text: 'Open <b>every</b> day', filter: true, visual: true }, 'the widget’s own update() cleaned it, as core runs it');
+    assert.match(target(r, 'Settings of the Acme Hours widget').why ?? '', /^WordPress keeps no such thing: /);
+    assert.match(target(r, 'Settings of the Acme Legacy widget').why ?? '', /^Wanigan does not do this yet: /);
+  });
+
   test('a static block’s own settings stay read-only, saying WordPress keeps no PHP save() to write them', () => {
     const r = run(page('<!-- wp:heading {"level":3} -->\n<h3 class="wp-block-heading">Hours</h3>\n<!-- /wp:heading -->'));
     const e = target(r, 'Heading block');
