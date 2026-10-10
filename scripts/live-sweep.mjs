@@ -1765,7 +1765,7 @@ try {
   // What a marketing script does after the page arrives: a form in front of the server's own div, and a class on one of them.
   await lateTab.evaluate(() => {
     const form = document.createElement('div');
-    form.className = 'hs-form-frame';
+    form.className = 'acme-signup-frame';
     form.style.height = '30px';
     form.innerHTML = '<form><input aria-label="Email"><button>Sign up</button></form>';
     document.querySelector('main').insertBefore(form, document.querySelector('.note'));
@@ -1774,7 +1774,7 @@ try {
   });
   await lateTab.addScriptTag({ content: script });
   const lateAdded = await lateTab.evaluate((html) => window.__wl.layerLate(html), sentHtml);
-  if (JSON.stringify(lateAdded) !== JSON.stringify([{ n: 'div.hs-form-frame', b: [0, 40, 900, 30] }])) fail(`page script: what a script added after the page arrived was ${JSON.stringify(lateAdded)}`);
+  if (JSON.stringify(lateAdded) !== JSON.stringify([{ n: 'div.acme-signup-frame', b: [0, 40, 900, 30] }])) fail(`page script: what a script added after the page arrived was ${JSON.stringify(lateAdded)}`);
   const lateRead = await lateTab.evaluate(() => window.__wl.layerPage(['color'], 100));
   const latePaths = (lateRead?.elements ?? []).map((e) => [e.p, e.t]);
   if (JSON.stringify(latePaths) !== JSON.stringify([
@@ -1783,7 +1783,7 @@ try {
     ['body > main:nth-of-type(1) > div:nth-of-type(1)', 'Open daily'],
     ['body > footer:nth-of-type(1)', '© Northwind'],
   ])) fail(`page script: read whole beside a script's form, the page was ${JSON.stringify(latePaths)} (the form left out, the note still the first div, the footer's new words kept)`);
-  if (JSON.stringify(lateRead?.late) !== JSON.stringify([{ n: 'div.hs-form-frame', b: [0, 40, 900, 30] }])) fail(`page script: the page read whole did not answer the script's form apart: ${JSON.stringify(lateRead?.late)}`);
+  if (JSON.stringify(lateRead?.late) !== JSON.stringify([{ n: 'div.acme-signup-frame', b: [0, 40, 900, 30] }])) fail(`page script: the page read whole did not answer the script's form apart: ${JSON.stringify(lateRead?.late)}`);
   await lateTab.close();
 } finally {
   await browser.close();

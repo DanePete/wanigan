@@ -1505,8 +1505,8 @@ function marketing(o: { widget: 'first' | 'every'; late: boolean; footer?: strin
   const snap = (form: boolean, footer: string): PageSnap => {
     // Where the page script read the HTML the server sent, it says what was added: nothing, or the form.
     if (!form) return o.late ? { ...whole(page(footer)), late: [] } : whole(page(footer));
-    if (o.late) return { ...whole(page(footer)), late: [{ name: 'div.hs-form-frame', box: FORM }] } as PageSnap;
-    return whole([...page(footer), { path: 'body > div:nth-of-type(1)', name: 'div.hs-form-frame', box: [FORM.x, FORM.y, FORM.width, FORM.height], text: 'Sign up for our newsletter' }]);
+    if (o.late) return { ...whole(page(footer)), late: [{ name: 'div.acme-signup-frame', box: FORM }] } as PageSnap;
+    return whole([...page(footer), { path: 'body > div:nth-of-type(1)', name: 'div.acme-signup-frame', box: [FORM.x, FORM.y, FORM.width, FORM.height], text: 'Sign up for our newsletter' }]);
   };
   const drawn = (form: boolean, footer: string): Bitmap => {
     const b = painted(painted(blank(64, 200), { x: 0, y: 30, width: 64, height: 40 }, 60), { x: 0, y: 150, width: 64, height: 20 }, footer === ACME ? 200 : 120);
@@ -1542,7 +1542,7 @@ test('an element in one of the two renders of the same page and not the other is
     await w.implement(e.id);
     const v = await w.verify(e.id, { widths: [390] });
     assert.deepEqual([v.ok, v.failed, v.differences], [true, null, []], 'a form that shows on one visit and not the next is no difference the save made');
-    assert.deepEqual(v.masked, [{ label: 'div.hs-form-frame', why: 'differs between two renders of the same page', widths: [390], nearEdit: false }]);
+    assert.deepEqual(v.masked, [{ label: 'div.acme-signup-frame', why: 'differs between two renders of the same page', widths: [390], nearEdit: false }]);
   } finally { w.done(); }
 });
 
@@ -1553,7 +1553,7 @@ test('an element a script added after the page loaded, absent from the HTML the 
     await w.implement(e.id);
     const v = await w.verify(e.id, { widths: [390] });
     assert.deepEqual([v.ok, v.failed, v.differences], [true, null, []]);
-    assert.deepEqual(v.masked, [{ label: 'div.hs-form-frame', why: 'added by a script after the page loaded', widths: [390], nearEdit: false }]);
+    assert.deepEqual(v.masked, [{ label: 'div.acme-signup-frame', why: 'added by a script after the page loaded', widths: [390], nearEdit: false }]);
   } finally { w.done(); }
 });
 
@@ -1573,12 +1573,12 @@ test('a page from before that could not tell what scripts added, against one tha
 });
 
 test('what the page script says a script added is read back checked, and kept with the page read whole', () => {
-  assert.deepEqual(lateOf([{ n: 'div.hs-form-frame', b: [0, 40, 900, 30] }, 'nonsense', { n: 7, b: [0, 0, 'x', 1] }]), [
-    { name: 'div.hs-form-frame', box: { x: 0, y: 40, width: 900, height: 30 } }, { name: 'element', box: { x: 0, y: 0, width: 0, height: 1 } },
+  assert.deepEqual(lateOf([{ n: 'div.acme-signup-frame', b: [0, 40, 900, 30] }, 'nonsense', { n: 7, b: [0, 0, 'x', 1] }]), [
+    { name: 'div.acme-signup-frame', box: { x: 0, y: 40, width: 900, height: 30 } }, { name: 'element', box: { x: 0, y: 0, width: 0, height: 1 } },
   ]);
   assert.equal(lateOf(null), null, 'the page script could not tell');
-  const read = pageOf({ keys: ['color'], table: ['rgb(0, 0, 0)'], cut: false, elements: [{ p: 'body > main:nth-of-type(1)', n: 'main', b: [0, 0, 900, 70], t: null, v: [0], e: false }], late: [{ n: 'div.hs-form-frame', b: [0, 40, 900, 30] }] });
-  assert.deepEqual(read?.late, [{ name: 'div.hs-form-frame', box: { x: 0, y: 40, width: 900, height: 30 } }]);
+  const read = pageOf({ keys: ['color'], table: ['rgb(0, 0, 0)'], cut: false, elements: [{ p: 'body > main:nth-of-type(1)', n: 'main', b: [0, 0, 900, 70], t: null, v: [0], e: false }], late: [{ n: 'div.acme-signup-frame', b: [0, 40, 900, 30] }] });
+  assert.deepEqual(read?.late, [{ name: 'div.acme-signup-frame', box: { x: 0, y: 40, width: 900, height: 30 } }]);
   assert.equal(pageOf({ keys: [], table: [], cut: false, elements: [] })?.late, undefined, 'none said: not known, rather than none');
 });
 

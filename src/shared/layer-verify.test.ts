@@ -397,7 +397,7 @@ test('what the page does not agree on with itself in two renders is set aside, t
   const first = pageOf([
     ['body > main:nth-of-type(1)', 'main', [0, 0, 64, 100], null],
     ['body > main:nth-of-type(1) > p:nth-of-type(1)', 'p.lead', [0, 0, 64, 40], 'Learn the strokes.'],
-    ['body > div:nth-of-type(1)', 'div.hs-form-frame', [0, 120, 64, 30], null],
+    ['body > div:nth-of-type(1)', 'div.acme-signup-frame', [0, 120, 64, 30], null],
     ['body > div:nth-of-type(1) > form:nth-of-type(1)', 'form', [0, 120, 64, 30], 'Sign up'],
     ['body > aside:nth-of-type(1)', 'aside.quote', [0, 160, 64, 20], 'Quote one'],
     ['body > h1:nth-of-type(1)', 'h1.title', [0, 190, 64, 10], 'A', undefined, true],
@@ -411,7 +411,7 @@ test('what the page does not agree on with itself in two renders is set aside, t
   const found = unstableOf(first, second);
   assert.deepEqual(found.paths, ['body > div:nth-of-type(1)', 'body > aside:nth-of-type(1)'], 'a form in one render only (not its form for itself), a quote that rotates; never an edited element');
   assert.deepEqual(found.masks.map((m) => [m.label, m.why, m.rects]), [
-    ['div.hs-form-frame', UNSTABLE_WHY, [{ x: 0, y: 120, width: 64, height: 30 }]],
+    ['div.acme-signup-frame', UNSTABLE_WHY, [{ x: 0, y: 120, width: 64, height: 30 }]],
     ['aside.quote', UNSTABLE_WHY, [{ x: 0, y: 160, width: 64, height: 20 }, { x: 0, y: 160, width: 64, height: 20 }]],
   ]);
   assert.deepEqual(unstableOf(first, first), { paths: [], masks: [] }, 'a page that agrees with itself sets nothing aside');
@@ -427,8 +427,8 @@ test('what the page does not agree on with itself in two renders is set aside, t
 });
 
 test('what a script added after the page loaded is named among what was left out, with why', () => {
-  assert.deepEqual(lateMasks({ late: [{ name: 'div.hs-form-frame', box: { x: 0, y: 120, width: 64, height: 30 } }, { name: 'iframe', box: { x: 0, y: 0, width: 0, height: 0 } }] }),
-    [{ label: 'div.hs-form-frame', why: LATE_WHY, rects: [{ x: 0, y: 120, width: 64, height: 30 }], held: false }], 'one that takes no room left nothing out');
+  assert.deepEqual(lateMasks({ late: [{ name: 'div.acme-signup-frame', box: { x: 0, y: 120, width: 64, height: 30 } }, { name: 'iframe', box: { x: 0, y: 0, width: 0, height: 0 } }] }),
+    [{ label: 'div.acme-signup-frame', why: LATE_WHY, rects: [{ x: 0, y: 120, width: 64, height: 30 }], held: false }], 'one that takes no room left nothing out');
   assert.equal(LATE_WHY, 'added by a script after the page loaded');
   assert.deepEqual(lateMasks(null), []);
 });
