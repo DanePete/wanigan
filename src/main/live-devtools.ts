@@ -19,7 +19,7 @@
 //   is this module's own record, and the dock's DevTools is closed only by
 //   destroying its view.
 // Design: docs/design/2026-10-08-live-view.md.
-import { WebContentsView, ipcMain, shell, type BrowserWindow, type Input, type IpcMainEvent, type IpcMainInvokeEvent, type WebContents } from 'electron';
+import { WebContentsView, ipcMain, nativeTheme, shell, type BrowserWindow, type Input, type IpcMainEvent, type IpcMainInvokeEvent, type WebContents } from 'electron';
 import { isDevtoolsKey } from '../shared/shortcuts.ts';
 import {
   DEVTOOLS_CLOSED, devtoolsBox, devtoolsPoint, devtoolsStep, revealedOf,
@@ -103,6 +103,14 @@ export function wireLiveDevtools(options: {
     })`;
     wc.once('did-finish-load', () => { void wc.executeJavaScript(painted).catch(() => null).finally(shown); });
     setTimeout(shown, 3000);
+    // DevTools follows the system's light or dark (its own default), told so: in the app its view saw light on a dark
+    // Mac and drew a white panel in the dark window (take devtools-probe: system dark, DevTools prefers-color-scheme
+    // light). Set on DevTools' own view before it loads, and again when the system changes.
+    const scheme = (): void => {
+      if (wc.isDestroyed()) return;
+      void wc.debugger.sendCommand('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: nativeTheme.shouldUseDarkColors ? 'dark' : 'light' }] }).catch(() => {});
+    };
+    try { wc.debugger.attach('1.3'); scheme(); nativeTheme.on('updated', scheme); wc.once('destroyed', () => nativeTheme.off('updated', scheme)); } catch { /* left to DevTools */ }
     page.setDevToolsWebContents(wc);
     page.openDevTools({ mode: 'detach', activate: false });
   };
