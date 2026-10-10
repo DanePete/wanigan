@@ -12,7 +12,7 @@
 // In the live view the drawer is its dock: tabs for Code and for what the view
 // adds (its notes, problems and request, drawn here by components/live/Dock.tsx
 // through `useDockHost`). Closed there, a strip of those tabs stays under the
-// page; ⇧[ and ⇧] step through them. ⌘J stays the code editor's.
+// page; ⇧[ and ⇧] open it, then step through them. ⌘J stays the code editor's.
 // Design: docs/design/2026-10-09-code-editor.md, docs/design/2026-10-08-live-view.md.
 import { Suspense, lazy, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type MouseEvent, type PointerEvent } from 'react';
 import type { ProjectSummary } from '@shared/model';

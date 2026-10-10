@@ -752,7 +752,7 @@ function keyChecks(w) {
       { standIn: 'live', at: live, ready: '.live-tree', setup: dockWas, keys: ['Shift+BracketLeft'], expect: dockMoved },
       { standIn: 'live', at: live, ready: '.live-tree', setup: dockWas, keys: ['Shift+BracketRight'], expect: dockMoved },
     ],
-    'Compare Local with a hosted environment': [{ standIn: 'compare', at: live, ready: '.live-bar', keys: ['Shift+C'], expect: shows('.live-stage .live-compare .cmp-head') }],
+    'Compare Local with a hosted environment': [{ standIn: 'compare', at: live, ready: '.live-bar', keys: ['Shift+C'], expect: shows('.live-stage .live-stage-compare .cmp-head') }],
     'The site’s component library': [{ standIn: 'live', at: live, ready: '.live-tree', keys: ['Shift+B'], expect: shows('.live-library-entry') }],
     'Your edits to the page, in the design layer': [{ standIn: 'live', at: live, ready: '.live-tree', keys: ['Shift+E'], expect: shows('.live-tray .live-side-title') }],
     'Every way to edit the chosen part': [{ standIn: 'live', at: live, ready: '.live-tree', setup: choose('Hero'), keys: ['e'], expect: shows('[role="menu"] [role="menuitem"]:has-text("Hero props")') }],

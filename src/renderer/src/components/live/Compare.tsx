@@ -54,7 +54,7 @@ export function ComparePanel({ project, site, envs, masks, page, shownEnv, width
     const onKey = (e: KeyboardEvent): void => {
       if (e.key !== 'Escape' || e.defaultPrevented || e.isComposing) return;
       const t = e.target instanceof Element ? e.target : null;
-      if (t && t !== document.body && !t.closest('.live-compare')) return;
+      if (t && t !== document.body && !t.closest('.live-stage-compare')) return;
       if (t?.closest('textarea, select, [role="menu"], .sel-list') || document.querySelector('[aria-modal="true"], .sel-list')) return;
       e.preventDefault();
       close.current();
@@ -111,9 +111,9 @@ export function ComparePanel({ project, site, envs, masks, page, shownEnv, width
   const host = (() => { try { return hostedUrl ? new URL(hostedUrl).host : ''; } catch { return ''; } })();
 
   return (
-    <section className="live-compare" aria-labelledby={titleId}>
+    <section className="live-stage-compare" aria-labelledby={titleId}>
       <div className="cmp-head">
-        <h2 className="live-compare-title" id={titleId}>{env ? `Local and ${env.name}` : 'Compare'}</h2>
+        <h2 className="live-stage-compare-title" id={titleId}>{env ? `Local and ${env.name}` : 'Compare'}</h2>
         {envs.length > 1 ? (
           <Segmented<string> size="s" label="Compare Local with" value={env?.id ?? ''} options={envs.map((e) => ({ value: e.id, label: e.name, hint: e.url }))} onChange={setOther} />
         ) : null}
@@ -142,7 +142,7 @@ export function ComparePanel({ project, site, envs, masks, page, shownEnv, width
       ) : (
         <>
           {notes.length ? <p className="cmp-note small">{notes.join(' ')}</p> : null}
-          <CompareViewer a={a.side} b={b.side} width={width} regions={regions} components={components} masks={here} keysWithin=".live-compare"
+          <CompareViewer a={a.side} b={b.side} width={width} regions={regions} components={components} masks={here} keysWithin=".live-stage-compare"
             onIgnore={(r, l, s) => void ignore(r, l, s)} onUnmask={(m) => void unmask(m)} onWidth={setWidth} />
         </>
       )}

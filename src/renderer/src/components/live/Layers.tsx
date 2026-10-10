@@ -137,6 +137,8 @@ export function Layers({ regions, components, selected, fold = false, changed, o
   };
 
   const keys = (e: KeyboardEvent<HTMLUListElement>): void => {
+    // ⌘ and the like make a key something else (⇧⌘↩ sends the notes waiting): the tree's are the plain ones.
+    if (e.metaKey || e.ctrlKey || e.altKey) return;
     const at = rows.findIndex((r) => r.layer.key === current);
     const row = rows[at];
     if (!row) return;

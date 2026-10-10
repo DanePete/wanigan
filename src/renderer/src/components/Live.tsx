@@ -388,7 +388,7 @@ function LiveShown({ site, url, project, follow, card, compact, following, shots
     const back = (): void => { setLens('structure'); arrange.setPlacing(null); };
     const key = (e: KeyboardEvent): void => {
       // Compare's Escape is its own: it goes back to the page, the lens with it.
-      if (e.key !== 'Escape' || e.defaultPrevented || document.querySelector('.scrim, .live-sheet, .live-compare')) return;
+      if (e.key !== 'Escape' || e.defaultPrevented || document.querySelector('.scrim, .live-sheet, .live-stage-compare')) return;
       const t = e.target as Element | null;
       if (t?.closest?.('input, textarea, select, .sel-list') || (t && t !== document.body && !t.closest?.('.live, .live-docked'))) return;
       e.preventDefault();
@@ -761,7 +761,7 @@ function LiveShown({ site, url, project, follow, card, compact, following, shots
       const id = liveKey(e);
       if (!id) return;
       // In Compare its own keys work, and ⇧C goes back to the page; the page's keys wait for the page.
-      if (t.closest('.live-compare') && id !== 'compare') return;
+      if (t.closest('.live-stage-compare') && id !== 'compare') return;
       e.preventDefault();
       runKey.current(id);
     };

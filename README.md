@@ -136,10 +136,9 @@ WordPress and other sites can each be on or off.
 - **Keys for everything**, in the view and in its page while nothing is typed
   into: P picks (and stops picking), ⇧L chooses a lens, 1 2 3 the widths,
   [ and ] the side panel's tabs, ⇧[ and ⇧] the dock's, ⇧C Compare, ⇧B the
-  component library; on a
-  chosen part E edits, M moves, . opens its code, ⇧A shows it alone, ⇧X takes
-  it out; ⌘↩ adds a note, ⇧⌘↩ sends it (or the notes waiting). All are on the
-  shortcut sheet (?).
+  component library; on a chosen part E edits, M moves, . opens its code, ⇧A
+  shows it alone, ⇧X takes it out; ⌘↩ adds a note, ⇧⌘↩ sends it (or the notes
+  waiting). All are on the shortcut sheet (?).
 - **Finds the site** from the project's own files (`.ddev`, `wp-config.php`,
   a dev script, `.lando.yml`) and opens the site you already run. It starts
   nothing on its own. A ddev site's certificate is trusted when this Mac's own

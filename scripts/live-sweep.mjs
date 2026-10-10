@@ -241,7 +241,7 @@ try {
       const mark = async () => (await calls()).length;
       const pressed = (label) => page.$eval(`.live-widths button[aria-label^="${label}"]`, (b) => b.getAttribute('aria-pressed')).catch(() => null);
       const tabIs = () => page.$eval('.live-side > .segmented [aria-checked="true"]', (b) => b.textContent).catch(() => '');
-      const nobody = () => page.evaluate(() => document.activeElement?.blur());
+      const nobody = () => page.evaluate(() => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(() => { document.activeElement?.blur(); done(); }))));
       await page.locator('.toast .toast-x').click().catch(() => {});
       await page.getByRole('radio', { name: 'Layers' }).click();
       if (await page.$('.live-inspector')) await page.getByRole('button', { name: 'Back to the layers' }).click();
@@ -426,19 +426,22 @@ try {
       if (await tabIs() !== 'Add') fail(t(`layout: [ from the first tab went to ${await tabIs()}, not the last`));
       await page.keyboard.press(']');
 
-      // The dock beneath the page: Code, Notes, Problems, Request. Closed, its tabs wait in a strip; ⇧] and ⇧[ step
-      // through them, opening it; ⌘J is the code editor's (from Notes it shows Code, then hides the dock).
-      // Closed first (it was left on Request above).
+      // The dock beneath the page: Code, Notes, Problems, Request. Closed, its tabs wait in a strip, each opening it;
+      // ⇧] and ⇧[ open it on the tab it showed, then step through them; ⌘J is the code editor's (from Notes it
+      // shows Code, then hides the dock).
       if (await page.$('.editor-drawer:not([hidden])')) await page.click('.editor-actions button[aria-label^="Hide the"]');
       const strip = await page.$$eval('.dock-collapsed button', (els) => els.map((e) => e.textContent.trim()));
       if (strip.join() !== 'Code,Notes,Problems,Request') fail(t(`layout: the closed dock offers ${strip.join(', ')}`));
+      await page.locator('.dock-collapsed button', { hasText: /^Notes/ }).click();
+      await page.waitForSelector('.editor-drawer:not([hidden]) .live-docked[data-tab="notes"]', { timeout: 3000 }).catch(() => fail(t('layout: Notes in the closed dock’s strip did not open it there')));
+      await page.click('.editor-actions button[aria-label="Hide the dock"]');
+      await page.waitForSelector('.dock-collapsed', { timeout: 2000 }).catch(() => fail(t('layout: Hide the dock did not close it')));
       await nobody();
       await page.keyboard.press('Shift+BracketRight');
-      await page.waitForSelector('.editor-drawer:not([hidden]) .live-docked[data-tab="notes"]', { timeout: 3000 }).catch(() => fail(t('layout: ⇧] did not open the dock on Notes')));
-      if (!/^Notes/.test(await dockIs(page))) fail(t(`layout: ⇧] opened the dock on ${await dockIs(page)}`));
+      await page.waitForSelector('.editor-drawer:not([hidden]) .live-docked[data-tab="notes"]', { timeout: 3000 }).catch(() => fail(t('layout: ⇧] did not open the dock on Notes, the tab it showed')));
       if (await tabIs() !== 'Layers') fail(t('layout: ⇧] moved the side panel too'));
       await page.keyboard.press('Shift+BracketRight');
-      if (!/^Problems/.test(await dockIs(page))) fail(t(`layout: ⇧] again went to ${await dockIs(page)}`));
+      if (!/^Problems/.test(await dockIs(page))) fail(t(`layout: ⇧] with the dock open went to ${await dockIs(page)}, not Problems`));
       await page.keyboard.press('Shift+BracketLeft');
       if (!/^Notes/.test(await dockIs(page))) fail(t(`layout: ⇧[ went to ${await dockIs(page)}`));
       // From the page too, as the page script passes them.
@@ -508,7 +511,7 @@ try {
       const calls = () => page.evaluate(() => window.__wgLive.calls.slice());
       const mark = async () => (await calls()).length;
       const since = async (n) => (await calls()).slice(n);
-      const nobody = () => page.evaluate(() => document.activeElement?.blur());
+      const nobody = () => page.evaluate(() => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(() => { document.activeElement?.blur(); done(); }))));
       const edits = page.locator('.live-bar-tools button[aria-keyshortcuts="Shift+E"]');
       // An edit's row, by a line of its before → after (a verdict's words may name the same property).
       const rowOf = (text) => page.locator('.live-tray-edit').filter({ has: page.locator('.live-layer-lines li', { hasText: text }) });
@@ -710,7 +713,7 @@ try {
     {
       const calls = () => page.evaluate(() => window.__wgLive.calls.slice());
       const said = () => page.locator('[aria-live="polite"].visually-hidden').innerText().catch(() => '');
-      const nobody = () => page.evaluate(() => document.activeElement?.blur());
+      const nobody = () => page.evaluate(() => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(() => { document.activeElement?.blur(); done(); }))));
       const row = (id) => page.locator(`.live-library-entry[data-entry="${id}"]`);
       const openEntry = async (id) => {
         await row(id).locator('.live-library-open').click();

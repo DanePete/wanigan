@@ -116,7 +116,7 @@ files) and `git`, so Changes refetches.
   three drawn by the live view into the drawer through a portal
   (`components/live/Dock.tsx`; `setDockTabs` and `useDockHost` in
   `editor/store.ts`). Closed, the tabs wait in a strip under the page; ⇧[ and
-  ⇧] step through them. ⌘J is still the editor's: from another tab it shows
+  ⇧] open it on the tab it showed, then step through them. ⌘J is still the editor's: from another tab it shows
   Code (the cursor in it), from Code it hides the drawer. The editor's own
   keys (⌘S, Back and Forward) are only the editor's while Code shows. A tab
   only the live view has is not shown elsewhere: the drawer steps aside

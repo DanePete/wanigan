@@ -252,10 +252,15 @@ export function showDock(id: string): void {
   set({ open: true, shows: id, ...(id === CODE_TAB.id && !(state.open && state.shows === id) ? { focusEditor: state.focusEditor + 1 } : {}) });
 }
 
-/** ⇧[ and ⇧] in the live view: the dock's previous or next tab, opening it there when it is closed. */
+/**
+ * ⇧[ and ⇧] in the live view: closed, the dock opens on the tab it showed (Code when that tab is not here);
+ * open, it goes to the previous or next tab.
+ */
 export function stepDock(by: 1 | -1): void {
+  const here = dockShows();
+  if (!state.open || here === null) { set({ open: true, shows: here ?? CODE_TAB.id }); return; }
   const tabs = dockTabs();
-  const at = Math.max(0, tabs.findIndex((t) => t.id === state.shows));
+  const at = Math.max(0, tabs.findIndex((t) => t.id === here));
   const next = tabs[(at + by + tabs.length) % tabs.length] as DockTab;
   set({ open: true, shows: next.id });
 }

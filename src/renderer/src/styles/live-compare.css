@@ -72,7 +72,7 @@
 
 /* ── Compare, drawn in the stage where the page is (Compare.tsx) ────────── */
 
-.live-compare {
+.live-stage-compare {
   position: absolute;
   inset: 0;
   z-index: 3;
@@ -85,48 +85,49 @@
   container-type: inline-size;
 }
 
-.live-compare > * {
+.live-stage-compare > * {
   flex-shrink: 0;
 }
 
-.live-compare-title {
+.live-stage-compare-title {
   margin: 0;
   font: 600 var(--text-md) / var(--leading-tight) var(--font-ui);
   white-space: nowrap;
 }
 
 /* The pictures take the height the stage has; the list of changes scrolls beside them. */
-.live-compare > .cmp {
+.live-stage-compare > .cmp {
   display: flex;
   flex: 1 1 auto;
   flex-direction: column;
   min-height: 0;
 }
 
-.live-compare .cmp > * {
+.live-stage-compare .cmp > * {
   flex-shrink: 0;
 }
 
-.live-compare .cmp-main {
+.live-stage-compare .cmp-main {
   flex: 1 1 auto;
   min-height: 0;
+  grid-template-rows: minmax(0, 1fr);
 }
 
-.live-compare .cmp-frame {
+.live-stage-compare .cmp-frame {
   height: auto;
   min-height: 0;
 }
 
-.live-compare .cmp-side {
+.live-stage-compare .cmp-side {
   max-height: none;
 }
 
-.live-compare .cmp-note {
+.live-stage-compare .cmp-note {
   margin: 0;
 }
 
 @container (max-width: 720px) {
-  .live-compare .cmp-main {
+  .live-stage-compare .cmp-main {
     grid-template-columns: minmax(0, 1fr);
     grid-template-rows: minmax(0, 2fr) minmax(0, 1fr);
   }
