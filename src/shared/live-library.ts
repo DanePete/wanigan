@@ -350,3 +350,171 @@ export function paletteEntryFor(entry: LibraryEntry, platform: 'drupal' | 'wordp
   if (entry.kind === 'block' || entry.kind === 'pattern') return { id: entry.id };
   return { why: 'This site’s helper has no way to place it.' };
 }
+
+/* ── where an entry is used, across the site ────────────────────────────── */
+
+// `GET /_wanigan/usage?entry=<library entry id>` (helper version 4) answers an
+// EntryUsage: every place the site's stored data says the entry is used, each
+// with what it is, a label, the page that shows it when one does, and whether
+// the search read everything it covers. Core keeps no usage index for any of
+// it, so a helper searches: on Drupal, block placements by plugin, Layout
+// Builder defaults and overrides, inline block usage, the configuration that
+// depends on what a block shows, and Drupal's own Twig parse of the templates
+// for a component; on WordPress, stored block markup, theme file templates and
+// parts, registered patterns and block widgets, closed over the references
+// core does not follow. Bounded in time and places, read-only, and always
+// saying what no search of stored data can see.
+
+export const USAGE_VERSION = 1;
+/** Bounds a helper applies before answering, which parseUsage applies again. */
+export const USAGE_LIMITS = { places: 500, paths: 20, depth: 64, said: 30 } as const;
+
+export const USAGE_KINDS = [
+  /** Drupal: a block placed in a theme's region (a `block` config entity). */
+  'placement',
+  /** Drupal: a Layout Builder default layout (an entity view display). */
+  'layout-default',
+  /** Drupal: one content item's own Layout Builder layout. */
+  'layout-override',
+  /** Drupal: other configuration that depends on what it shows (a view, a menu, a reusable block). */
+  'config',
+  /** A Drupal Twig template, or a WordPress block template (saved or the theme's file). */
+  'template',
+  /** WordPress: a template part, saved or the theme's file. */
+  'template-part',
+  /** WordPress: a post, page or item of another public type. */
+  'content',
+  /** WordPress: a synced pattern (wp_block). */
+  'synced-pattern',
+  /** WordPress: a navigation menu (wp_navigation). */
+  'navigation',
+  /** WordPress: a registered pattern's content. */
+  'pattern',
+  /** WordPress: a block widget. */
+  'widget',
+] as const;
+export type UsageKind = (typeof USAGE_KINDS)[number];
+
+export interface UsagePlace {
+  kind: UsageKind;
+  label: string;
+  /** A page of the site that shows it: a path on the site's own origin. */
+  url?: string;
+  /** The site's own page for changing it (a placement's settings, the editor): a path on the site's own origin. */
+  edit?: string;
+  /** Where in it: a region, a section, the blocks it sits in, a template's line. */
+  where?: string;
+  /** How many times it is used there, when more than once. */
+  count?: number;
+  /** What it reaches this place through, when it is inside something used here: a synced pattern, a template part, a pattern. */
+  via?: string;
+  /** Worth knowing: switched off, a theme not in use, a draft, visibility conditions. */
+  note?: string;
+  /** The file it is in, relative to the project: a template, a theme's template or pattern. */
+  file?: string;
+  /** A WordPress store as the trace names it (`post:12`, `tpl:theme//slug`, `tp:theme//slug`), with the path of each use in it. */
+  store?: string;
+  paths?: number[][];
+}
+
+export interface EntryUsage {
+  version: typeof USAGE_VERSION;
+  platform: 'drupal' | 'wordpress';
+  /** The library entry asked about. */
+  entry: string;
+  places: UsagePlace[];
+  /** Places found, before the bound cut the list. */
+  found: number;
+  /** Everything it searched was read whole: no time or count bound stopped it, and nothing could not be read. */
+  complete: boolean;
+  /** Why it is not complete, in the owner's words. */
+  gaps: string[];
+  /** What it searched, in the owner's words. */
+  searched: string[];
+  /** What no search of stored data can see, in the owner's words: always said. */
+  unseen: string[];
+  /** How long the search took, in milliseconds. */
+  ms: number;
+}
+
+/** Where an entry is used, or why that is not known: the library's states, and a helper that does not know the entry. */
+export type LiveUsageAnswer =
+  | { state: 'ok'; usage: EntryUsage }
+  | { state: 'off' | 'no-site' | 'no-helper' | 'outdated' | 'unreadable' | 'too-large' }
+  | { state: 'refused'; status: number }
+  /** The helper does not know the entry, or refused how it was asked: in its words. */
+  | { state: 'unknown'; error: string }
+  | { state: 'down'; error: string };
+
+/** A library entry id as it may be asked about: one of the helpers' kinds, plain and bounded. */
+export const USAGE_ENTRY = /^(sdc|block|pattern|style):[A-Za-z0-9_.:/-]{1,250}$/;
+const STORE = /^(post:\d{1,20}|tpl:[A-Za-z0-9_.@-]{1,100}\/\/[A-Za-z0-9_.@-]{1,200}|tp:[A-Za-z0-9_.@-]{1,100}\/\/[A-Za-z0-9_.@-]{1,200})$/;
+
+/** A path on the site's own origin a helper named; null for anything that could leave it or is not a path. */
+export function sitePath(raw: unknown): string | null {
+  if (typeof raw !== 'string' || raw.length > 2000 || !raw.startsWith('/') || raw.startsWith('//')) return null;
+  if (/[\\\s\u0000-\u001f\u007f]/.test(raw)) return null;
+  try {
+    const url = new URL(raw, 'https://site.invalid');
+    return url.origin === 'https://site.invalid' ? `${url.pathname}${url.search}${url.hash}` : null;
+  } catch { return null; }
+}
+
+function usagePlace(raw: unknown): UsagePlace | null {
+  if (!isObj(raw) || !(USAGE_KINDS as readonly unknown[]).includes(raw.kind)) return null;
+  const label = str(raw.label, 300);
+  if (!label) return null;
+  const out: UsagePlace = { kind: raw.kind as UsageKind, label };
+  const url = sitePath(raw.url); if (url) out.url = url;
+  const edit = sitePath(raw.edit); if (edit) out.edit = edit;
+  const where = str(raw.where, 300); if (where) out.where = where;
+  if (typeof raw.count === 'number' && Number.isInteger(raw.count) && raw.count > 1) out.count = Math.min(raw.count, 1_000_000);
+  const via = str(raw.via, 300); if (via) out.via = via;
+  const note = str(raw.note, 300); if (note) out.note = note;
+  const file = relFile(raw.file); if (file) out.file = file;
+  if (typeof raw.store === 'string' && STORE.test(raw.store)) {
+    out.store = raw.store;
+    if (Array.isArray(raw.paths)) {
+      const paths = raw.paths.slice(0, USAGE_LIMITS.paths).filter((p): p is number[] => Array.isArray(p) && p.length > 0 && p.length <= USAGE_LIMITS.depth
+        && p.every((n) => typeof n === 'number' && Number.isInteger(n) && n >= 0 && n < 100_000));
+      if (paths.length) out.paths = paths.map((p) => [...p]);
+    }
+  }
+  return out;
+}
+
+/**
+ * Where an entry is used, as a helper answered, checked: its shape, its bounds, paths that stay on the site, stores
+ * as the trace names them. Malformed places are dropped; null when it is not an answer about this entry at all.
+ * An answer whose places were cut here is not complete, whatever the helper said.
+ */
+export function parseUsage(raw: unknown, entry: string): EntryUsage | null {
+  if (!isObj(raw) || raw.version !== USAGE_VERSION || raw.entry !== entry || !Array.isArray(raw.places)) return null;
+  if (raw.platform !== 'drupal' && raw.platform !== 'wordpress') return null;
+  const places = raw.places.slice(0, USAGE_LIMITS.places).map(usagePlace).filter((p): p is UsagePlace => p !== null);
+  const found = typeof raw.found === 'number' && Number.isInteger(raw.found) && raw.found >= places.length ? Math.min(raw.found, 10_000_000) : places.length;
+  const cut = raw.places.length > USAGE_LIMITS.places;
+  const gaps = strings(raw.gaps, USAGE_LIMITS.said, 500);
+  if (cut && !gaps.length) gaps.push(`Only the first ${USAGE_LIMITS.places} places are kept.`);
+  return {
+    version: USAGE_VERSION, platform: raw.platform, entry, places, found: Math.max(found, cut ? raw.places.length : 0),
+    complete: raw.complete === true && !cut && gaps.length === 0,
+    gaps, searched: strings(raw.searched, USAGE_LIMITS.said, 500), unseen: strings(raw.unseen, USAGE_LIMITS.said, 500),
+    ms: typeof raw.ms === 'number' && Number.isFinite(raw.ms) && raw.ms >= 0 ? Math.round(raw.ms) : 0,
+  };
+}
+
+/** Why it is not known where an entry is used, in the owner's words: the main process and the window say it the same. */
+export function usageWhy(answer: Exclude<LiveUsageAnswer, { state: 'ok' }>): string {
+  switch (answer.state) {
+    case 'off': return 'The live view is off: switch it on in Settings › Live view.';
+    case 'no-site': return 'This project has no local site set: choose it in the project’s Live tab.';
+    case 'no-helper': return 'The site helper is not installed, and the search runs through it. Install it from the project’s Live tab.';
+    case 'outdated': return 'The site helper is older than this Wanigan and cannot say where an entry is used. Update it from the project’s Live tab.';
+    case 'refused': return `The site refused the search (it answered ${answer.status}).`;
+    case 'unknown': return answer.error;
+    case 'down': return `The site did not answer: ${answer.error}.`;
+    case 'too-large': return 'The site’s answer is larger than Wanigan reads.';
+    case 'unreadable': return 'The site helper’s answer could not be read.';
+  }
+}
