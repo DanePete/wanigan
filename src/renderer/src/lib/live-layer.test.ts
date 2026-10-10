@@ -8,7 +8,7 @@ import type { LiveEdit } from '../../../shared/live.ts';
 import { kindKey, type EditTarget, type LiveTrace, type PartIdentity, type TracePart } from '../../../shared/live-trace.ts';
 import {
   NOTHING_HOLDS, byPage, changeLines, differenceWords, draftsOf, failedWords, heldInLayer, isFragile, kindName, madeOn, noiseWords, orphanWhy, ownTemplate,
-  pagePath, reachWords, redoLabel, sameTarget, templateOf, templateOffered, templateSaveRefused, undoLabel, verdictHeadline,
+  pagePath, reachWords, redoLabel, sameTarget, sendsTyped, templateOf, templateOffered, templateSaveRefused, undoLabel, verdictHeadline,
 } from './live-layer.ts';
 
 const card = (nth: number): PartIdentity => ({ kind: 'component', name: 'acme:card', within: null, nth });
@@ -180,4 +180,14 @@ test('words a template save wrote are the layer’s while it holds their edit as
   assert.equal(templateOf(words, [saved])?.line, 12);
   assert.equal(templateOf(words, [{ ...saved, revertable: false }]), null, 'the file changed since: not said to hold them');
   assert.equal(templateOf({ ...words, state: 'draft' }, [saved]), null);
+});
+
+test('Enter sends retyped words once: not again while it is held, not when an input method confirms a word, not with a modifier', () => {
+  const key = { key: 'Enter', shiftKey: false, metaKey: false, ctrlKey: false, altKey: false, repeat: false, isComposing: false };
+  assert.ok(sendsTyped(key));
+  assert.ok(!sendsTyped({ ...key, repeat: true }), 'held: the first press sent it');
+  assert.ok(!sendsTyped({ ...key, isComposing: true }), 'an input method’s Enter confirms its word');
+  assert.ok(!sendsTyped({ ...key, shiftKey: true }), 'Shift+Enter is a new line');
+  assert.ok(!sendsTyped({ ...key, metaKey: true }));
+  assert.ok(!sendsTyped({ ...key, key: 'a' }));
 });

@@ -79,7 +79,8 @@ export function TemplateSave({ edit: e, project, layer, onReload, onWritten }: {
     setLook({ state: 'found', file: own.file, line: at.line });
   });
 
-  const save = (file: string): Promise<unknown> => once(async () => {
+  // One write per edit at a time, kept by the layer: undo, redo and discard wait for it (use-layer.ts).
+  const save = (file: string): Promise<unknown> => layer.task(e.id, 'template', async () => {
     // Read again just before writing: the edit may have been undone, discarded, orphaned or made real meanwhile.
     const { snapshot, applied } = await layer.fresh();
     const refused = templateSaveRefused(snapshot?.edits.find((x) => x.id === e.id), applied);

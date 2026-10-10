@@ -15,13 +15,18 @@
 import { useCallback, useEffect, useId, useState, type FormEvent, type KeyboardEvent } from 'react';
 import { layerValue, type LayerPickTarget, type LayerProperty, type LayerScope } from '@shared/design-layer';
 import type { LivePick } from '@shared/live';
-import { changeLines, type ChangeLine } from '../../lib/live-layer';
+import { changeLines, sendsTyped, type ChangeLine } from '../../lib/live-layer';
 import { liveBridge } from '../../lib/live';
-import { Button, Disclosure, useToast } from '../ui';
+import { Button, Disclosure, useSingleFlight, useToast } from '../ui';
 import type { LayerApi } from './use-layer';
 
 /** What was just added to the layer, said in the Inspector until the next edit. */
 export interface LayerAdded { label: string; lines: ChangeLine[]; reach: string }
+
+/** Whether a key in a box sends what was typed (sendsTyped): the event's own fields, and whether an input method is composing. */
+const sends = (e: KeyboardEvent<HTMLElement>): boolean => sendsTyped({
+  key: e.key, shiftKey: e.shiftKey, metaKey: e.metaKey, ctrlKey: e.ctrlKey, altKey: e.altKey, repeat: e.repeat, isComposing: e.nativeEvent.isComposing,
+});
 
 const many = (n: number, one: string): string => `${n.toLocaleString('en')} ${n === 1 ? one : `${one}s`}`;
 
@@ -57,12 +62,14 @@ export function RetypeWords({ pick, layer, page, onAdded, onCancel }: {
   const toast = useToast();
   const id = useId();
   const live = liveBridge();
+  // One add at a time: Enter twice, or held, makes one draft.
+  const once = useSingleFlight();
   const [value, setValue] = useState(pick.own ?? '');
   const { target } = useTarget(pick.selector);
   const words = value.replace(/\s+/g, ' ').trim();
   const changed = !!words && words !== pick.own;
-  const submit = async (e?: FormEvent): Promise<void> => {
-    e?.preventDefault();
+  const submit = (e?: FormEvent): Promise<unknown> => { e?.preventDefault(); return once(add); };
+  const add = async (): Promise<void> => {
     if (!changed || !live) return;
     const t = target ?? await live.layerTarget().catch(() => null);
     if (!t) { toast('Nothing is picked on the page any more: pick it again, then retype it.', 'error'); return; }
@@ -75,7 +82,8 @@ export function RetypeWords({ pick, layer, page, onAdded, onCancel }: {
       <label className="small" htmlFor={id}>New words</label>
       <textarea id={id} rows={2} value={value} onChange={(e) => setValue(e.target.value)} autoFocus spellCheck
         onKeyDown={(e) => {
-          if (e.key === 'Enter' && !e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey) { e.preventDefault(); void submit(); }
+          // A held Enter repeats, and an input method's Enter confirms a word: neither makes another draft.
+          if (e.key === 'Enter' && !e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey) { e.preventDefault(); if (sends(e)) void submit(); }
           if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); onCancel(); }
         }} />
       <Fragile target={target} />
@@ -136,6 +144,7 @@ export function StyleEdit({ pick, layer, page, onAdded, onDone }: {
 }) {
   const toast = useToast();
   const scopeName = useId();
+  const once = useSingleFlight();
   const [round, setRound] = useState(0);
   const { target, asked } = useTarget(`${pick.selector}:${round}`);
   const [values, setValues] = useState<Partial<Record<LayerProperty, string>>>({});
@@ -147,8 +156,8 @@ export function StyleEdit({ pick, layer, page, onAdded, onDone }: {
   const chosen = Object.entries(values).filter(([k, v]) => v !== '' && v !== base(k as LayerProperty)) as [LayerProperty, string][];
   const reach = scope === 'kind' && target?.kindLabel ? `${target.kindLabel} (${many(target.kindCount, 'element')} on this page)` : 'this element';
 
-  const add = async (e?: FormEvent): Promise<void> => {
-    e?.preventDefault();
+  const add = (e?: FormEvent): Promise<unknown> => { e?.preventDefault(); return once(addStyle); };
+  const addStyle = async (): Promise<void> => {
     if (!chosen.length) return;
     if (!target) { toast('Nothing is picked on the page any more: pick it again, then try the style.', 'error'); return; }
     const bad = chosen.find(([, v]) => layerValue(v) === null);
@@ -162,7 +171,8 @@ export function StyleEdit({ pick, layer, page, onAdded, onDone }: {
     setRound((n) => n + 1);
   };
   const tokenOk = TOKEN.test(token.name.trim()) && layerValue(token.value) !== null;
-  const addToken = async (): Promise<void> => {
+  const addToken = (): Promise<unknown> => once(addTokenNow);
+  const addTokenNow = async (): Promise<void> => {
     if (!tokenOk || !target) return;
     const name = token.name.trim();
     const change = { type: 'token' as const, name, value: (layerValue(token.value) as string) };
@@ -173,7 +183,11 @@ export function StyleEdit({ pick, layer, page, onAdded, onDone }: {
   };
 
   // Enter in the token's fields changes the token, not the style above it.
-  const tokenKey = (e: KeyboardEvent<HTMLInputElement>): void => { if (e.key === 'Enter') { e.preventDefault(); void addToken(); } };
+  const tokenKey = (e: KeyboardEvent<HTMLInputElement>): void => {
+    if (e.key !== 'Enter') return;
+    e.preventDefault();
+    if (sends(e)) void addToken();
+  };
 
   return (
     <form className="live-style live-layer-edit" onSubmit={(e) => void add(e)} aria-label="Try a style">

@@ -28,7 +28,7 @@ import {
   templateOf, templateOffered, undoLabel, verdictHeadline,
 } from '../../lib/live-layer';
 import { liveBridge } from '../../lib/live';
-import { Button, Dialog, IconButton, useToast } from '../ui';
+import { Button, Dialog, IconButton, useSingleFlight, useToast } from '../ui';
 import { NoteComposer } from './Notes';
 import { TemplateSave, TemplateWrittenNote, type TemplateWritten } from './TemplateSave';
 import type { LayerApi } from './use-layer';
@@ -57,6 +57,7 @@ interface TrayContext {
 export function LayerTray({ onClose, ...ctx }: TrayContext & { onClose: () => void }) {
   const { layer, page, readOnly } = ctx;
   const live = liveBridge();
+  const once = useSingleFlight();
   const title = useRef<HTMLHeadingElement>(null);
   const savedByHand = useQuery('live.edits', { projectId: ctx.project.id }, ['liveEdits'], (_e, d) => (d as { projectId?: string }).projectId === ctx.project.id);
   const snap = layer.snapshot;
@@ -88,20 +89,22 @@ export function LayerTray({ onClose, ...ctx }: TrayContext & { onClose: () => vo
       </p>
       {readOnly ? <p className="small live-tray-note">A hosted environment is shown. The layer is your local site’s: show Local to see it on the page, or to make an edit real.</p> : null}
       <div className="live-tray-tools" role="group" aria-label="The layer">
-        <Button size="s" tone="quiet" icon="undo" disabled={!snap?.undo} onClick={() => layer.change(() => call('live.layerUndo', { projectId: ctx.project.id }))}
+        {/* While words are being saved to the site, the log waits: undo and redo never land between the save and its mark. */}
+        <Button size="s" tone="quiet" icon="undo" disabled={!snap?.undo || layer.writing} onClick={() => once(layer.undo)}
           title="Undo takes back the newest add or discard; an edit already in the site is never taken out of the layer">
           {undoLabel(snap)}
         </Button>
-        <Button size="s" tone="quiet" icon="forward" disabled={!snap?.redo} onClick={() => layer.change(() => call('live.layerRedo', { projectId: ctx.project.id }))}>
+        <Button size="s" tone="quiet" icon="forward" disabled={!snap?.redo || layer.writing} onClick={() => once(layer.redo)}>
           {redoLabel(snap)}
         </Button>
-        <Button size="s" tone={layer.on ? 'quiet' : 'primary'} icon="eye" aria-pressed={!layer.on} disabled={!live || readOnly} onClick={() => layer.show(!layer.on)}>
+        <Button size="s" tone={layer.on ? 'quiet' : 'primary'} icon="eye" aria-pressed={!layer.on} disabled={!live || readOnly} onClick={() => once(() => layer.show(!layer.on))}>
           Show the page without the layer
         </Button>
       </div>
       {!layer.on ? (
         <p className="small live-tray-note" role="status">The page shows the site as it renders it, without the layer. Switch it back to see your edits.</p>
       ) : null}
+      {layer.writing ? <p className="faint small" role="status">Saving to the site: undo, redo and discard wait until the layer has recorded it.</p> : null}
       {!snap ? <p className="faint small">Reading the layer…</p> : !edits.length ? (
         <p className="faint small">
           Nothing in the layer. Choose a part, then Edit ▾ › Retype the words or Try a style: the change shows on the page at once, and waits here until you
@@ -123,6 +126,9 @@ function TrayEdit({ edit: e, here, ctx }: { edit: LayerEdit; here: boolean; ctx:
   const { project, layer, readOnly } = ctx;
   const live = liveBridge();
   const toast = useToast();
+  const once = useSingleFlight();
+  /** What runs for this edit now (kept by the layer, so closing the tray loses nothing and never starts it twice). */
+  const busy = layer.running[e.id];
   const [answer, setAnswer] = useState<LayerImplemented | null>(null);
   const [noting, setNoting] = useState(false);
   const [verifying, setVerifying] = useState(false);
@@ -145,7 +151,7 @@ function TrayEdit({ edit: e, here, ctx }: { edit: LayerEdit; here: boolean; ctx:
     return r ? [r, ...ancestors(ctx.regions, r.index)] : [];
   }, [e.target.part, here, ctx.trace, ctx.parts, ctx.regions]);
 
-  const real = async (): Promise<void> => {
+  const real = (): Promise<unknown> => layer.task(e.id, 'real', async () => {
     if (!live) return;
     setFailure(null);
     const a = await layer.change(() => live.layerImplement(e.id));
@@ -153,8 +159,8 @@ function TrayEdit({ edit: e, here, ctx }: { edit: LayerEdit; here: boolean; ctx:
     setAnswer(a);
     if (a.ok) { toast(`Saved ${name} in the site${a.revision ? `, as revision ${a.revision}` : ''}. Verify compares the site with the design.`); return; }
     if (a.route === 'agent') setNoting(true);
-  };
-  const verify = async (): Promise<void> => {
+  });
+  const verify = (): Promise<unknown> => layer.task(e.id, 'verify', async () => {
     if (!live) return;
     setVerifying(true);
     setFailure(null);
@@ -166,12 +172,12 @@ function TrayEdit({ edit: e, here, ctx }: { edit: LayerEdit; here: boolean; ctx:
       setVerifying(false);
       await layer.refresh();
     }
-  };
-  const discard = (): Promise<unknown> => layer.change(() => call('live.layerDiscard', { projectId: project.id, id: e.id }));
-  const retire = async (): Promise<void> => {
+  });
+  const discard = (): Promise<unknown> => once(() => layer.discard(e.id));
+  const retire = (): Promise<unknown> => once(async () => {
     const done = await layer.change(() => call('live.layerMark', { projectId: project.id, id: e.id, state: 'retired' }));
     if (done) toast(`Retired ${name}: archived, and out of the tray.`);
-  };
+  });
   const noteDraft = {
     url: (() => { try { return new URL(e.page, ctx.siteUrl).toString(); } catch { return e.page; } })(),
     regions, pick: null,
@@ -221,7 +227,7 @@ function TrayEdit({ edit: e, here, ctx }: { edit: LayerEdit; here: boolean; ctx:
       ) : null}
       <div className="live-actions">
         {e.state === 'draft' ? (
-          <Button size="s" tone="primary" icon="check" disabled={readOnly || !live} onClick={real} aria-label={`Make ${name} real`}
+          <Button size="s" tone="primary" icon="check" disabled={readOnly || !live || !!busy} onClick={real} aria-label={`Make ${name} real`}
             title={e.change.type === 'text' ? 'Save the words in the site, through the site helper' : 'Goes to an agent as intent, on your click'}>Make it real</Button>
         ) : null}
         {e.state === 'implemented' ? (
@@ -231,8 +237,12 @@ function TrayEdit({ edit: e, here, ctx }: { edit: LayerEdit; here: boolean; ctx:
           </Button>
         ) : null}
         {e.state === 'verified' ? <Button size="s" tone="quiet" icon="check" onClick={retire} aria-label={`Retire ${name}`}>Retire</Button> : null}
-        {e.state === 'draft' || e.state === 'orphaned' ? <Button size="s" tone="quiet" icon="trash" onClick={discard} aria-label={`Discard ${name}`}>Discard</Button> : null}
+        {e.state === 'draft' || e.state === 'orphaned' ? (
+          <Button size="s" tone="quiet" icon="trash" onClick={discard} disabled={layer.writing} aria-label={`Discard ${name}`}>Discard</Button>
+        ) : null}
       </div>
+      {busy === 'real' ? <p className="faint small" role="status">Saving the words in the site…</p> : null}
+      {busy === 'template' ? <p className="faint small" role="status">Saving the words to the template…</p> : null}
       {verifying ? <p className="faint small" role="status">Rendering the page with and without the layer, twice for the noise floor, at each width…</p> : null}
     </li>
   );

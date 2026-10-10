@@ -249,3 +249,7 @@ export function templateOf(edit: LayerEdit, saved: readonly LiveEdit[] | null | 
   if (edit.state !== 'implemented' && edit.state !== 'verified') return null;
   return (saved ?? []).find((s) => !s.revertedAt && s.revertable && sameWords(edit, s)) ?? null;
 }
+
+/** A key that sends what was typed: Enter alone, pressed once, not one an input method is still composing with (it confirms a word there). */
+export const sendsTyped = (e: { key: string; shiftKey: boolean; metaKey: boolean; ctrlKey: boolean; altKey: boolean; repeat: boolean; isComposing: boolean }): boolean =>
+  e.key === 'Enter' && !e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey && !e.repeat && !e.isComposing;
