@@ -22,6 +22,7 @@
 //   only an undo the site gave can be asked for. Taking an item out (helper 4)
 //   is checked and posted the same way; only its placement or reference goes.
 import { WebContentsView, ipcMain, type BrowserWindow, type IpcMainInvokeEvent, type Session, type WebContents } from 'electron';
+import { refusalOf, type HelperAnswer } from './live-refusal.ts';
 import type { LiveBounds } from '../shared/bridge.ts';
 import { sameSite } from '../shared/live.ts';
 import { boxOf, paintItems, type LiveEditSaved, type LiveEdited, type LiveTraceAnswer } from '../shared/live-lens.ts';
@@ -196,7 +197,7 @@ export function wireLiveInspect(options: {
   };
 
   /** What a move, an insert or an undo came to, from the helper's answer. A 409 is the collection having changed meanwhile. */
-  const moved = (cur: LiveCurrent, r: { status: number; answer: Record<string, unknown> | null; error: string | null }, done = 'moved'): LiveMoveSaved => {
+  const moved = (cur: LiveCurrent, r: HelperAnswer, done = 'moved'): LiveMoveSaved => {
     // What the site's own AI did during it, as core reported it: said whether the save went through or not.
     const ai = parseSaveAi(r.answer?.ai);
     if (r.answer?.ok === true) {
@@ -205,19 +206,10 @@ export function wireLiveInspect(options: {
       if (!cur.webContents.isDestroyed()) cur.webContents.reloadIgnoringCache();
       return { ok: true, undo, revision: typeof r.answer.revision === 'string' ? r.answer.revision.slice(0, 100) : null, ai };
     }
-    const items = Array.isArray(r.answer?.items) ? (r.answer.items as unknown[]).filter((i): i is string => typeof i === 'string').slice(0, 4000) : null;
-    if (r.status === 409) {
-      // What the page shows is out of date: show the order as it is now.
-      if (!cur.webContents.isDestroyed()) cur.webContents.reloadIgnoringCache();
-      return { ok: false, conflict: true, items, error: `It changed on the site since this page was shown, so nothing was ${done}. The page now shows the order as it is.`, ai };
-    }
-    const said = typeof r.answer?.error === 'string' ? r.answer.error.slice(0, 500) : null;
-    return {
-      ok: false, conflict: false, items: null, ai,
-      error: said ?? (r.status === 0 ? `The site did not answer: ${r.error ?? 'no answer'}.`
-        : r.status === 403 ? 'The site refused: the user logged in in the live view may not change this.'
-          : `The site did not save it (it answered ${r.status}).`),
-    };
+    const refused = refusalOf(r, done);
+    // What the page shows is out of date: show the order as it is now.
+    if (refused.conflict && !cur.webContents.isDestroyed()) cur.webContents.reloadIgnoringCache();
+    return { ok: false, ...refused, ai };
   };
 
   /**
@@ -436,7 +428,7 @@ export function wireLiveInspect(options: {
     if (!h) return refused('There is no trace for this page yet. Reload it, then try again.');
     const insert = checkInsert(h.trace, raw);
     if (typeof insert === 'string') return refused(insert);
-    return moved(h.cur, await post(h.cur, h.origin, '/_wanigan/insert', { trace: h.trace.id, ...insert, ...noSiteAi(rawOptions) }));
+    return moved(h.cur, await post(h.cur, h.origin, '/_wanigan/insert', { trace: h.trace.id, ...insert, ...noSiteAi(rawOptions) }), 'added');
   });
 
   // Taking one item out of its collection: checked against the trace, then the helper's own remove route.
