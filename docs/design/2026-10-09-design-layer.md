@@ -232,9 +232,19 @@ shows only in the floor.
    real (and when a style or token is handed to an agent), rendered without
    the layer and, in the same load, with that one edit as designed on it; the
    result must also equal that page outside the touched elements. It carries
-   the edit's own reflow and reach, so text that reflows or a token used
-   everywhere is not a difference, and only what the native change did beyond
-   them is. With no page from before (an edit made real elsewhere), or another
+   the edit's own reflow and reach (text that reflows, a token used
+   everywhere), but not everything the save does: saving a title also changes
+   the breadcrumb that shows the same stored words, which may wrap and move
+   the rest of the page down. So this comparison is element by element: each
+   element outside the touched ones is matched by its place in the page's
+   structure, and its own words and computed values for the layer's
+   properties (not width and height, which are the layout's) are compared
+   wherever it now sits. Words that changed only from the edit's old words to
+   its new ones are the save's own reach, said in the verdict ("the same
+   words also changed in one other place"), never a failure; anything else
+   that changed is a difference named by its element. Pixels are compared
+   only inside elements that kept their place and size and hold nothing that
+   moved. With no page from before (an edit made real elsewhere), or another
    edit made real on the page since, the verdict says this could not run, and
    why.
 4. **States and edges.** Hover, focus and active forced on the touched
@@ -469,7 +479,10 @@ or the project.
    steps in order: computed styles and boxes of the touched elements (a token:
    its custom property as the root computes it, in both renders), pixels
    around them, then the rest of the page, against the design and against
-   each edit's page from before with that edit designed on it. Nothing passes
+   each edit's page from before with that edit designed on it, the latter
+   element by element (the page script's `layerPage` reads each element's
+   path from `<body>`, own words and computed values, in both) and in pixels
+   only where the layout kept still. Nothing passes
    for want of a comparison: an edit found but gone when the page was
    measured, a token whose value was not read, or an edit for a named
    breakpoint (phase 1 reads no breakpoints, so the design cannot show it)
@@ -480,7 +493,7 @@ or the project.
    `implemented` with the verdict, which says what differs: the words are in
    the site either way). Besides its differences, the verdict says (each
    optional, so a verdict kept before them still reads): what was masked and
-   why (`masked`), whether step 3 compared the page from before or why not
+   why (`masked`), where else the saved words changed (`reach`), whether step 3 compared the page from before or why not
    (`before`), whether every render was held still (`held`), and how far
    down a page taller than 6,000 px was compared (`cut`, a statement, never
    a difference). `verified` here is phase 1's: steps 1 to 3 passed on this

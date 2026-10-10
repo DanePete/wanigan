@@ -52,7 +52,11 @@
 //   Step 3 compares the result with the design rendered now, and with each edit's page from before, with that edit
 //   as designed on it: a change the native implementation made beyond the touched elements is in both of today's
 //   renders, and only that page shows it was not there (seen in Electron on a made-up page: a rule that also turned
-//   every paragraph blue passed against the design alone). Where there is no page from before (made real elsewhere),
+//   every paragraph blue passed against the design alone). Against that page it is element by element, since the save
+//   may rightly change the layout there (the breadcrumb showing the same title wraps and moves the page down, seen on
+//   both demos): each element outside the touched ones matched by its path, its words and computed values compared
+//   wherever it sits, the edit's old words become its new ones elsewhere said as the save's reach (`reach`), anything
+//   else named by its element, and pixels only inside what kept its place. Where there is no page from before (made real elsewhere),
 //   or another edit was made real on the page since, the verdict says step 3 could not run against it, and why.
 //   Pictures are kept in the data folder under live-layer/<project>/<edit>/, and the core is told: verified, or still
 //   implemented with the failed verdict (its words are in the site; the verdict says what differs).
@@ -67,9 +71,9 @@ import {
   type LayerTarget, type LayerVerdict,
 } from '../shared/design-layer.ts';
 import {
-  MAX_DIFFERENCES, VERIFY_WIDTHS, against, applyMask, compareElements, comparePixels, compareTokens, diffBitmaps, diffPicture, heldAlike, judge, maskedOf,
-  masksAmong, noiseFloor, traceMasks, unionDiff, varyWhy, verdictNoise, verifyWidths, widestNoise, zonesOf,
-  type Bitmap, type ElementSnap, type PixelArea, type PixelDiff, type RenderMask, type Steady, type WidthFindings, type Zone,
+  MAX_DIFFERENCES, OUTSIDE_PROPERTIES, VERIFY_WIDTHS, against, applyMask, compareElements, compareOutside, comparePixels, compareTokens, diffBitmaps, diffPicture,
+  heldAlike, judge, maskedOf, masksAmong, noiseFloor, onlyWhere, reachOf, traceMasks, unionDiff, varyWhy, verdictNoise, verifyWidths, widestNoise, zonesOf,
+  type Bitmap, type ElementSnap, type PageSnap, type PixelArea, type PixelDiff, type RenderMask, type Steady, type WidthFindings, type Zone,
 } from '../shared/layer-verify.ts';
 import type { LiveEditSaved, LiveTraceAnswer } from '../shared/live-lens.ts';
 import { TRACE_ID, identityKey, kindKey, type EditTarget, type LiveTrace, type PartIdentity, type TracePart } from '../shared/live-trace.ts';
@@ -485,6 +489,8 @@ export interface LayerRenderRequest {
   /** The edits verified: tagged in both renders, shown (their stylesheet and words) only in the design. */
   edits: LayerEdit[];
   design: boolean;
+  /** Read the whole page element by element too (layerPage): what step 3 compares with a page from before. */
+  whole?: boolean;
   /**
    * The hold sent with the page's request (X-Wanigan-Steady): the time the site's helper renders it as at, and the seed
    * of its random orders, so every render a verdict compares shows the same "3 days ago" and the same order. Only the
@@ -511,6 +517,38 @@ export interface LayerRendered {
   masks?: RenderMask[];
   /** The hold, as the site's helper confirmed it held this render; null or absent when it did not. */
   steady?: Steady | null;
+  /** The whole page element by element, when asked (`whole`) and the page script answered. */
+  page?: PageSnap | null;
+}
+
+/** A page read whole for step 3 holds at most this many elements; past it, what was read is compared. */
+const PAGE_MAX = 8_000;
+
+/** A page read whole, in the shape the page script answers it: how it is kept with a page from before, and read back through pageOf. */
+const pageRaw = (p: PageSnap): unknown => ({
+  keys: p.keys, table: p.table, cut: p.cut,
+  elements: p.elements.map((e) => ({ p: e.path, n: e.name, b: [e.box.x, e.box.y, e.box.width, e.box.height], t: e.text, v: e.values, e: e.touched })),
+});
+
+/** What the page script's layerPage answered, checked; null when it is not one. */
+export function pageOf(raw: unknown): PageSnap | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const r = raw as Record<string, unknown>;
+  if (!Array.isArray(r.keys) || !Array.isArray(r.table) || !Array.isArray(r.elements)) return null;
+  const keys = (r.keys as unknown[]).slice(0, 60).filter((k): k is string => typeof k === 'string' && /^[a-z-]{1,40}$/.test(k));
+  const table = (r.table as unknown[]).slice(0, 200_000).map((v) => (typeof v === 'string' ? v.slice(0, 500) : ''));
+  const num = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) && Math.abs(v) <= 1_000_000 ? v : 0);
+  const elements: PageSnap['elements'] = [];
+  for (const raw2 of (r.elements as unknown[]).slice(0, 20_000)) {
+    const e = raw2 && typeof raw2 === 'object' ? raw2 as Record<string, unknown> : null;
+    if (!e || typeof e.p !== 'string' || e.p.length > 4_000 || !e.p.startsWith('body') || !Array.isArray(e.b) || !Array.isArray(e.v)) continue;
+    const [x, y, width, height] = (e.b as unknown[]).map(num);
+    elements.push({
+      path: e.p, name: typeof e.n === 'string' ? e.n.slice(0, 200) : 'element', box: { x: x ?? 0, y: y ?? 0, width: width ?? 0, height: height ?? 0 },
+      text: typeof e.t === 'string' ? e.t.slice(0, 2_000) : null, values: (e.v as unknown[]).slice(0, keys.length).map((i) => (Number.isInteger(i) ? i as number : -1)), touched: e.e === true,
+    });
+  }
+  return { keys, table, elements, cut: r.cut === true };
 }
 
 export type LayerRender = (r: LayerRenderRequest) => Promise<LayerRendered | { error: string }>;
@@ -654,8 +692,10 @@ function onPage<T>(deps: RenderDeps, r: LayerRenderRequest, take: (page: HiddenP
       await page.read(script, null, PAGE_WORLD);
       const run: Run = (code, fallback) => page.read(code, fallback, PAGE_WORLD);
       const res = await resolveLayer(run, trace, r.edits, r.path);
-      const picture = async (): Promise<LayerRendered | { error: string }> => {
+      const picture = async (whole: boolean): Promise<LayerRendered | { error: string }> => {
         const { height, cut, full } = await page.grow(VERIFY_MAX_HEIGHT);
+        // The whole page element by element, for step 3: read before the picture, on the same layout.
+        const snapshot = whole ? pageOf(await run<unknown>(call('layerPage', OUTSIDE_PROPERTIES, PAGE_MAX), null)) : undefined;
         const elements = snapsOf(await run<unknown>(call('layerSnap', r.edits.map((e) => e.id), LAYER_PROPERTIES), []));
         // Each token's custom property as the root computes it, in this render: what step 1 compares for a token.
         const names = [...new Set(r.edits.flatMap((e) => (e.change.type === 'token' && TOKEN_NAME.test(e.change.name) ? [e.change.name] : [])))];
@@ -667,7 +707,7 @@ function onPage<T>(deps: RenderDeps, r: LayerRenderRequest, take: (page: HiddenP
         const masks = masksOf(trace, steady, areasOf(await run<unknown>(call('layerAreas', ids), null)));
         const png = await page.shoot(height, true);
         if (!png) return { error: 'The page could not be pictured.' };
-        return { png, bitmap: await deps.decode(png), elements, found: res.resolved, tokens, cut: cut ? { full } : null, masks, steady };
+        return { png, bitmap: await deps.decode(png), elements, found: res.resolved, tokens, cut: cut ? { full } : null, masks, steady, ...(whole ? { page: snapshot ?? null } : {}) };
       };
       const show = async (on: boolean): Promise<void> => {
         if (on) {
@@ -676,21 +716,21 @@ function onPage<T>(deps: RenderDeps, r: LayerRenderRequest, take: (page: HiddenP
         }
         await run(call('layerSet', { tags: res.tags, texts: on ? res.texts : [], on, gate: on ? 'g1' : null }), 0);
       };
-      return take(page, async (on, after) => {
+      return take(page, async (on, after, whole) => {
         await show(on);
         if (after) await page.still(); else await page.freeze();
-        return picture();
+        return picture(!!whole && !!r.whole);
       });
     },
   );
 }
 
-/** Put the layer on (or not), let the page settle (`after`: a frozen page changed once more), and picture it. */
-type Shot = (on: boolean, after?: boolean) => Promise<LayerRendered | { error: string }>;
+/** Put the layer on (or not), let the page settle (`after`: a frozen page changed once more), and picture it, the page read whole too when asked (`whole`). */
+type Shot = (on: boolean, after?: boolean, whole?: boolean) => Promise<LayerRendered | { error: string }>;
 
 /** A render for a verification: the page with the design's layer on it, or without it. */
 function renderInWindow(deps: RenderDeps): LayerRender {
-  return (r) => onPage<LayerRendered>(deps, r, async (_page, shot) => shot(r.design));
+  return (r) => onPage<LayerRendered>(deps, r, async (_page, shot) => shot(r.design, false, true));
 }
 
 /**
@@ -703,7 +743,8 @@ function renderBeforeInWindow(deps: RenderDeps): LayerBeforeRender {
   return (r) => onPage<LayerBeforeRendered>(deps, r, async (_page, shot) => {
     const page = await shot(false);
     if ('error' in page) return page;
-    const design = await shot(true, true);
+    // The page with the edit designed on it is what step 3 compares, element by element: read whole.
+    const design = await shot(true, true, true);
     if ('error' in design) return design;
     return { page, design };
   });
@@ -778,7 +819,7 @@ export interface BeforeKept {
   /** The edits already in the site then that reach its page: an edit made real since is not in that page. */
   inSite: string[];
   /** Per width rendered: the touched elements and masks of the page with the edit designed on it, the helper's hold as confirmed, how tall a page that went on was. */
-  widths: Record<string, { found: boolean; elements: ElementSnap[]; masks: RenderMask[]; steady: Steady | null; cut: number | null }>;
+  widths: Record<string, { found: boolean; elements: ElementSnap[]; masks: RenderMask[]; steady: Steady | null; cut: number | null; whole: boolean }>;
   /** Per width that could not be rendered: why. */
   failed: Record<string, string>;
 }
@@ -811,7 +852,7 @@ export function beforeKept(raw: unknown): BeforeKept | null {
     const st = x.steady && typeof x.steady === 'object' ? x.steady as Record<string, unknown> : null;
     const steady = st && st.t === hold.t && st.s === hold.s && Array.isArray(st.views)
       ? { t: hold.t as number, s: hold.s as number, views: (st.views as unknown[]).filter((y): y is string => typeof y === 'string').slice(0, 100) } : null;
-    widths[w] = { found: x.found === true, elements: snapsOf(x.elements), masks, steady, cut: Number.isInteger(x.cut) ? x.cut as number : null };
+    widths[w] = { found: x.found === true, elements: snapsOf(x.elements), masks, steady, cut: Number.isInteger(x.cut) ? x.cut as number : null, whole: x.whole === true };
   }
   const failed: Record<string, string> = {};
   for (const [w, why] of Object.entries(m.failed && typeof m.failed === 'object' ? m.failed as Record<string, unknown> : {}).slice(0, 8)) if (/^\d{3,4}$/.test(w) && typeof why === 'string') failed[w] = why.slice(0, 500);
@@ -843,8 +884,11 @@ function whyBefore(edit: LayerEdit, kept: BeforeKept | null, widths: readonly nu
     const names = since.slice(0, 3).map((x) => `“${x.label}”`).join(', ');
     return { ran: false, why: `${names} ${since.length === 1 ? 'was' : 'were'} made real on its page after its page from before was kept, so that page does not show only this edit’s change. Verify each edit before making the next one on a page real, and step 3 compares it with the page before.` };
   }
-  const usable = widths.filter((w) => kept.widths[String(w)]?.found);
+  const usable = widths.filter((w) => kept.widths[String(w)]?.found && kept.widths[String(w)]?.whole);
   if (usable.length) return { ran: true, at: kept.at, widths: usable };
+  if (widths.some((w) => kept.widths[String(w)]?.found)) {
+    return { ran: false, why: 'Its page from before was kept by an earlier Wanigan, without the page element by element, which step 3 now compares. The rest of the page was compared with the design only.' };
+  }
   const failed = Object.values(kept.failed)[0];
   if (failed) return { ran: false, why: `Its page from before could not be rendered when it was made real: ${failed}` };
   if (Object.values(kept.widths).some((x) => !x.found)) return { ran: false, why: 'Its element was not on its page from before, so that page could not show it as designed.' };
@@ -1057,13 +1101,15 @@ export function wireLiveLayer(options: LiveLayerOptions): { hooks: LiveViewHooks
     mkdirSync(dir, { recursive: true, mode: 0o700 });
     for (const width of VERIFY_WIDTHS) {
       const got = await deadline<LayerBeforeRendered | { error: string }>(
-        renderBefore({ projectId, partition, url, base: site.url, token: site.token, width, path: edit.page, edits: [{ ...edit, state: 'draft' }], design: true, hold }), limit,
+        renderBefore({ projectId, partition, url, base: site.url, token: site.token, width, path: edit.page, edits: [{ ...edit, state: 'draft' }], design: true, hold, whole: true }), limit,
         () => ({ error: `The page did not render at ${width} px in time.` }),
       ).catch((error: unknown) => ({ error: error instanceof Error ? error.message : String(error) }));
       if ('error' in got) { kept.failed[String(width)] = got.error.slice(0, 500); continue; }
       writeFileSync(join(dir, `${width}-page.png`), got.page.png, { mode: 0o600 });
       writeFileSync(join(dir, `${width}-design.png`), got.design.png, { mode: 0o600 });
+      if (got.design.page) writeFileSync(join(dir, `${width}-elements.json`), JSON.stringify(pageRaw(got.design.page)), { mode: 0o600 });
       kept.widths[String(width)] = {
+        whole: !!got.design.page,
         found: got.design.found.includes(edit.id) || edit.change.type === 'token', elements: got.design.elements,
         masks: [...(got.page.masks ?? []), ...(got.design.masks ?? [])], steady: got.design.steady ?? null, cut: got.design.cut?.full ?? null,
       };
@@ -1197,8 +1243,8 @@ export function wireLiveLayer(options: LiveLayerOptions): { hooks: LiveViewHooks
     // Each render has an end: one that never answers fails this verification, saying so, and the queue moves on (the
     // hidden window has deadlines of its own, and closes itself).
     const limit = options.renderMs ?? RENDER_MS + 60_000;
-    const ask = (width: number, design: boolean) => deadline<LayerRendered | { error: string }>(
-      render({ projectId, partition, url, base: site.url as string, token: site.token as string, width, path: page, edits, design, hold }), limit,
+    const ask = (width: number, design: boolean, whole = false) => deadline<LayerRendered | { error: string }>(
+      render({ projectId, partition, url, base: site.url as string, token: site.token as string, width, path: page, edits, design, hold, ...(whole ? { whole } : {}) }), limit,
       () => ({ error: `The page did not render at ${width} px within ${limit >= 1_000 ? `${Math.round(limit / 1_000)} seconds` : `${limit} ms`}, so the verification stopped there.` }),
     );
 
@@ -1207,11 +1253,14 @@ export function wireLiveLayer(options: LiveLayerOptions): { hooks: LiveViewHooks
     /** How far down a page that went on was compared: said in the verdict whatever it decides. */
     const cut: LayerCut[] = [];
     /** What was left out at each width, for the verdict. */
-    const left: { width: number; masks: RenderMask[]; keep: LayerRect[] }[] = [];
+    const leftOut: { width: number; masks: RenderMask[]; keep: LayerRect[] }[] = [];
+    /** Where the saved words also changed, per edit and width: the save's reach, said in the verdict. */
+    const reached: { edit: string; reach: { path: string; name: string }[] }[] = [];
     /** Whether every render compared was held as asked. */
     let allHeld = true;
     for (const width of widths) {
-      const first = await ask(width, false);
+      // The first result is read whole too where step 3 compares it with a page from before.
+      const first = await ask(width, false, edits.some((e) => { const c = checks.get(e.id); return !!c?.ran && c.widths.includes(width); }));
       if ('error' in first) throw new Error(first.error);
       const second = await ask(width, false);
       if ('error' in second) throw new Error(second.error);
@@ -1249,9 +1298,13 @@ export function wireLiveLayer(options: LiveLayerOptions): { hooks: LiveViewHooks
       const out = masks.flatMap((m) => m.rects);
       const noise = widestNoise([noiseFloor(first.bitmap, second.bitmap, out, keep), noiseFloor(design.bitmap, again.bitmap, out, keep)]);
       const d = applyMask(diffBitmaps(design.bitmap, first.bitmap), out, keep);
-      // Step 3 against each edit's page from before, with that edit as designed on it: outside every touched element
-      // (in it and in today's renders), what the result shows that it did not is a change that reached further.
+      // Step 3 against each edit's page from before, with that edit as designed on it, outside every touched element (in
+      // it and in today's renders). The two may be laid out differently for good reason (the save changed the same
+      // words in a breadcrumb, which wraps and moves everything below it), so it is element by element: each element
+      // matched by its place in the structure, its words and computed values compared wherever it sits; the edit's
+      // old words become its new ones elsewhere is the save's reach, said; and pixels only inside what kept still.
       const before: PixelArea[] = [];
+      const outside: WidthFindings['outside'] = [];
       let picture = d;
       for (const e of edits) {
         const k = kept.get(e.id);
@@ -1259,21 +1312,38 @@ export function wireLiveLayer(options: LiveLayerOptions): { hooks: LiveViewHooks
         const at = k?.widths[String(width)];
         if (!k || !check?.ran || !check.widths.includes(width) || !at) continue;
         let then: Bitmap;
-        try { then = await decode(readFileSync(join(editDir(projectId, e.id), 'before', `${width}-design.png`))); } catch {
+        let thenPage: PageSnap | null;
+        try {
+          then = await decode(readFileSync(join(editDir(projectId, e.id), 'before', `${width}-design.png`)));
+          thenPage = pageOf(JSON.parse(readFileSync(join(editDir(projectId, e.id), 'before', `${width}-elements.json`), 'utf8')));
+        } catch {
           checks.set(e.id, { ran: false, why: 'Its page from before could not be read back from Wanigan’s data folder.' });
           continue;
         }
+        if (!thenPage || !first.page) {
+          checks.set(e.id, { ran: false, why: `${!thenPage ? 'Its page from before' : 'Today’s page'} could not be read element by element at ${width} px, so step 3 compared the design only.` });
+          continue;
+        }
         const was = { masks: at.masks, steady: at.steady };
+        const alike = [second, design, again, was].every((x) => heldAlike(first.steady, x.steady));
+        const left = (masks: readonly RenderMask[] | undefined): LayerRect[] => (masks ?? []).filter((m) => !(alike && m.held)).flatMap((m) => m.rects);
         const zonesThen = zonesOf([...design.elements, ...at.elements], first.elements);
         const keepThen = zonesThen.map((z) => z.rect);
         const masksThen = masksAmong([first, second, design, again, was]);
-        const dThen = applyMask(diffBitmaps(then, first.bitmap), masksThen.flatMap((m) => m.rects), keepThen);
+        const words = e.change.type === 'text' && typeof e.before.text === 'string' ? { was: e.before.text, now: e.change.value } : null;
+        const found3 = compareOutside({
+          before: thenPage, result: first.page, width, against: { edit: e.id, at: k.at }, words,
+          masked: { before: left(was.masks), result: [first, second, design, again].flatMap((x) => left(x.masks)) },
+        });
+        outside.push(...found3.differences);
+        reached.push({ edit: e.id, reach: found3.reach });
+        const dThen = onlyWhere(diffBitmaps(then, first.bitmap), found3.include, [...found3.exclude, ...masksThen.flatMap((m) => m.rects)]);
         before.push(against(comparePixels(dThen, zonesThen, width).rest, e.id, k.at));
         picture = unionDiff(picture, dThen);
-        left.push({ width, masks: masksThen, keep: keepThen });
+        leftOut.push({ width, masks: masksThen, keep: keepThen });
       }
-      found.push({ width, noise, elements, pixels: comparePixels(d, zones, width), before });
-      left.push({ width, masks, keep });
+      found.push({ width, noise, elements, pixels: comparePixels(d, zones, width), before, outside });
+      leftOut.push({ width, masks, keep });
       const full = Math.max(design.cut?.full ?? 0, first.cut?.full ?? 0);
       if (full) cut.push({ width, to: VERIFY_MAX_HEIGHT, full: Math.round(full) });
       shots.push({ width, design: design.png, result: first.png, resultBitmap: first.bitmap, d: picture });
@@ -1287,7 +1357,7 @@ export function wireLiveLayer(options: LiveLayerOptions): { hooks: LiveViewHooks
     const base: Omit<LayerVerdict, 'pictures'> = {
       at: clock(), ok: outcome.ok, failed: outcome.failed, widths, noise: floor,
       differences: outcome.differences.slice(0, MAX_DIFFERENCES),
-      masked: maskedOf(left), held: allHeld ? { at: hold.t } : null, cut,
+      masked: maskedOf(leftOut), held: allHeld ? { at: hold.t } : null, cut, reach: reachOf(reached),
     };
     // The pictures, for each edit's tray row: its own folder, written afresh (its page from before is kept).
     const verdicts = new Map<string, LayerVerdict>();

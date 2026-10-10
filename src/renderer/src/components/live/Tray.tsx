@@ -25,8 +25,8 @@ import { ancestors } from '@shared/live-tree';
 import type { ProjectSummary } from '@shared/model';
 import { call } from '../../lib/api';
 import {
-  STATE_DETAIL, STATE_WORDS, beforeWords, byPage, changeLines, cutWords, differenceWords, failedWords, heldWords, isFragile, maskWords, noiseWords,
-  orphanWhy, reachWords, redoLabel, undoLabel, verdictHeadline,
+  STATE_DETAIL, STATE_WORDS, alsoChangedWords, beforeWords, byPage, changeLines, cutWords, differenceWords, failedWords, heldWords, isFragile, maskWords,
+  noiseWords, orphanWhy, reachWords, redoLabel, undoLabel, verdictHeadline,
 } from '../../lib/live-layer';
 import { liveBridge } from '../../lib/live';
 import { Button, Dialog, IconButton, useToast } from '../ui';
@@ -265,12 +265,13 @@ function TrayEdit({ edit: e, here, ctx }: { edit: LayerEdit; here: boolean; ctx:
 
 /**
  * What the last verification said: the headline, the step that failed, each difference; then what it says whatever
- * it decided (whether step 3 compared the page as it was before, how far down a long page was compared, what was
- * held still), what was left out of the pixel steps and why, the noise floor, and the pictures.
+ * it decided (whether step 3 compared the page as it was before, where else the saved words changed, how far down a
+ * long page was compared, what was held still), what was left out of the pixel steps and why, the noise floor, and
+ * the pictures.
  */
 function Verdict({ verdict: v }: { verdict: LayerVerdict }) {
   const failed = failedWords(v);
-  const said = [beforeWords(v), ...(v.cut ?? []).map(cutWords), heldWords(v)].filter((x): x is string => !!x);
+  const said = [beforeWords(v), ...(v.reach ?? []).map(alsoChangedWords), ...(v.cut ?? []).map(cutWords), heldWords(v)].filter((x): x is string => !!x);
   const masked = v.masked ?? [];
   return (
     <div className={`live-tray-verdict${v.ok ? ' ok' : ' failed'}`}>

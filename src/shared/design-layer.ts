@@ -361,7 +361,21 @@ export type LayerDifference =
    * rendered now, or, with `against`, against the page as it was kept just before that edit was made real (with the
    * edit as designed on it), at `at` (milliseconds).
    */
-  | { kind: 'leak'; width: number; rect: LayerRect; pixels: number; maxDiff: number; against?: { edit: string; at: number } };
+  | { kind: 'leak'; width: number; rect: LayerRect; pixels: number; maxDiff: number; against?: { edit: string; at: number } }
+  /**
+   * An element away from every touched element that the site renders otherwise than the page as it was kept just
+   * before that edit was made real, with the edit as designed on it (step 3): matched by its place in the page's
+   * structure, so a layout that moved does not count. `property` is `text` (its own words), one of the layer's
+   * properties (its computed value), or `element` (on one page and not the other).
+   */
+  | { kind: 'outside'; width: number; element: string; property: string; before: string; result: string; against: { edit: string; at: number } };
+
+/**
+ * The save's own reach (step 3): elements away from the edited one whose words changed from exactly the edit's old
+ * words to its new ones, because the site shows that one stored value there too (a breadcrumb, a teaser, a menu
+ * link). Said, never a difference: it is what saving the words does.
+ */
+export interface LayerReach { edit: string; count: number; places: string[] }
 
 /**
  * A part of the page left out of the pixel steps because the site says it changes between renders: a Drupal part whose
@@ -433,4 +447,6 @@ export interface LayerVerdict {
   held?: { at: number } | null;
   /** Widths at which the page went on below where it was compared: a statement, passing or not, never a difference. */
   cut?: LayerCut[];
+  /** Where else the saved words show on the page, per edit (LayerReach): a statement, never a difference. */
+  reach?: LayerReach[];
 }

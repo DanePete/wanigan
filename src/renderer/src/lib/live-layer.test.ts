@@ -6,7 +6,7 @@ import { kindWords } from '../../../main/live-layer.ts';
 import type { LayerApplied, LayerEdit, LayerSnapshot, LayerVerdict } from '../../../shared/design-layer.ts';
 import { kindKey, type LiveTrace, type PartIdentity, type TracePart } from '../../../shared/live-trace.ts';
 import {
-  beforeWords, byPage, changeLines, cutWords, differenceWords, draftsOf, failedWords, heldWords, isFragile, kindName, madeOn, maskWords, noiseWords, orphanWhy,
+  alsoChangedWords, beforeWords, byPage, changeLines, cutWords, differenceWords, draftsOf, failedWords, heldWords, isFragile, kindName, madeOn, maskWords, noiseWords, orphanWhy,
   pagePath, reachWords, redoLabel, undoLabel, verdictHeadline,
 } from './live-layer.ts';
 
@@ -134,4 +134,22 @@ test('what a verification says whatever it decided: the page before compared or 
   assert.deepEqual([beforeWords(old), heldWords(old), noiseWords(old), verdictHeadline(old)], [null, null, 'Noise floor: up to 0 of 255 in 0 pixels, from rendering the site twice.', 'Verified at 390 px: the site renders it as designed.']);
   assert.equal(differenceWords({ kind: 'leak', width: 390, rect: { x: 0, y: 150, width: 64, height: 20 }, pixels: 1280, maxDiff: 90, against: { edit: 'a', at: 1 } }),
     'At 390 px, 1,280 pixels away from every edited element differ from the page as it was before it was made real (with it as designed on it), by up to 90 of 255, in a 64 × 20 box at 0, 150: the change reached further than it should.');
+});
+
+test('step 3 element by element, in words: what changed outside the edited elements, and where else the saved words show', () => {
+  const against = { edit: 'a', at: 1 };
+  assert.deepEqual([
+    differenceWords({ kind: 'outside', width: 390, element: 'p.lead', property: 'color', before: 'rgb(0, 0, 0)', result: 'rgb(0, 0, 255)', against }),
+    differenceWords({ kind: 'outside', width: 390, element: 'footer.site', property: 'text', before: '© Acme', result: '© Northwind', against }),
+    differenceWords({ kind: 'outside', width: 1440, element: 'div.promo', property: 'element', before: 'not on the page', result: 'on the page', against }),
+    differenceWords({ kind: 'outside', width: 1440, element: 'ul.tags', property: 'element', before: 'on the page', result: 'not on the page', against }),
+  ], [
+    'At 390 px, p.lead, away from the edited elements: color is rgb(0, 0, 255) in the site, rgb(0, 0, 0) on the page as it was before it was made real.',
+    'At 390 px, footer.site, away from the edited elements, says “© Northwind” in the site, “© Acme” on the page as it was before it was made real.',
+    'At 1440 px, div.promo, away from the edited elements, is in the site but was not on the page as it was before it was made real.',
+    'At 1440 px, ul.tags, away from the edited elements, is not in the site but was on the page as it was before it was made real.',
+  ]);
+  assert.equal(alsoChangedWords({ edit: 'a', count: 1, places: ['span.crumb'] }), 'The same words also changed in one other place on the page, where the site shows the same stored value: span.crumb.');
+  assert.equal(alsoChangedWords({ edit: 'a', count: 12, places: ['span.crumb', 'a.teaser', 'a.menu-link'] }),
+    'The same words also changed in 12 other places on the page, where the site shows the same stored value: span.crumb, a.teaser and a.menu-link and 9 more.');
 });

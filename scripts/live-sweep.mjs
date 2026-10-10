@@ -672,7 +672,8 @@ try {
       const passing = (await rowOf('Open every day').innerText()).replace(/\s+/g, ' ');
       for (const w of ['The rest of the page was also compared with the page as it was just before this was made real, at 390 and 1440 px.',
         'The site’s helper held relative dates and random orders still for every render', 'At 1440 px the page is 9,412 px tall: compared down to 6,000 px',
-        'Who’s online (block): made for each user, at 390 and 1440 px.', 'Noise floor: up to 3 of 255 in 12 pixels, from rendering the site twice, over what was not left out.']) {
+        'Who’s online (block): made for each user, at 390 and 1440 px.', 'Noise floor: up to 3 of 255 in 12 pixels, from rendering the site twice, over what was not left out.',
+        'The same words also changed in one other place on the page, where the site shows the same stored value: span.breadcrumb__current.']) {
         if (!passing.includes(w)) fail(t(`layer: a passing verdict does not say "${w}"`));
       }
       if (await rowOf('Open every day').locator('.live-tray-differences[aria-label="What differs"]').count()) fail(t('layer: a verdict that passed lists a difference'));
@@ -1237,6 +1238,32 @@ try {
     { reason: 'relative-date', held: 'time', name: 'core/post-date', box: { x: 0, y: 240, width: 900, height: 20 } },
   ])) fail(`page script: the blocks marked as changing between renders were ${vary}`);
   await areas.close();
+
+  // Step 3 against the page as it was reads the whole page element by element: each by its path from <body> (however
+  // the layout moves), its own words (not its children's), its computed values as indexes into one table, whether it
+  // is an edited element or inside one; never the page script's own overlay or what is never shown.
+  const whole = await browser.newPage({ viewport: { width: 900, height: 700 } });
+  await whole.setContent(`<!doctype html><html><body style="margin:0;font:14px sans-serif">
+<nav style="height:20px"><a style="color:rgb(0, 0, 255)">Home</a> / <span>Paddling 101</span></nav>
+<script>void 0</script>
+<h1 data-wl-edit="e1" style="margin:0;height:30px">Paddling <em>101</em></h1>
+<p style="margin:0;height:40px">Learn the strokes.</p>
+</body></html>`);
+  await whole.addScriptTag({ content: script });
+  const read = await whole.evaluate(() => window.__wl.layerPage(['color', 'margin-top'], 100));
+  const shape = (read?.elements ?? []).map((e) => [e.p, e.t, e.e, read.table[e.v[0]]]);
+  if (JSON.stringify(shape) !== JSON.stringify([
+    ['body > nav:nth-of-type(1)', '/', false, 'rgb(0, 0, 0)'],
+    ['body > nav:nth-of-type(1) > a:nth-of-type(1)', 'Home', false, 'rgb(0, 0, 255)'],
+    ['body > nav:nth-of-type(1) > span:nth-of-type(1)', 'Paddling 101', false, 'rgb(0, 0, 0)'],
+    ['body > h1:nth-of-type(1)', 'Paddling', true, 'rgb(0, 0, 0)'],
+    ['body > h1:nth-of-type(1) > em:nth-of-type(1)', '101', true, 'rgb(0, 0, 0)'],
+    ['body > p:nth-of-type(1)', 'Learn the strokes.', false, 'rgb(0, 0, 0)'],
+  ]) || JSON.stringify(read?.keys) !== '["color","margin-top"]' || read?.cut !== false) fail(`page script: the page read whole was ${JSON.stringify({ keys: read?.keys, shape, cut: read?.cut })}`);
+  const p1 = read?.elements?.find((e) => e.p === 'body > p:nth-of-type(1)');
+  if (JSON.stringify(p1?.b) !== JSON.stringify([0, 50, 900, 40])) fail(`page script: an element's box when read whole was ${JSON.stringify(p1?.b)}`);
+  if ((await whole.evaluate(() => window.__wl.layerPage(['color'], 2)))?.cut !== true) fail('page script: a page past the limit was not said to be cut');
+  await whole.close();
 } finally {
   await browser.close();
   gateway.kill('SIGTERM');

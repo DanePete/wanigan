@@ -8,7 +8,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { compileLayer, layerTextHash, type LayerApplied, type LayerEdit, type LayerImplemented, type LayerPickTarget, type LayerVerdict } from '../shared/design-layer.ts';
-import { parseVerdict, type Bitmap, type ElementSnap } from '../shared/layer-verify.ts';
+import { parseVerdict, type Bitmap, type ElementSnap, type PageSnap } from '../shared/layer-verify.ts';
 import type { LiveEditSaved } from '../shared/live-lens.ts';
 import type { EditTarget, LiveTrace, PartIdentity, TracePart } from '../shared/live-trace.ts';
 import { folderOf } from './live-capture.ts';
@@ -1002,6 +1002,23 @@ function pictures() {
 const HEADING = { x: 20, y: 40, width: 40, height: 24 };
 const PARAGRAPH = { x: 0, y: 150, width: 64, height: 20 };
 
+/** One element of a made-up page read whole: its path, name, box, own words, colour, and whether it is edited. */
+interface Whole { path: string; name: string; box: [number, number, number, number]; text?: string | null; color?: string; touched?: boolean }
+/** A made-up page read whole, as the page script's layerPage answers it once checked. */
+function whole(els: readonly Whole[]): PageSnap {
+  const table: string[] = [];
+  const at = (v: string): number => { let i = table.indexOf(v); if (i < 0) { i = table.length; table.push(v); } return i; };
+  return {
+    keys: ['color'], table, cut: false,
+    elements: els.map((e) => ({ path: e.path, name: e.name, box: { x: e.box[0], y: e.box[1], width: e.box[2], height: e.box[3] }, text: e.text ?? null, values: [at(e.color ?? 'rgb(0, 0, 0)')], touched: !!e.touched })),
+  };
+}
+/** The retitled page read whole: the heading (edited) and the paragraph, where they are in every render. */
+const retitledPage = (e: LayerEdit): PageSnap => whole([
+  { path: 'body > h2:nth-of-type(1)', name: 'h2.card__title', box: [20, 40, 100, 24], text: e.change.type === 'text' ? e.change.value : null, touched: true },
+  { path: 'body > p:nth-of-type(1)', name: 'p.lead', box: [PARAGRAPH.x, PARAGRAPH.y, PARAGRAPH.width, PARAGRAPH.height], text: 'Learn the strokes' },
+]);
+
 /**
  * A title made real through the helper: the page from before shows the heading as the layer designed it and nothing
  * else changed; today's design and result show the native change, which `leak` says also reached the paragraph.
@@ -1015,9 +1032,9 @@ function retitled(leak: boolean) {
     edits: [e], decode: pics.decode,
     renderBefore: async () => ({
       page: { png: pics.png(blank(64, 200)), bitmap: blank(64, 200), elements: [heading(e.id, 'rgb(0, 0, 0)')], found: [e.id] },
-      design: { png: pics.png(designed(blank(64, 200))), bitmap: designed(blank(64, 200)), elements: [heading(e.id, 'rgb(18, 52, 86)')], found: [e.id] },
+      design: { png: pics.png(designed(blank(64, 200))), bitmap: designed(blank(64, 200)), elements: [heading(e.id, 'rgb(18, 52, 86)')], found: [e.id], page: retitledPage(e) },
     }),
-    render: async (r) => ({ png: pics.png(now(blank(64, 200))), bitmap: now(blank(64, 200)), elements: [heading(e.id, 'rgb(18, 52, 86)')], found: [e.id], steady: { t: r.hold!.t, s: r.hold!.s, views: [] } }),
+    render: async (r) => ({ png: pics.png(now(blank(64, 200))), bitmap: now(blank(64, 200)), elements: [heading(e.id, 'rgb(18, 52, 86)')], found: [e.id], steady: { t: r.hold!.t, s: r.hold!.s, views: [] }, ...(r.whole ? { page: retitledPage(e) } : {}) }),
   });
   w.page.parts = { p6: { '': [words('Pagayer 101', 'node:12:title:string:fr')] } };
   return { w, e };
@@ -1096,6 +1113,74 @@ test('step 3 compares the result with the page as it was: a native change that r
   } finally { ok.w.done(); }
 });
 
+/**
+ * A made-up page whose title was retyped and saved: the breadcrumb shows the same stored title, so the save changed it
+ * there too, and at a phone's width the longer breadcrumb wraps onto a second line, moving everything below it down.
+ * `leak` adds what a native change beyond the touched elements would do: the lead paragraph turned blue, and the
+ * footer's words changed.
+ */
+function wrapped(leak: boolean) {
+  const pics = pictures();
+  const OLD = 'Paddling 101', NEW = 'Paddling 101, revised from the dock';
+  const e = edit({ label: 'Title', change: { type: 'text', value: NEW }, before: { text: OLD }, target: { part: title(), inner: null, selector: null, textHash: layerTextHash(OLD) } });
+  /** The page, its breadcrumb holding `crumb` and, when it wraps, everything from the title down `shift` pixels lower. */
+  const page = (crumb: string, shift: number, after: { lead?: string; footer?: string } = {}): Whole[] => [
+    { path: 'body > nav:nth-of-type(1)', name: 'nav.breadcrumb', box: [0, 0, 64, 12 + shift] },
+    { path: 'body > nav:nth-of-type(1) > a:nth-of-type(1)', name: 'a.crumb', box: [0, 0, 20, 12], text: 'Home' },
+    { path: 'body > nav:nth-of-type(1) > span:nth-of-type(1)', name: 'span.crumb', box: shift ? [0, 12, 64, 12] : [24, 0, 40, 12], text: crumb },
+    { path: 'body > h1:nth-of-type(1)', name: 'h1.title', box: [0, 16 + shift, 64, 24], text: NEW, touched: true },
+    { path: 'body > p:nth-of-type(1)', name: 'p.lead', box: [0, 44 + shift, 64, 40], text: 'Learn the strokes before the lake.', color: after.lead ?? 'rgb(0, 0, 0)' },
+    { path: 'body > img:nth-of-type(1)', name: 'img.hero', box: [0, 90 + shift, 64, 60] },
+    { path: 'body > footer:nth-of-type(1)', name: 'footer.site', box: [0, 170 + shift, 64, 20], text: after.footer ?? '© Acme Outfitters' },
+  ];
+  /** The page pictured: each element a shade of its own, where it sits. */
+  const drawn = (els: readonly Whole[], height: number): Bitmap => els.reduce((b, x, i) => painted(b, { x: x.box[0], y: x.box[1], width: x.box[2], height: x.box[3] }, 20 + i * 30 + (x.color === 'rgb(0, 0, 255)' ? 7 : 0)), blank(64, height));
+  const then = page(OLD, 0);
+  const now = page(NEW, 12, leak ? { lead: 'rgb(0, 0, 255)', footer: '© Northwind Outfitters' } : {});
+  const titleAt = (y: number): ElementSnap => ({ edit: e.id, n: 0, element: 'h1.title', values: { color: 'rgb(18, 52, 86)', text: NEW }, box: { x: 0, y, width: 64, height: 24 } });
+  const w = wire({
+    edits: [e], decode: pics.decode,
+    renderBefore: async () => ({
+      page: { png: pics.png(drawn(then, 200)), bitmap: drawn(then, 200), elements: [], found: [e.id] },
+      design: { png: pics.png(drawn(then, 200)), bitmap: drawn(then, 200), elements: [titleAt(16)], found: [e.id], page: whole(then) },
+    }),
+    render: async (r) => ({
+      png: pics.png(drawn(now, 212)), bitmap: drawn(now, 212), elements: [titleAt(28)], found: [e.id], steady: { t: r.hold!.t, s: r.hold!.s, views: [] },
+      ...(r.whole ? { page: whole(now) } : {}),
+    }),
+  });
+  w.page.parts = { p6: { '': [words(OLD, 'node:12:title:string:fr')] } };
+  return { w, e };
+}
+
+test('step 3 against the page before: the same words saved in a second place are the save’s reach, and a wrap that moves the rest is no leak', async () => {
+  const { w, e } = wrapped(false);
+  try {
+    await w.apply();
+    assert.equal((await w.implement(e.id)).ok, true);
+    const v = await w.verify(e.id, { widths: [390] });
+    assert.deepEqual([v.ok, v.failed, v.differences], [true, null, []], 'the breadcrumb’s words and the page moved 12 px down are what the save does');
+    assert.deepEqual(v.before, { ran: true, at: 1_700_000_000_000, widths: [390] });
+    assert.deepEqual(v.reach, [{ edit: e.id, count: 1, places: ['span.crumb'] }], 'said: the same words changed in one other place');
+  } finally { w.done(); }
+});
+
+test('step 3 against the page before still fails what changed beyond the edit, named by element, wherever the layout moved it', async () => {
+  const { w, e } = wrapped(true);
+  try {
+    await w.apply();
+    await w.implement(e.id);
+    const v = await w.verify(e.id, { widths: [390] });
+    assert.deepEqual([v.ok, v.failed], [false, 'rest']);
+    const against = { edit: e.id, at: 1_700_000_000_000 };
+    assert.deepEqual(v.differences, [
+      { kind: 'outside', width: 390, element: 'p.lead', property: 'color', before: 'rgb(0, 0, 0)', result: 'rgb(0, 0, 255)', against },
+      { kind: 'outside', width: 390, element: 'footer.site', property: 'text', before: '© Acme Outfitters', result: '© Northwind Outfitters', against },
+    ], 'the paragraph that turned blue and the footer’s other words, nothing for the wrap');
+    assert.deepEqual(v.reach, [{ edit: e.id, count: 1, places: ['span.crumb'] }]);
+  } finally { w.done(); }
+});
+
 test('with no page from before, step 3 says it could not run and why, and the verdict does not claim it', async () => {
   const e = edit({ state: 'implemented' });
   const w = wire({ edits: [e], render: renders(e, { design: (b) => b, result: (b) => b }) });
@@ -1131,7 +1216,7 @@ test('an edit made real on the page after the page from before was kept: step 3 
   } finally { w.done(); }
   // An edit of another page, for that page only, does not count.
   const elsewhere = edit({ page: '/about', state: 'implemented' });
-  const kept: BeforeKept = { at: 1, page: '/paddling', hold: { t: 1, s: 1 }, inSite: [], widths: { 390: { found: true, elements: [], masks: [], steady: null, cut: null } }, failed: {} };
+  const kept: BeforeKept = { at: 1, page: '/paddling', hold: { t: 1, s: 1 }, inSite: [], widths: { 390: { found: true, elements: [], masks: [], steady: null, cut: null, whole: true } }, failed: {} };
   const self = edit({ state: 'implemented' });
   assert.equal(beforeCheck(self, kept, [390, 1440], [self, elsewhere]).ran, true);
   assert.deepEqual(beforeCheck(self, kept, [1440], [self]), { ran: false, why: 'Its page from before was kept at 390 px, not at the widths verified.' });

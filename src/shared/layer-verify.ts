@@ -10,7 +10,12 @@
 // - Step 3, the rest of the page: a difference away from every touched element is a leak.
 //   Step 3 also compares the result with the page as it was kept just before each edit was made real, with that edit
 //   as designed on it (rendered in the same load): a change the native implementation made beyond the touched
-//   elements is in both of today's renders, and only that page shows it was not there before.
+//   elements is in both of today's renders, and only that page shows it was not there before. That page and today's
+//   may be laid out differently for good reason (the save changed the same words in a breadcrumb, which then wraps
+//   and moves everything below it), so they are compared element by element: each element outside the touched ones
+//   matched by its place in the structure, its own words and computed values compared, wherever it now sits; words
+//   that changed only from the edit's old words to its new ones are the save's own reach, said and not failed; and
+//   pixels only inside elements that kept their place and size, everything in them too.
 // The steps run in that order and the first that fails decides the verdict.
 //
 // The noise floor is measured by rendering each version twice: the largest channel difference between the two, and
@@ -20,7 +25,9 @@
 // of every pixel comparison first (masks: a Drupal part by its trace's cache metadata, a WordPress block the helper
 // marked by its type), each named in the verdict, and never an edited element; the floor is measured over what is
 // left. What a mask cannot see (a theme calling rand() without saying so) still shows only in the floor.
-import { VERIFY_STEPS, type LayerCut, type LayerDifference, type LayerMask, type LayerRect, type LayerVerdict, type VerifyStep } from './design-layer.ts';
+import {
+  LAYER_PROPERTIES, VERIFY_STEPS, type LayerCut, type LayerDifference, type LayerMask, type LayerReach, type LayerRect, type LayerVerdict, type VerifyStep,
+} from './design-layer.ts';
 import { changeBoxes } from './live-compare.ts';
 import type { LiveTrace, TracePart } from './live-trace.ts';
 
@@ -128,6 +135,13 @@ export function masksAmong(renders: readonly { masks?: readonly RenderMask[]; st
 const overlaps = (a: LayerRect, b: LayerRect): boolean =>
   a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height;
 
+/** Set a rectangle of a page-sized map to `v`, clipped to the page. */
+function fillRect(map: Uint8Array, W: number, H: number, r: LayerRect, v: number): void {
+  const x0 = Math.max(0, Math.floor(r.x)), y0 = Math.max(0, Math.floor(r.y));
+  const x1 = Math.min(W, Math.ceil(r.x + r.width)), y1 = Math.min(H, Math.ceil(r.y + r.height));
+  for (let y = y0; y < y1; y++) map.fill(v, y * W + x0, y * W + Math.max(x0, x1));
+}
+
 /**
  * A comparison with `out` left out: every pixel inside one of its rectangles, except inside a `keep` rectangle (a
  * touched element and its margin: an edited element is always compared in full), has its difference taken away and
@@ -135,15 +149,23 @@ const overlaps = (a: LayerRect, b: LayerRect): boolean =>
  */
 export function applyMask(d: PixelDiff, out: readonly LayerRect[], keep: readonly LayerRect[] = []): PixelDiff {
   if (!out.length) return d;
+  const masked = new Uint8Array(d.width * d.height);
+  for (const r of out) fillRect(masked, d.width, d.height, r, 1);
+  for (const r of keep) fillRect(masked, d.width, d.height, r, 0);
+  return withMasked(d, masked);
+}
+
+/** A comparison kept only inside `include` and outside `exclude`: every other pixel is left out (masked). */
+export function onlyWhere(d: PixelDiff, include: readonly LayerRect[], exclude: readonly LayerRect[]): PixelDiff {
+  const masked = new Uint8Array(d.width * d.height).fill(1);
+  for (const r of include) fillRect(masked, d.width, d.height, r, 0);
+  for (const r of exclude) fillRect(masked, d.width, d.height, r, 1);
+  return withMasked(d, masked);
+}
+
+/** A comparison's differences where `masked` says 1 taken away, and its two numbers counted again over the rest. */
+function withMasked(d: PixelDiff, masked: Uint8Array): PixelDiff {
   const W = d.width, H = d.height;
-  const masked = new Uint8Array(W * H);
-  const fill = (r: LayerRect, v: number): void => {
-    const x0 = Math.max(0, Math.floor(r.x)), y0 = Math.max(0, Math.floor(r.y));
-    const x1 = Math.min(W, Math.ceil(r.x + r.width)), y1 = Math.min(H, Math.ceil(r.y + r.height));
-    for (let y = y0; y < y1; y++) masked.fill(v, y * W + x0, y * W + Math.max(x0, x1));
-  };
-  for (const r of out) fill(r, 1);
-  for (const r of keep) fill(r, 0);
   const diff = new Uint8Array(d.diff);
   let maxDiff = 0, pixels = 0;
   for (let p = 0; p < diff.length; p++) {
@@ -273,6 +295,146 @@ const VARY: Record<string, string> = {
   'relative-date': 'shows a date relative to now',
 };
 export const varyWhy = (reason: string): string => VARY[reason] ?? `changes between renders, its site helper says (${reason.slice(0, 40)})`;
+
+/* ── step 3 against the page as it was: element by element ────────────── */
+
+/** One element of a page, as the page script's layerPage read it: its path from <body>, its name, box, own words, computed values (indexes into its page's table), and whether it is an edited element or inside one. */
+export interface PageElement { path: string; name: string; box: LayerRect; text: string | null; values: number[]; touched: boolean }
+
+/** A whole page element by element: the properties read, their values' table, the elements in document order, and whether the page went on past what was read. */
+export interface PageSnap { keys: string[]; table: string[]; elements: PageElement[]; cut: boolean }
+
+/**
+ * The layer's properties step 3 compares outside the touched elements: all but width and height, whose computed
+ * values are the layout's (a heading that wraps makes the column around it taller, as designed).
+ */
+export const OUTSIDE_PROPERTIES: readonly string[] = LAYER_PROPERTIES.filter((p) => p !== 'width' && p !== 'height');
+
+/** Words compared as a site prints them: whitespace folded, and the quotes, dashes and ellipsis WordPress's wptexturize makes read as typed. */
+const wordsOf = (s: string): string => s
+  .replace(/[‘’‚‛′]/g, '\'').replace(/[“”„‟″]/g, '"')
+  .replace(/…/g, '...').replace(/---|--|[–—]/g, '-')
+  .replace(/\s+/g, ' ').trim();
+
+/**
+ * Whether an element's words changed only by the edit's old words becoming its new ones: the same stored value shown
+ * in another place (a breadcrumb, a teaser, a menu link), whole or within other words.
+ */
+export function sameWordsMoved(was: string | null, now: string | null, words: { was: string; now: string }): boolean {
+  if (was === null || now === null) return false;
+  const o = wordsOf(words.was), n = wordsOf(words.now);
+  if (!o || o === n) return false;
+  const a = wordsOf(was);
+  return a.includes(o) && a.split(o).join(n) === wordsOf(now);
+}
+
+/** What step 3 found comparing the result with a page from before, element by element. */
+export interface OutsideFound {
+  /** Words and computed values that differ outside the touched elements, each named by its element (`outside`). */
+  differences: LayerDifference[];
+  /** Elements whose words changed only from the edit's old words to its new ones: the save's own reach. */
+  reach: { path: string; name: string }[];
+  /** Where pixels can be compared: elements that, with everything in them, kept their place and size and changed nothing. */
+  include: LayerRect[];
+  /** Left out of those (in either page): the save's reach, and elements that moved or changed size with nothing in them that did not. */
+  exclude: LayerRect[];
+}
+
+const contains = (outer: LayerRect, inner: LayerRect): boolean =>
+  outer.x - 1 <= inner.x && outer.y - 1 <= inner.y && outer.x + outer.width + 1 >= inner.x + inner.width && outer.y + outer.height + 1 >= inner.y + inner.height;
+const sameRect = (a: LayerRect, b: LayerRect): boolean =>
+  [a.x - b.x, a.y - b.y, a.width - b.width, a.height - b.height].every((d) => Math.abs(d) <= 0.5);
+const parentPath = (path: string): string => path.slice(0, Math.max(0, path.lastIndexOf(' > ')));
+
+/**
+ * Step 3 against a page from before, element by element. Each element outside the touched ones (an edited element and
+ * everything in it, in either page) and outside what is masked (in its own page) is matched by its path: on one page
+ * and not the other is a difference (only the outermost of a missing subtree is named); its own words and its
+ * computed values for OUTSIDE_PROPERTIES are compared wherever it sits now, so a layout that moved is not a
+ * difference. Words that changed only from the edit's old words to its new ones are the save's reach. Pixels are then
+ * compared only inside elements that kept their place and size, changed nothing, and hold nothing that did.
+ */
+export function compareOutside(o: {
+  before: PageSnap; result: PageSnap; width: number; against: { edit: string; at: number };
+  words: { was: string; now: string } | null; masked: { before: readonly LayerRect[]; result: readonly LayerRect[] };
+}): OutsideFound {
+  const { before: A, result: B } = o;
+  const byA = new Map(A.elements.map((e) => [e.path, e]));
+  const byB = new Map(B.elements.map((e) => [e.path, e]));
+  const value = (snap: PageSnap, el: PageElement, key: string): string | undefined => {
+    const i = snap.keys.indexOf(key);
+    return i < 0 ? undefined : snap.table[el.values[i] ?? -1];
+  };
+  const keys = OUTSIDE_PROPERTIES.filter((k) => A.keys.includes(k) && B.keys.includes(k));
+  const paths = [...A.elements.map((e) => e.path), ...B.elements.filter((e) => !byA.has(e.path)).map((e) => e.path)];
+  const differences: LayerDifference[] = [];
+  const reach: OutsideFound['reach'] = [];
+  const changed = new Set<string>();
+  const say = (el: PageElement, property: string, before: string, result: string): void => {
+    changed.add(el.path);
+    if (differences.length < MAX_ELEMENT_DIFFERENCES) differences.push({ kind: 'outside', width: o.width, element: el.name, property, before: before.slice(0, 2_000), result: result.slice(0, 2_000), against: o.against });
+  };
+  for (const path of paths) {
+    const a = byA.get(path), b = byB.get(path);
+    if (a?.touched || b?.touched) continue;
+    if ((a && o.masked.before.some((m) => contains(m, a.box))) || (b && o.masked.result.some((m) => contains(m, b.box)))) continue;
+    if (!a || !b) {
+      // A whole subtree on one page and not the other: its outermost element says it.
+      const up = parentPath(path);
+      if (b && !a && up && !byA.has(up) && byB.has(up)) continue;
+      if (a && !b && up && !byB.has(up) && byA.has(up)) continue;
+      say((a ?? b)!, 'element', a ? 'on the page' : 'not on the page', b ? 'on the page' : 'not on the page');
+      continue;
+    }
+    if (a.text !== b.text) {
+      if (o.words && sameWordsMoved(a.text, b.text, o.words)) { reach.push({ path, name: b.name }); changed.add(path); }
+      else say(b, 'text', a.text ?? '', b.text ?? '');
+    }
+    for (const k of keys) {
+      const va = value(A, a, k) ?? '', vb = value(B, b, k) ?? '';
+      if (va !== vb) say(b, k, va, vb);
+    }
+  }
+  // Which elements kept their place and size, changed nothing, and hold nothing that did not: children first.
+  const children = new Map<string, string[]>();
+  for (const path of paths) {
+    const up = parentPath(path);
+    if (up) children.set(up, [...(children.get(up) ?? []), path]);
+  }
+  const stable = new Map<string, boolean>();
+  const stableBelow = new Map<string, boolean>();
+  for (const path of [...paths].reverse()) {
+    const a = byA.get(path), b = byB.get(path);
+    const kids = children.get(path) ?? [];
+    stable.set(path, !!a && !!b && sameRect(a.box, b.box) && !changed.has(path) && kids.every((k) => stable.get(k)));
+    stableBelow.set(path, kids.some((k) => stable.get(k) || stableBelow.get(k)));
+  }
+  const include: LayerRect[] = [];
+  const exclude: LayerRect[] = [];
+  for (const path of paths) {
+    const a = byA.get(path), b = byB.get(path);
+    if (stable.get(path)) {
+      if (!stable.get(parentPath(path)) && b && !b.touched) include.push(b.box);
+      continue;
+    }
+    if (reach.some((r) => r.path === path) || !stableBelow.get(path)) {
+      if (a) exclude.push(a.box);
+      if (b) exclude.push(b.box);
+    }
+  }
+  return { differences, reach, include, exclude };
+}
+
+/** Each edit's reach, over every width, as a verdict says it: how many places, and what each is called. */
+export function reachOf(found: readonly { edit: string; reach: readonly { path: string; name: string }[] }[]): LayerReach[] {
+  const by = new Map<string, Map<string, string>>();
+  for (const f of found) {
+    const m = by.get(f.edit) ?? new Map<string, string>();
+    for (const r of f.reach) if (!m.has(r.path)) m.set(r.path, r.name);
+    by.set(f.edit, m);
+  }
+  return [...by].filter(([, m]) => m.size > 0).slice(0, 20).map(([edit, m]) => ({ edit, count: m.size, places: [...m.values()].slice(0, 10).map((n) => n.slice(0, 200)) }));
+}
 
 /* ── step 1: styles and boxes ───────────────────────────────────────────── */
 
@@ -409,7 +571,7 @@ export function comparePixels(d: PixelDiff, zones: readonly Zone[], width: numbe
 
 /**
  * What one width found: step 1's differences, its noise floor, steps 2 and 3, and step 3 against each edit's page
- * from before (outside the touched elements, as `rest`), where it ran.
+ * from before, where it ran: element by element (`outside`) and pixels where the layout kept still (`before`).
  */
 export interface WidthFindings {
   width: number;
@@ -417,6 +579,7 @@ export interface WidthFindings {
   elements: LayerDifference[];
   pixels: PixelComparison;
   before?: PixelArea[];
+  outside?: LayerDifference[];
 }
 
 /** The steps in order across every width: the first that fails at any width decides, and only its differences are said. */
@@ -428,6 +591,7 @@ export function judge(found: readonly WidthFindings[]): { ok: boolean; failed: V
       if (step === 'styles' && w.elements.length) { failed = true; differences.push(...w.elements); }
       if (step === 'pixels' && !withinNoise(w.pixels.near, w.noise)) { failed = true; differences.push(...w.pixels.near.differences); }
       if (step === 'rest' && !withinNoise(w.pixels.rest, w.noise)) { failed = true; differences.push(...w.pixels.rest.differences); }
+      if (step === 'rest' && w.outside?.length) { failed = true; differences.push(...w.outside); }
       if (step === 'rest') for (const b of w.before ?? []) if (!withinNoise(b, w.noise)) { failed = true; differences.push(...b.differences); }
     }
     if (failed) return { ok: false, failed: step, differences: differences.slice(0, MAX_DIFFERENCES) };
@@ -460,7 +624,7 @@ export function editsAt(verdict: Pick<LayerVerdict, 'ok' | 'differences'>, ids: 
   if (verdict.ok) return [];
   const named = new Set<string>();
   for (const d of verdict.differences) {
-    if (d.kind === 'leak' && d.against) { named.add(d.against.edit); continue; }
+    if (d.kind === 'outside' || (d.kind === 'leak' && d.against)) { named.add(d.against!.edit); continue; }
     if (d.kind === 'leak' || d.edit === null) return [...ids];
     named.add(d.edit);
   }
@@ -523,8 +687,19 @@ const time = (v: unknown): v is number => typeof v === 'number' && Number.isFini
 const widthList = (v: unknown): v is number[] => Array.isArray(v) && v.length >= 1 && v.length <= 8 && v.every((w) => count(w, 10_000));
 
 /** The fields a verdict gained later, each checked when present: absent on a verdict kept before them. Undefined when one is not well formed. */
-function later(v: Record<string, unknown>): Pick<LayerVerdict, 'masked' | 'before' | 'held' | 'cut'> | undefined {
-  const out: Pick<LayerVerdict, 'masked' | 'before' | 'held' | 'cut'> = {};
+function later(v: Record<string, unknown>): Pick<LayerVerdict, 'masked' | 'before' | 'held' | 'cut' | 'reach'> | undefined {
+  const out: Pick<LayerVerdict, 'masked' | 'before' | 'held' | 'cut' | 'reach'> = {};
+  if (v.reach !== undefined) {
+    if (!Array.isArray(v.reach) || v.reach.length > 20) return undefined;
+    const reach: LayerReach[] = [];
+    for (const raw of v.reach as unknown[]) {
+      const r = raw && typeof raw === 'object' ? raw as Record<string, unknown> : null;
+      if (!r || typeof r.edit !== 'string' || !EDIT_ID.test(r.edit) || !count(r.count, 100_000) || !r.count || !Array.isArray(r.places) || !r.places.length || r.places.length > 10
+        || r.places.length > r.count || !r.places.every((p) => bounded(p, 200) && p)) return undefined;
+      reach.push({ edit: r.edit, count: r.count, places: [...r.places as string[]] });
+    }
+    out.reach = reach;
+  }
   if (v.masked !== undefined) {
     if (!Array.isArray(v.masked) || v.masked.length > MAX_MASKS) return undefined;
     const masked: LayerMask[] = [];
@@ -592,6 +767,11 @@ function difference(raw: unknown): LayerDifference | null {
       const a = d.against && typeof d.against === 'object' ? d.against as Record<string, unknown> : null;
       return a && typeof a.edit === 'string' && EDIT_ID.test(a.edit) && time(a.at)
         ? { kind: 'leak', width, rect: r, pixels: d.pixels, maxDiff: d.maxDiff, against: { edit: a.edit, at: a.at } } : null;
+    }
+    case 'outside': {
+      const a = d.against && typeof d.against === 'object' ? d.against as Record<string, unknown> : null;
+      return bounded(d.element, 200) && bounded(d.property, 60) && bounded(d.before, 2000) && bounded(d.result, 2000) && a && typeof a.edit === 'string' && EDIT_ID.test(a.edit) && time(a.at)
+        ? { kind: 'outside', width, element: d.element, property: d.property, before: d.before, result: d.result, against: { edit: a.edit, at: a.at } } : null;
     }
     default: return null;
   }

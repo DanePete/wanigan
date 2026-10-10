@@ -739,6 +739,8 @@ export function liveStub(f) {
           : { ran: false, why: 'No page from before was kept for it: it was made real some other way than Make it real here (in a template, or marked by an agent), or before Wanigan kept one. The rest of the page was compared with the design only.' },
         held: kept ? { at: Math.floor(Date.now() / 1000) - 60 } : null,
         cut: [{ width: 1440, to: 6000, full: 9412 }],
+        // The save's own reach: the same stored words shown in the breadcrumb too, said and not failed.
+        ...(how === 'pass' ? { reach: [{ edit: id, count: 1, places: ['span.breadcrumb__current'] }] } : {}),
       };
       e.state = verdict.ok ? 'verified' : 'draft';
       e.verdict = verdict;
