@@ -5,10 +5,11 @@
 // over made-up entities (acme, northwind). What it proves: an entity, a field
 // and a field item carry the entity's UUID, a reference item is named by what
 // it refers to so a reorder does not move it, a component is named by where it
-// sits and which of its id it is there, a block placement, a menu link and a
-// view display are configuration, and what has nothing stable to name (or
-// would need an odd value) has no identity. Nothing here runs Drupal or
-// touches a site; it needs PHP.
+// sits and which of its id it is there, a block placement, a menu, a menu link
+// and a view display are configuration, a Layout Builder component is named by
+// its UUID on the entity it is rendered for (so a moved section keeps it), and
+// what has nothing stable to name (or would need an odd value) has no
+// identity. Nothing here runs Drupal or touches a site; it needs PHP.
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
@@ -26,6 +27,20 @@ const UUID = {
   gamma: '0a1b2c3d-0000-4000-8000-0000000000c3',
   delta: '0a1b2c3d-0000-4000-8000-0000000000d4',
   teaser: '0a1b2c3d-0000-4000-8000-000000000013',
+  landing: '0a1b2c3d-0000-4000-8000-000000000014',
+  notes: '0a1b2c3d-0000-4000-8000-000000000015',
+  promo: '0a1b2c3d-0000-4000-8000-0000000000e5',
+};
+
+/** Layout Builder's components on the made-up pages, by the UUIDs their section storage keeps. */
+const LB = {
+  spring: '7e57ab1e-0000-4000-8000-000000000001',
+  summer: '7e57ab1e-0000-4000-8000-000000000002',
+  promo: '7e57ab1e-0000-4000-8000-000000000003',
+  body: '7e57ab1e-0000-4000-8000-000000000004',
+  spaced: '7e57ab1e-0000-4000-8000-000000000005',
+  // The article teaser's default layout: one component every article without its own layout shows.
+  title: '7e57ab1e-0000-4000-8000-000000000006',
 };
 
 const HARNESS = String.raw`<?php
@@ -174,8 +189,59 @@ namespace {
     return themed($r, 'block', ['render element' => 'elements', 'base hook' => 'block'], ['elements' => $elements + ['#configuration' => ['label' => 'A block'], '#block' => new Placement()], 'theme_hook_original' => 'block'], 'core/modules/block/templates/block.html.twig', fn () => '<div class="block">' . $content() . '</div>');
   }
 
-  /** The page: the field_related items in the order given. */
-  function page(array $order): array {
+  /** A Layout Builder component's element (BlockComponentRenderArray): a block with no placement, so no '#id' and no '#block'. */
+  function lb(string $plugin, string $label, string $inner): array {
+    return ['#theme' => 'block', '#plugin_id' => $plugin, '#configuration' => ['label' => $label], '#block' => NULL, 'content' => ['#markup' => $inner]];
+  }
+
+  /**
+   * The landing page's own layout, as LayoutBuilderEntityViewDisplay::buildSections() leaves it in the entity's
+   * content: sections by delta, each region by name, its components by the UUID their section storage keeps
+   * (Section::toRenderArray()). Rearranged, the two sections swap places, Summer sale moves to the other section's
+   * second region, and the hero's region is reordered.
+   */
+  function landing(bool $rearranged): array {
+    $uuid = json_decode(getenv('WL_LB'), TRUE);
+    $spring = lb('inline_block:card', 'Spring sale', 'Spring');
+    $summer = lb('inline_block:card', 'Summer sale', 'Summer');
+    // A key that is not a UUID, and a plugin id with a space: traced, and named nothing.
+    $odd = lb('inline_block:card', 'Odd component', 'Odd');
+    $spaced = lb('inline block', 'Spaced component', 'Spaced');
+    $promo = lb('block_content:' . getenv('WL_PROMO'), 'Promo in a layout', 'Promo');
+    $body = lb('field_block:node:landing_page:body', 'Body', 'Body');
+    $hero = ['#theme' => 'layout__onecol', 'content' => [$uuid['spring'] => $spring, $uuid['summer'] => $summer, 'not-a-uuid' => $odd]];
+    $split = ['#theme' => 'layout__twocol', 'first' => [$uuid['promo'] => $promo], 'second' => [$uuid['body'] => $body, $uuid['spaced'] => $spaced]];
+    if (!$rearranged) {
+      return [0 => $hero, 1 => $split];
+    }
+    $split['second'] = [$uuid['summer'] => $summer] + $split['second'];
+    return [0 => $split, 1 => ['#theme' => 'layout__onecol', 'content' => ['not-a-uuid' => $odd, $uuid['spring'] => $spring]]];
+  }
+
+  /** An entity's template printing its layout: each section's regions, each region's components, in their order. */
+  function layout(Recorder $r, array $sections): string {
+    $out = '';
+    foreach ($sections as $section) {
+      foreach ($section as $region => $components) {
+        if ($region[0] === '#') continue;
+        foreach ($components as $component) {
+          $inner = $component['content']['#markup'];
+          // An inline card shows a price: a component inside a component of the layout.
+          $out .= block($r, $component, fn () => '<p>' . $inner . '</p>' . (str_starts_with($component['#plugin_id'], 'inline_block:') ? component($r, 'acme:price', '$' . strlen($inner)) : ''));
+        }
+      }
+    }
+    return '<div class="layout">' . $out . '</div>';
+  }
+
+  /** An article teaser showing the default layout every article without its own shows: one component, by one UUID. */
+  function teaser(Recorder $r, Node $node): string {
+    $sections = [0 => ['#theme' => 'layout__onecol', 'content' => [json_decode(getenv('WL_LB'), TRUE)['title'] => lb('field_block:node:article:title', 'Title of ' . $node->label, $node->label)]]];
+    return themed($r, 'node', ['render element' => 'elements', 'base hook' => 'node'], ['elements' => ['#node' => $node, '#view_mode' => 'teaser'], 'content' => ['_layout_builder' => $sections], 'theme_hook_original' => 'node__article__teaser'], 'core/modules/node/templates/node.html.twig', fn ($v) => '<article>' . layout($r, $v['content']['_layout_builder']) . '</article>');
+  }
+
+  /** The page: the field_related items in the order given, and the landing page's layout as it was or rearranged. */
+  function page(array $order, bool $rearranged): array {
     $nodes = [
       'alpha' => new Node('node', '21', getenv('WL_ALPHA'), 'article', 'Alpha'),
       'beta' => new Node('node', '22', getenv('WL_BETA'), 'article', 'Beta'),
@@ -184,6 +250,8 @@ namespace {
     ];
     $host = new Node('node', '12', getenv('WL_PAGE'), 'page', 'About Acme');
     $teaser = new Node('node', '13', getenv('WL_TEASER'), 'article', 'Northwind news');
+    $notes = new Node('node', '15', getenv('WL_NOTES'), 'article', 'Acme notes');
+    $landing = new Node('node', '14', getenv('WL_LANDING'), 'landing_page', 'Northwind landing');
     $sample = new Node('node', '0', 'f00df00d-0000-4000-8000-000000000000', 'article', 'Sample', 'en', TRUE);
     $r = new Recorder('/node/12');
     Recorder::$on = $r;
@@ -194,8 +262,8 @@ namespace {
       $related[] = new Item(['target_id' => $nodes[$key]->id], $key === 'gamma' ? NULL : $nodes[$key]);
       $contents[] = ['#markup' => $nodes[$key]->label];
     }
-    $html = themed($r, 'page', ['render element' => 'page', 'base hook' => 'page'], ['page' => [], 'theme_hook_original' => 'page'], 'core/modules/system/templates/page.html.twig', function () use ($r, $host, $nodes, $teaser, $sample, $related, $contents) {
-      $main = themed($r, 'region', ['render element' => 'elements', 'base hook' => 'region'], ['elements' => ['#region' => 'content'], 'theme_hook_original' => 'region__content'], 'core/modules/system/templates/region.html.twig', function () use ($r, $host, $nodes, $sample, $related, $contents) {
+    $html = themed($r, 'page', ['render element' => 'page', 'base hook' => 'page'], ['page' => [], 'theme_hook_original' => 'page'], 'core/modules/system/templates/page.html.twig', function () use ($r, $host, $nodes, $teaser, $notes, $landing, $rearranged, $sample, $related, $contents) {
+      $main = themed($r, 'region', ['render element' => 'elements', 'base hook' => 'region'], ['elements' => ['#region' => 'content'], 'theme_hook_original' => 'region__content'], 'core/modules/system/templates/region.html.twig', function () use ($r, $host, $nodes, $landing, $rearranged, $sample, $related, $contents) {
         $out = block($r, ['#id' => 'acme_content', '#plugin_id' => 'system_main_block'], function () use ($r, $host, $nodes, $related, $contents) {
           return themed($r, 'node', ['render element' => 'elements', 'base hook' => 'node'], ['elements' => ['#node' => $host, '#view_mode' => 'full'], 'theme_hook_original' => 'node__page__full'], 'web/themes/custom/acme/templates/node--page.html.twig', function () use ($r, $host, $nodes, $related, $contents) {
             return field($r, $host, 'field_related', 'entity_reference', $related, $contents)
@@ -206,14 +274,18 @@ namespace {
               . field($r, $host, 'field_twice', 'entity_reference', [new Item(['target_id' => '21'], $nodes['alpha']), new Item(['target_id' => '21'], $nodes['alpha'])], [['#markup' => 'Alpha'], ['#markup' => 'Alpha']])
               . component($r, 'acme:card', 'One' . component($r, 'acme:badge', 'New'))
               . component($r, 'acme:card', 'Two')
-              // A Layout Builder component is a block with no placement of its own.
+              // A Layout Builder component told no stored entity it is rendered for, and no UUID: traced, named nothing.
               . block($r, ['#plugin_id' => 'field_block:node:page:body', '#wanigan_live_lb' => ['entity' => 'node:12', 'viewMode' => 'full', 'delta' => 0, 'region' => 'content', 'uuid' => 'u1']], fn () => '<p>Body</p>');
           });
         });
         // A plugin id no identity can carry: the block is traced, and named nothing.
         $out .= block($r, ['#id' => 'acme_odd', '#plugin_id' => 'odd plugin'], fn () => '<p>Odd</p>');
-        // Content not saved yet: its UUID would be new on every render.
-        $out .= themed($r, 'node', ['render element' => 'elements', 'base hook' => 'node'], ['elements' => ['#node' => $sample, '#view_mode' => 'teaser'], 'theme_hook_original' => 'node'], 'core/modules/node/templates/node.html.twig', fn () => '<article>Sample</article>');
+        // A reusable block placed in a region; the landing page's layout below places the same block.
+        $out .= block($r, ['#id' => 'acme_promo', '#plugin_id' => 'block_content:' . getenv('WL_PROMO'), '#configuration' => ['label' => 'Promo in a region']], fn () => '<p>Promo</p>');
+        // A page Layout Builder renders from its own layout.
+        $out .= themed($r, 'node', ['render element' => 'elements', 'base hook' => 'node'], ['elements' => ['#node' => $landing, '#view_mode' => 'full'], 'content' => ['_layout_builder' => landing($rearranged)], 'theme_hook_original' => 'node__landing_page__full'], 'web/themes/custom/acme/templates/node--landing-page.html.twig', fn ($v) => '<article>' . layout($r, $v['content']['_layout_builder']) . '</article>');
+        // Content not saved yet: its UUID would be new on every render, and so would its layout's.
+        $out .= teaser($r, $sample);
         return $out;
       });
       $menu = function (string $name, array $links) use ($r) {
@@ -226,8 +298,11 @@ namespace {
       // A menu of content links (menu_link_content), and one of a link a module defines.
       $menus = $menu('main', ['menu_link_content:' . getenv('WL_HOME') => 'Home', 'menu_link_content:' . getenv('WL_LINK') => 'About'])
         . $menu('footer', ['standard.front_page' => 'Front']);
-      $view = themed($r, 'views_view', ['variables' => []], ['view' => new Drupal\views\ViewExecutable('frontpage', 'page_1'), 'theme_hook_original' => 'views_view'], 'core/modules/views/templates/views-view.html.twig', function () use ($r, $teaser) {
-        return themed($r, 'node', ['render element' => 'elements', 'base hook' => 'node'], ['elements' => ['#node' => $teaser, '#view_mode' => 'teaser'], 'theme_hook_original' => 'node__article__teaser'], 'core/modules/node/templates/node.html.twig', fn () => '<article>Northwind news</article>');
+      // A menu template given a name no identity can carry.
+      $menus .= themed($r, 'menu__odd', ['variables' => [], 'base hook' => 'menu'], ['menu_name' => 'odd menu', 'items' => [], 'theme_hook_original' => 'menu__odd'], 'core/modules/system/templates/menu.html.twig', fn () => '<ul></ul>');
+      // Two articles that show the default layout: one component's UUID, on each.
+      $view = themed($r, 'views_view', ['variables' => []], ['view' => new Drupal\views\ViewExecutable('frontpage', 'page_1'), 'theme_hook_original' => 'views_view'], 'core/modules/views/templates/views-view.html.twig', function () use ($r, $teaser, $notes) {
+        return teaser($r, $teaser) . teaser($r, $notes);
       });
       // At the page's top, inside nothing that has an identity.
       return '<main>' . $main . '</main>' . $menus . $view . component($r, 'acme:card', 'Footer');
@@ -241,7 +316,7 @@ namespace {
 
   $GLOBALS['wl_log'] = [];
   $keys = array_map([Identity::class, 'key'], json_decode(getenv('WL_SAMPLES'), TRUE));
-  echo json_encode(['first' => page(['alpha', 'beta', 'gamma']), 'again' => page(['beta', 'alpha', 'gamma']), 'keys' => $keys, 'log' => $GLOBALS['wl_log']]);
+  echo json_encode(['first' => page(['alpha', 'beta', 'gamma'], FALSE), 'again' => page(['beta', 'alpha', 'gamma'], TRUE), 'keys' => $keys, 'log' => $GLOBALS['wl_log']]);
 }
 `;
 
@@ -254,6 +329,8 @@ const SAMPLES: PartIdentity[] = [
   { kind: 'component', name: 'acme:card', within: null, nth: 0 },
   { kind: 'config', type: 'block', id: 'acme_main_menu', plugin: 'system_menu_block:main' },
   { kind: 'config', type: 'view', id: 'frontpage:page_1' },
+  { kind: 'config', type: 'layout_builder_component', id: `node:${UUID.landing}/${LB.spring}`, plugin: 'inline_block:card' },
+  { kind: 'config', type: 'menu', id: 'main' },
   { kind: 'block', store: 'post:12', path: [0, 3, 1], name: 'core/paragraph' },
 ];
 
@@ -275,6 +352,7 @@ function run(): { first: unknown; again: unknown; keys: string[]; log: string[] 
       env: {
         PATH: process.env.PATH ?? '', WL_HELPER: folder, WL_ROOT: folder, WL_SAMPLES: JSON.stringify(SAMPLES), WL_LINK: LINK, WL_HOME: HOME,
         WL_PAGE: UUID.page, WL_ALPHA: UUID.alpha, WL_BETA: UUID.beta, WL_GAMMA: UUID.gamma, WL_DELTA: UUID.delta, WL_TEASER: UUID.teaser,
+        WL_NOTES: UUID.notes, WL_LANDING: UUID.landing, WL_PROMO: UUID.promo, WL_LB: JSON.stringify(LB),
       },
     })) as { first: unknown; again: unknown; keys: string[]; log: string[] };
   } finally { rmSync(folder, { recursive: true, force: true }); }
@@ -326,7 +404,7 @@ test('every part a Drupal page can name carries its identity, and the trace keep
   // Configuration.
   const blocks = parts.get('A block')!;
   assert.deepEqual(blocks[0]?.identity, { kind: 'config', type: 'block', id: 'acme_content', plugin: 'system_main_block' }, 'a block placement: its id and plugin');
-  assert.equal(blocks[1]?.identity, undefined, 'a Layout Builder component has no placement of its own');
+  assert.equal(blocks[1]?.identity, undefined, 'a Layout Builder component told no entity and no UUID: no identity, never a placement’s');
   assert.equal(blocks[2]?.identity, undefined, 'a plugin id with a space: no identity, never a cleaned-up one');
   assert.deepEqual(blocks[3]?.identity, { kind: 'config', type: 'block', id: 'acme_main_menu', plugin: 'system_menu_block:main' });
   assert.deepEqual(blocks[4]?.identity, { kind: 'config', type: 'block', id: 'acme_footer_menu', plugin: 'system_menu_block:footer' });
@@ -335,6 +413,11 @@ test('every part a Drupal page can name carries its identity, and the trace keep
     { kind: 'config', type: 'menu_link', id: `menu_link_content:${LINK}` },
     { kind: 'config', type: 'menu_link', id: 'standard.front_page' },
   ], 'a menu link: its plugin id');
+  assert.deepEqual(['Main navigation', 'Footer navigation'].map((l) => one(parts, l).identity), [
+    { kind: 'config', type: 'menu', id: 'main' },
+    { kind: 'config', type: 'menu', id: 'footer' },
+  ], 'a menu: its machine name, apart from its links and the block that places it');
+  assert.equal(one(parts, 'Odd menu navigation').identity, undefined, 'a menu name no identity can carry: none, never a cleaned-up one');
   assert.deepEqual(one(parts, 'Front page · Page').identity, { kind: 'config', type: 'view', id: 'frontpage:page_1' }, 'a view display');
   assert.deepEqual(one(parts, 'article: Northwind news (teaser)').identity, { kind: 'entity', type: 'node', id: UUID.teaser, bundle: 'article', langcode: 'en' }, 'an entity a view shows');
 
@@ -346,7 +429,7 @@ test('every part a Drupal page can name carries its identity, and the trace keep
   ]);
 
   // Nothing stable to name.
-  for (const label of ['Page', 'content', 'Main navigation', 'Footer navigation', 'article: Sample (teaser)']) assert.equal(one(parts, label).identity, undefined, label);
+  for (const label of ['Page', 'content', 'article: Sample (teaser)']) assert.equal(one(parts, label).identity, undefined, label);
 });
 
 test('the same part has the same key on every load, and a reordered reference keeps its own', (t) => {
@@ -364,6 +447,57 @@ test('the same part has the same key on every load, and a reordered reference ke
   assert.deepEqual(items(again), [`ref:node:${UUID.beta}`, `ref:node:${UUID.alpha}`, undefined], 'each item keeps what it refers to, wherever it now is');
   const at = (trace: LiveTrace, item: string): number => trace.parts.findIndex((p) => p.identity?.kind === 'entity' && p.identity.item === item);
   assert.ok(at(again, `ref:node:${UUID.alpha}`) > at(again, `ref:node:${UUID.beta}`), 'alpha is now after beta on the page');
+});
+
+test('a Layout Builder component is named by its UUID on the entity it is rendered for, with its plugin, wherever its section moves', (t) => {
+  if (!which('php', process.env.PATH ?? '')) { t.skip('PHP is not installed here'); return; }
+  const out = run();
+  assert.deepEqual(out.log, []);
+  const first = parseTrace(out.first)!;
+  const again = parseTrace(out.again)!;
+  const before = byLabel(first);
+  const after = byLabel(again);
+  const lb = (entity: string, uuid: string, plugin: string): PartIdentity => ({ kind: 'config', type: 'layout_builder_component', id: `node:${entity}/${uuid}`, plugin });
+  const spring = lb(UUID.landing, LB.spring, 'inline_block:card');
+  const summer = lb(UUID.landing, LB.summer, 'inline_block:card');
+  assert.deepEqual(one(before, 'Spring sale').identity, spring, 'its UUID, on the entity it is rendered for, and its plugin');
+  assert.deepEqual(one(before, 'Summer sale').identity, summer);
+  assert.deepEqual(one(before, 'Promo in a layout').identity, lb(UUID.landing, LB.promo, `block_content:${UUID.promo}`));
+  assert.deepEqual(one(before, 'Body').identity, lb(UUID.landing, LB.body, 'field_block:node:landing_page:body'));
+
+  // The sections swapped, Summer sale moved to another section and region, the hero's region was reordered: each
+  // component is found again by its key, and its part is where it now is.
+  const placed = (trace: LiveTrace): string[] => trace.parts.filter((p) => p.identity?.kind === 'config' && p.identity.type === 'layout_builder_component').map((p) => p.label);
+  assert.deepEqual(placed(first), ['Spring sale', 'Summer sale', 'Promo in a layout', 'Body', 'Title of Northwind news', 'Title of Acme notes']);
+  assert.deepEqual(placed(again), ['Promo in a layout', 'Summer sale', 'Body', 'Spring sale', 'Title of Northwind news', 'Title of Acme notes'], 'they moved');
+  for (const label of ['Spring sale', 'Summer sale', 'Promo in a layout', 'Body']) {
+    assert.equal(identityKey(one(after, label).identity!), identityKey(one(before, label).identity!), `${label} keeps its key`);
+  }
+  // A component inside one is within it, so it moves with it (named within the entity, it would be counted anew).
+  const priceIn = (trace: LiveTrace, label: string): PartIdentity | undefined => {
+    const host = one(byLabel(trace), label);
+    return trace.parts.find((p) => p.label === 'acme:price' && p.parent === host.id)?.identity;
+  };
+  assert.deepEqual(priceIn(first, 'Summer sale'), { kind: 'component', name: 'acme:price', within: identityKey(summer), nth: 0 });
+  assert.deepEqual(priceIn(again, 'Summer sale'), priceIn(first, 'Summer sale'), 'the price in Summer sale is the same part after the move');
+
+  // One plugin, two components: one kind, two parts.
+  assert.equal(kindKey(spring), 'plugin|layout_builder_component|inline_block:card');
+  assert.equal(kindKey(summer), kindKey(spring));
+  assert.notEqual(identityKey(summer), identityKey(spring));
+  // A block placed in a region and the same block placed in a layout: two things, and two kinds.
+  const region = one(before, 'Promo in a region').identity!;
+  const layout = one(before, 'Promo in a layout').identity!;
+  assert.deepEqual(region, { kind: 'config', type: 'block', id: 'acme_promo', plugin: `block_content:${UUID.promo}` });
+  assert.notEqual(identityKey(layout), identityKey(region));
+  assert.notEqual(kindKey(layout), kindKey(region));
+  // A default layout shared by two articles: one UUID in the section storage, a part on each, never one identity.
+  const titles = ['Title of Northwind news', 'Title of Acme notes'].map((l) => one(before, l).identity!);
+  assert.deepEqual(titles, [lb(UUID.teaser, LB.title, 'field_block:node:article:title'), lb(UUID.notes, LB.title, 'field_block:node:article:title')]);
+  assert.equal(kindKey(titles[0]!), kindKey(titles[1]!));
+
+  // Nothing stable or plain to name it by: no identity, never a cleaned-up one.
+  for (const label of ['Odd component', 'Spaced component', 'Title of Sample']) assert.equal(one(before, label).identity, undefined, label);
 });
 
 test('the helper’s identity key is identityKey(), byte for byte', (t) => {
