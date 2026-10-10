@@ -823,6 +823,34 @@ describe('what a WordPress page offers to change, and what saving it writes, und
     assert.deepEqual(locked.rest, []);
   });
 
+  test('words bound to post meta save to that field through the post’s REST route; a field the binding cannot read, or the user cannot edit, says why', () => {
+    const bound = (key: string): string => `<!-- wp:paragraph {"metadata":{"bindings":{"content":{"source":"core/post-meta","args":{"key":"${key}"}}}}} -->\n<p>Placeholder</p>\n<!-- /wp:paragraph -->`;
+    const registered = { page: { subtitle: { show_in_rest: true, type: 'string', description: 'Subtitle', revisions_enabled: true }, hidden: { show_in_rest: false, type: 'string' } } };
+    const r = run(page(`${bound('subtitle')}\n\n${bound('hidden')}\n\n${bound('_secret_plan')}`, {
+      registered, meta: { 7: { subtitle: 'Baked at <em>dawn</em>', hidden: 'x', _secret_plan: 'y' } },
+      saves: [{ find: 'kept in the field “subtitle”', value: 'Baked at <strong>six</strong>' }],
+    }));
+    const e = target(r, 'kept in the field “subtitle”');
+    assert.equal(e.kind, 'meta');
+    assert.equal(e.why, undefined);
+    assert.equal(e.value, 'Baked at <em>dawn</em>');
+    assert.equal(e.revisions, true, 'the field keeps revisions (revisions_enabled)');
+    assert.match(e.label, /shows wherever that field shows/);
+    assert.ok(r.answers[0]?.data.ok, r.answers[0]?.data.error);
+    assert.deepEqual(r.rest[0], ['POST', '/wp/v2/pages/7', { meta: { subtitle: 'Baked at <strong>six</strong>' } }], 'through the page’s REST route, as the editor’s binding saves it');
+    assert.equal(r.meta[7]?.subtitle, 'Baked at <strong>six</strong>');
+    assert.match(r.posts[7] ?? '', /<p>Placeholder<\/p>/, 'the block’s own markup is not touched');
+    // The block's own words say where they come from.
+    const block = edits(r).find((x) => x.label.startsWith('Paragraph block'));
+    assert.match(String(prop(block!, 'content').description), /field “subtitle”/);
+    for (const key of ['hidden', '_secret_plan']) assert.match(target(r, `kept in the field “${key}”`).why ?? '', /^WordPress keeps no such thing: /, key);
+
+    const cannot = run(page(bound('subtitle'), { registered, meta: { 7: { subtitle: 'a' } }, cannot: ['edit_post_meta:7:subtitle'] }));
+    assert.match(target(cannot, 'kept in the field “subtitle”').why ?? '', /edit_post_meta/);
+    const noFields = run(page(bound('subtitle'), { registered, meta: { 7: { subtitle: 'a' } }, unsupported: ['page:custom-fields'] }));
+    assert.match(target(noFields, 'kept in the field “subtitle”').why ?? '', /^Wanigan does not do this yet: .*custom fields/);
+  });
+
   test('a static block’s own settings stay read-only, saying WordPress keeps no PHP save() to write them', () => {
     const r = run(page('<!-- wp:heading {"level":3} -->\n<h3 class="wp-block-heading">Hours</h3>\n<!-- /wp:heading -->'));
     const e = target(r, 'Heading block');

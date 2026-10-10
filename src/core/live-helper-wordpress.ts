@@ -1867,15 +1867,12 @@ final class Wanigan_Live {
 			$nav = get_post((int) $attrs['ref']);
 			if ($nav && current_user_can('edit_theme_options')) $edits[] = self::link_edit('menu-link', 'Edit the navigation “' . $nav->post_title . '” in the Site Editor', admin_url('site-editor.php?p=' . rawurlencode('/wp_navigation/' . $nav->ID) . '&canvas=edit'), 'edit_theme_options', true);
 		}
-		if (!empty($m['bindings'])) {
-			foreach ($m['bindings'] as $b) {
-				if ($b['source'] === 'core/post-meta' && !empty($b['args']['key']) && isset($m['context']['postId'])) {
-					$post = get_post((int) $m['context']['postId']);
-					if ($post) {
-						$pe = self::post_edits($post);
-						if (isset($pe['meta:' . $b['args']['key']])) $edits[] = $pe['meta:' . $b['args']['key']];
-					}
-				}
+		$bound = isset($attrs['metadata']['bindings']) && is_array($attrs['metadata']['bindings']) ? $attrs['metadata']['bindings'] : array();
+		$supported = $bound ? self::spliced_attributes($name) : array();
+		foreach ($bound as $attr => $b) {
+			if (is_array($b) && isset($b['source']) && $b['source'] === 'core/post-meta' && in_array($attr, $supported, true)) {
+				$e = self::bound_edit($name, (string) $attr, $b, $m, $type);
+				if ($e) $edits[] = $e;
 			}
 		}
 		if (!empty($m['map'])) {
@@ -2002,6 +1999,7 @@ final class Wanigan_Live {
 		foreach ($node['innerContent'] as $chunk) if (is_string($chunk)) $own .= $chunk;
 		$empty = trim($own) === '';
 		$bindings = isset($node['attrs']['metadata']['bindings']) && is_array($node['attrs']['metadata']['bindings']) ? $node['attrs']['metadata']['bindings'] : array();
+		$supported = $bindings ? self::spliced_attributes($name) : array();
 		$props = array();
 		$value = array();
 		$writable = 0;
@@ -2012,8 +2010,9 @@ final class Wanigan_Live {
 			$source = isset($def['source']) ? $def['source'] : null;
 			$why = null;
 			$current = null;
-			if (isset($bindings[$attr]) || (isset($bindings['__default']) && $source !== null)) {
-				$why = 'Bound to ' . (isset($bindings[$attr]['source']) ? $bindings[$attr]['source'] : 'a source') . ': it shows that source’s value, so change it there.';
+			// class-wp-block.php process_block_bindings() binds only the attributes bindings support for this block type.
+			if ((isset($bindings[$attr]) || isset($bindings['__default'])) && in_array($attr, $supported, true)) {
+				$why = self::bound_why(isset($bindings[$attr]) ? $bindings[$attr] : $bindings['__default']);
 			}
 			if ($source === null) {
 				$current = array_key_exists($attr, $node['attrs']) ? $node['attrs'][$attr] : (isset($def['default']) ? $def['default'] : null);
@@ -2055,6 +2054,63 @@ final class Wanigan_Live {
 		if ($why) $target['why'] = $why;
 		self::$edits[$id] = $target;
 		self::$private[$id] = array('type' => 'block', 'store' => $store, 'path' => $map['path'], 'fp' => md5(serialize_block($node)), 'hash' => md5(self::$trees[$store]['content']), 'name' => $name);
+		return $id;
+	}
+
+	/** Why a bound attribute is not changed in the block's own markup: where its value comes from instead. */
+	private static function bound_why($b): string {
+		$source = is_array($b) && isset($b['source']) ? (string) $b['source'] : '';
+		$key = is_array($b) && isset($b['args']['key']) ? (string) $b['args']['key'] : '';
+		switch ($source) {
+			case 'core/post-meta':
+				return 'Bound to the post field “' . $key . '”: the page shows that field, so its words are saved there (its own edit, “kept in the field”), not in this block.';
+			case 'core/post-data':
+				return self::NOT_YET . 'it shows the post’s ' . ($key !== '' ? $key : 'data') . ', which WordPress works out from the post itself. Change the post.';
+			case 'core/term-data':
+				return self::NOT_YET . 'it shows the term’s ' . ($key !== '' ? $key : 'data') . '. Change the term.';
+			case '':
+				return self::NO_SUCH . 'it is bound to a source WordPress does not name.';
+		}
+		return self::NO_SUCH . 'it shows a value from “' . $source . '”, a source WordPress core has no way to save to (a plugin provides it). Change it where that plugin keeps it.';
+	}
+
+	/**
+	 * Words a block shows from a post's meta (block-bindings/post-meta.php): saved to that field through the post's
+	 * REST route, as the editor's binding saves them (setValues() editEntityRecord()), when core's binding can read the
+	 * field (registered for REST and not protected), the post type saves meta over REST (custom-fields) and the user
+	 * may edit that field (edit_post_meta). It shows wherever that field shows.
+	 */
+	private static function bound_edit(string $name, string $attr, array $b, array $m, $type): ?string {
+		$key = isset($b['args']['key']) ? (string) $b['args']['key'] : '';
+		$post = isset($m['context']['postId']) ? get_post((int) $m['context']['postId']) : null;
+		if ($key === '' || !$post instanceof WP_Post) return null;
+		$pid = $post->ID;
+		$id = 'bound-' . $pid . '-' . self::short($key);
+		if (isset(self::$edits[$id])) return $id;
+		$pt = get_post_type_object($post->post_type);
+		$noun = $pt ? strtolower($pt->labels->singular_name) : 'post';
+		$registered = get_registered_meta_keys('post', $post->post_type) + get_registered_meta_keys('post', '');
+		$reg = isset($registered[$key]) && is_array($registered[$key]) ? $registered[$key] : array();
+		$secret = (bool) preg_match(self::SECRET, $key);
+		$schema = array('type' => isset($reg['type']) ? $reg['type'] : 'string', 'title' => self::block_label($name) . ' ' . $attr);
+		$def = $type && isset($type->attributes[$attr]) && is_array($type->attributes[$attr]) ? $type->attributes[$attr] : array();
+		if (isset($def['source']) && in_array($def['source'], array('rich-text', 'html'), true)) {
+			$schema['contentMediaType'] = 'text/html';
+			$schema['description'] = 'The field’s value: WordPress prints it in the block as rich text, cleaned by wp_kses_post().';
+		}
+		$target = array('id' => $id, 'kind' => 'meta', 'label' => self::block_label($name) . ' words, kept in the field “' . $key . '” of ' . $noun . ' “' . self::cut(wp_strip_all_tags($post->post_title), 60) . '” (shows wherever that field shows)', 'via' => 'schema', 'schema' => $schema, 'value' => $secret ? null : get_post_meta($pid, $key, true), 'revisions' => !empty($reg['revisions_enabled']));
+		$route = rest_get_route_for_post($post);
+		$why = null;
+		if (is_protected_meta($key, 'post')) $why = self::NO_SUCH . 'the field “' . $key . '” is protected (its name starts with _), and WordPress’s post-meta binding does not read protected fields: the page shows the block’s own saved words.';
+		elseif (empty($reg['show_in_rest'])) $why = self::NO_SUCH . 'the field “' . $key . '” is not registered for the REST API, and WordPress’s post-meta binding reads only fields that are: the page shows the block’s own saved words.';
+		elseif ($secret) $why = 'Wanigan does not show or change a value that looks like a secret.';
+		elseif (!post_type_supports($post->post_type, 'custom-fields')) $why = self::NOT_YET . 'this ' . $noun . ' type does not support custom fields, so its REST route, which is how Wanigan saves, does not save the field.';
+		elseif ($route === '') $why = self::NOT_YET . 'this ' . $noun . ' type is not in the REST API (show_in_rest is off), which is how Wanigan saves. Change it in wp-admin.';
+		else $why = self::post_why($post, $noun);
+		if (!$why && is_user_logged_in() && !current_user_can('edit_post_meta', $pid, $key)) $why = 'Your WordPress user cannot change the field “' . $key . '” of this ' . $noun . ' (edit_post_meta).';
+		if ($why) $target['why'] = $why;
+		self::$edits[$id] = $target;
+		self::$private[$id] = array('type' => 'post', 'post' => $pid, 'field' => 'meta', 'key' => $key, 'route' => $route);
 		return $id;
 	}
 
