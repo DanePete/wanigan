@@ -298,11 +298,17 @@
   min-height: 0;
 }
 
+/*
+  The files over the commit box. Tall, the files take the room and scroll on their own; short (the code editor's
+  drawer open beneath), the files keep a few rows and the panel scrolls, so the commit box is never cut or scrolled
+  inside itself.
+*/
 .git-files > .panel-body {
   display: flex;
   flex-direction: column;
   padding: 0;
-  overflow: hidden;
+  overflow-x: hidden;
+  overflow-y: auto;
 }
 
 .changes-summary {
@@ -319,8 +325,8 @@
 }
 
 .git-changes .changes-files {
-  flex: 1;
-  min-height: 0;
+  flex: 1 1 0;
+  min-height: calc(var(--space-12) * 3);
   margin: 0;
   padding: var(--space-1) var(--space-2) var(--space-3);
   overflow-y: auto;
@@ -469,8 +475,6 @@ span.git-file-box {
   /* One column the width of the panel, never of its widest label. */
   grid-template-columns: minmax(0, 1fr);
   gap: var(--space-2);
-  max-height: 64%;
-  overflow-y: auto;
   padding: var(--space-3);
   border-top: var(--hairline) solid var(--line);
   background: var(--surface);
@@ -622,6 +626,16 @@ span.git-file-box {
 .git .diff-head {
   flex-wrap: wrap;
   row-gap: var(--space-1);
+}
+
+/*
+  A sticky header sticks inside its scroller's padding: the canvas's top padding would hold it that far down,
+  over the file's first lines. Each scroller of sheets has --space-4 at its top, so the header sticks that much higher.
+*/
+.git .changes-diff .diff-head,
+.git .commit-pane .diff-head,
+.git .stash-pane .diff-head {
+  top: calc(-1 * var(--space-4));
 }
 
 .git .diff .view-pad {
