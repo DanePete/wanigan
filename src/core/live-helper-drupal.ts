@@ -21,6 +21,7 @@ import { DRUPAL_FIND_FILES } from './live-helper-drupal-find.ts';
 import { DRUPAL_AI_FILES } from './live-helper-drupal-ai.ts';
 import { DRUPAL_LIBRARY_FILES } from './live-helper-drupal-library.ts';
 import { DRUPAL_USAGE_FILES } from './live-helper-drupal-usage.ts';
+import { DRUPAL_VERIFY_FILES, DRUPAL_VERIFY_MODULE, DRUPAL_VERIFY_SERVICES } from './live-helper-drupal-verify.ts';
 
 export const DRUPAL_HELPER_VERSION = 4;
 export const DRUPAL_HELPER_MODULE = 'wanigan_live';
@@ -805,9 +806,9 @@ const PIECE_TEMPLATE = `{#
 /** The module's files, by their path inside its folder. */
 export const DRUPAL_HELPER_FILES: Readonly<Record<string, string>> = {
   'wanigan_live.info.yml': INFO,
-  'wanigan_live.services.yml': SERVICES,
+  'wanigan_live.services.yml': SERVICES + DRUPAL_VERIFY_SERVICES,
   'wanigan_live.routing.yml': ROUTING,
-  'wanigan_live.module': MODULE,
+  'wanigan_live.module': MODULE + DRUPAL_VERIFY_MODULE,
   'src/Token.php': TOKEN,
   'src/PageCache/DenyWanigan.php': DENY,
   'src/Controller/LiveController.php': CONTROLLER,
@@ -821,4 +822,5 @@ export const DRUPAL_HELPER_FILES: Readonly<Record<string, string>> = {
   ...DRUPAL_AI_FILES,
   ...DRUPAL_LIBRARY_FILES,
   ...DRUPAL_USAGE_FILES,
+  ...DRUPAL_VERIFY_FILES,
 };

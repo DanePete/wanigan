@@ -8,12 +8,15 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { compileLayer, layerTextHash, type LayerApplied, type LayerEdit, type LayerImplemented, type LayerPickTarget, type LayerVerdict } from '../shared/design-layer.ts';
-import type { Bitmap, ElementSnap } from '../shared/layer-verify.ts';
+import { parseVerdict, type Bitmap, type ElementSnap } from '../shared/layer-verify.ts';
 import type { LiveEditSaved } from '../shared/live-lens.ts';
 import type { EditTarget, LiveTrace, PartIdentity, TracePart } from '../shared/live-trace.ts';
 import { folderOf } from './live-capture.ts';
 import { saveSchemaEdit } from './live-edit-save.ts';
-import { madeOn, pathOf, traceProblem, wireLiveLayer, type LayerRender, type LayerRenderRequest } from './live-layer.ts';
+import {
+  areasOf, beforeCheck, beforeKept, madeOn, masksOf, pathOf, steadyOf, traceProblem, wireLiveLayer,
+  type BeforeKept, type LayerBeforeRender, type LayerRender, type LayerRenderRequest,
+} from './live-layer.ts';
 
 // Plainly not a key: the helper's real token is random hex the core keeps.
 const TOKEN = ['stand', 'in', 'token'].join('-');
@@ -96,7 +99,10 @@ function modelPage() {
 /** What the stand-in site answers a schema save (`POST /_wanigan/edit/<id>`): a status and its JSON. */
 interface SiteAnswer { status: number; body: unknown }
 
-function wire(over: { edits?: LayerEdit[]; url?: string; trace?: LiveTrace | null; trusted?: boolean; enabled?: boolean; render?: LayerRender; renderMs?: number; saved?: { ok: boolean; error: string | null }; refuseMark?: string; site?: SiteAnswer } = {}) {
+function wire(over: {
+  edits?: LayerEdit[]; url?: string; trace?: LiveTrace | null; trusted?: boolean; enabled?: boolean; render?: LayerRender; renderBefore?: LayerBeforeRender; renderMs?: number;
+  saved?: { ok: boolean; error: string | null }; refuseMark?: string; site?: SiteAnswer; decode?: (png: Buffer) => Promise<Bitmap>;
+} = {}) {
   const handlers = new Map<string, (...args: unknown[]) => unknown>();
   const dataDir = mkdtempSync(join(tmpdir(), 'wanigan-layer-'));
   const { page, run } = modelPage();
@@ -128,6 +134,9 @@ function wire(over: { edits?: LayerEdit[]; url?: string; trace?: LiveTrace | nul
     },
   };
   const renders: LayerRenderRequest[] = [];
+  const befores: LayerRenderRequest[] = [];
+  /** What reached the site and the hidden windows, in order: a page from before is kept before the save. */
+  const order: string[] = [];
   const traced = over.trace === undefined ? trace() : over.trace;
   const wired = wireLiveLayer({
     ipc: { handle: (channel: string, fn: (...args: unknown[]) => unknown) => { handlers.set(channel, fn); } } as never,
@@ -137,7 +146,7 @@ function wire(over: { edits?: LayerEdit[]; url?: string; trace?: LiveTrace | nul
     current: () => ({ projectId: 'p1', base: BASE, token: TOKEN, env: null, webContents: webContents as never }),
     run,
     trace: async () => (traced ? { state: 'ok', trace: traced } : { state: 'missing' }),
-    helperSave: async (field, before, after, at) => { saves.push([field, before, after, at]); return over.saved ? { ...over.saved, label: 'Paddling 101' } : { ok: true, error: null, label: 'Paddling 101', revision: '42' }; },
+    helperSave: async (field, before, after, at) => { order.push('save'); saves.push([field, before, after, at]); return over.saved ? { ...over.saved, label: 'Paddling 101' } : { ok: true, error: null, label: 'Paddling 101', revision: '42' }; },
     // live-inspect.ts schemaSave, played here: the target found in the trace the view holds (Electron's ipcMain cannot
     // load under this runner), then the real save in live-edit-save.ts against a stand-in site.
     schemaSave: async (id, value, tracedId): Promise<LiveEditSaved> => {
@@ -147,6 +156,7 @@ function wire(over: { edits?: LayerEdit[]; url?: string; trace?: LiveTrace | nul
       return saveSchemaEdit({
         trace: traced.id, target: t, reload: () => webContents.reloadIgnoringCache(),
         post: async (path, body) => {
+          order.push('save');
           posts.push({ path, body: JSON.parse(body) as unknown });
           const a = over.site ?? { status: 200, body: { ok: true, revision: '43' } };
           return new Response(JSON.stringify(a.body), { status: a.status, headers: { 'Content-Type': 'application/json' } });
@@ -159,13 +169,19 @@ function wire(over: { edits?: LayerEdit[]; url?: string; trace?: LiveTrace | nul
     pageScript: () => '/* the page script */',
     dataDir,
     render: async (r) => { renders.push(r); return over.render ? over.render(r) : { error: 'no render in this test' }; },
+    renderBefore: async (r) => { order.push(`before ${r.width}`); befores.push(r); return over.renderBefore ? over.renderBefore(r) : { error: 'no render in this test' }; },
+    ...(over.decode ? { decode: over.decode } : {}),
     encode: async () => Buffer.from('diff-png'),
-    now: () => 1_000,
+    now: () => 1_700_000_000_000,
+    seed: () => 4242,
     ...(over.renderMs ? { renderMs: over.renderMs } : {}),
   });
   const invoke = <T>(channel: string, ...args: unknown[]): Promise<T> => (handlers.get(channel) as (...a: unknown[]) => Promise<T>)({}, ...args);
   return {
-    page, marks, saves, posts, sheets, renders, dataDir, wired,
+    page, marks, saves, posts, sheets, renders, befores, order, dataDir, wired,
+    /** What was kept of the page as it was for an edit, as verifyNow reads it. */
+    kept: (id: string): BeforeKept | null => { try { return beforeKept(JSON.parse(readFileSync(join(dataDir, 'live-layer', folderOf('p1'), id, 'before', 'meta.json'), 'utf8'))); } catch { return null; } },
+    setEdits: (next: LayerEdit[]) => { edits = next; },
     edits: () => edits,
     go: (to: string) => { url = to; },
     apply: () => invoke<LayerApplied>('live:layerApply'),
@@ -936,7 +952,7 @@ test('a token verified with other edits does not switch off step 3 for them: a l
   } finally { w.done(); }
 });
 
-test('a page that went on below the capture limit: the verdict says how far down it was compared, passing or not', async () => {
+test('a page that went on below the capture limit: the verdict says how far down it was compared, passing or not, and never as a difference', async () => {
   const e = edit({ state: 'implemented' });
   const long = (r: LayerRenderRequest, bitmap: Bitmap) => ({
     png: Buffer.from('x'), bitmap, elements: [heading(e.id, 'rgb(18, 52, 86)')], found: [e.id], ...(r.width === 1440 ? { cut: { full: 9_412 } } : {}),
@@ -945,19 +961,309 @@ test('a page that went on below the capture limit: the verdict says how far down
   try {
     const v = await w.verify(e.id);
     assert.equal(v.ok, true);
-    assert.deepEqual(v.differences, [{ kind: 'style', edit: e.id, width: 1440, element: 'The page', property: 'compared', design: 'down to 6,000 px', result: 'not below that: the page is 9,412 px tall, and nothing under 6,000 px was compared' }],
-      'only the width that was cut, and the verdict still passes as far down as it compared');
-    assert.deepEqual(w.marks.map((m) => [m.state, m.verdict?.differences.length]), [['verified', 1]]);
+    assert.deepEqual(v.differences, [], 'a verdict that passed lists no difference');
+    assert.deepEqual(v.cut, [{ width: 1440, to: 6_000, full: 9_412 }], 'only the width that was cut, said as how far down it was compared');
+    assert.deepEqual(w.marks.map((m) => [m.state, m.verdict?.cut?.length]), [['verified', 1]]);
   } finally { w.done(); }
-  // Failing, what differs comes first and what was not compared after it.
+  // Failing, what differs is said, and how far down it was compared beside it.
   const f = edit({ state: 'implemented' });
   const x = wire({ edits: [f], render: async (r) => ({ ...long(r, r.design ? blank(64, 200) : painted(blank(64, 200), { x: 0, y: 150, width: 64, height: 20 }, 0)), elements: [heading(f.id, 'rgb(18, 52, 86)')], found: [f.id] }) });
   try {
     const v = await x.verify(f.id);
     assert.equal(v.failed, 'rest');
-    const last = v.differences.at(-1);
-    assert.deepEqual([v.differences[0]?.kind, last?.kind === 'style' ? last.property : null], ['leak', 'compared']);
+    assert.ok(v.differences.length > 0 && v.differences.every((d) => d.kind === 'leak'));
+    assert.deepEqual(v.cut, [{ width: 1440, to: 6_000, full: 9_412 }]);
   } finally { x.done(); }
+});
+
+/* ── the page as it was, kept just before an edit is made real ── */
+
+/** Pictures as PNG stand-ins: each render's bitmap kept by its PNG's bytes, for the verification to read back. */
+function pictures() {
+  const by = new Map<string, Bitmap>();
+  let n = 0;
+  return {
+    png: (b: Bitmap): Buffer => { const key = `png-${++n}`; by.set(key, b); return Buffer.from(key); },
+    decode: async (png: Buffer): Promise<Bitmap> => { const b = by.get(png.toString()); if (!b) throw new Error('not a picture of this test'); return b; },
+  };
+}
+
+/** A made-up page: the edited heading at 20, 40, and a paragraph near the foot of the page. */
+const HEADING = { x: 20, y: 40, width: 40, height: 24 };
+const PARAGRAPH = { x: 0, y: 150, width: 64, height: 20 };
+
+/**
+ * A title made real through the helper: the page from before shows the heading as the layer designed it and nothing
+ * else changed; today's design and result show the native change, which `leak` says also reached the paragraph.
+ */
+function retitled(leak: boolean) {
+  const pics = pictures();
+  const e = edit({ label: 'Title', change: { type: 'text', value: 'Pagayer 102' }, target: { part: title(), inner: null, selector: null, textHash: layerTextHash('Pagayer 101') } });
+  const designed = (b: Bitmap): Bitmap => painted(b, HEADING, 18);
+  const now = (b: Bitmap): Bitmap => (leak ? painted(designed(b), PARAGRAPH, 90) : designed(b));
+  const w = wire({
+    edits: [e], decode: pics.decode,
+    renderBefore: async () => ({
+      page: { png: pics.png(blank(64, 200)), bitmap: blank(64, 200), elements: [heading(e.id, 'rgb(0, 0, 0)')], found: [e.id] },
+      design: { png: pics.png(designed(blank(64, 200))), bitmap: designed(blank(64, 200)), elements: [heading(e.id, 'rgb(18, 52, 86)')], found: [e.id] },
+    }),
+    render: async (r) => ({ png: pics.png(now(blank(64, 200))), bitmap: now(blank(64, 200)), elements: [heading(e.id, 'rgb(18, 52, 86)')], found: [e.id], steady: { t: r.hold!.t, s: r.hold!.s, views: [] } }),
+  });
+  w.page.parts = { p6: { '': [words('Pagayer 101', 'node:12:title:string:fr')] } };
+  return { w, e };
+}
+
+test('making words real keeps the page as it was first: without the layer and with the edit designed on it, at the verification widths, under the edit’s folder', async () => {
+  const { w, e } = retitled(false);
+  try {
+    await w.apply();
+    const done = await w.implement(e.id);
+    assert.equal(done.ok, true);
+    assert.deepEqual(w.order, ['before 390', 'before 1440', 'save'], 'rendered at each width before anything was saved');
+    assert.deepEqual(w.befores.map((r) => [r.width, r.url, r.path, r.edits.map((x) => [x.id, x.state])]), [
+      [390, `${BASE}paddling`, '/paddling', [[e.id, 'draft']]], [1440, `${BASE}paddling`, '/paddling', [[e.id, 'draft']]],
+    ], 'the page it is on, with that one edit');
+    const hold = w.befores[0]!.hold;
+    assert.deepEqual(hold, { t: 1_700_000_000, s: 4242 }, 'held at the time it was kept, with one seed');
+    assert.ok(w.befores.every((r) => r.hold?.t === hold?.t && r.hold?.s === hold?.s), 'every width with the same hold');
+    const dir = join(w.dataDir, 'live-layer', folderOf('p1'), e.id, 'before');
+    for (const f of ['390-page.png', '390-design.png', '1440-page.png', '1440-design.png', 'meta.json']) assert.ok(existsSync(join(dir, f)), f);
+    const kept = w.kept(e.id);
+    assert.deepEqual([kept?.page, kept?.hold, kept?.inSite, Object.keys(kept?.widths ?? {}), kept?.widths['390']?.found], ['/paddling', hold, [], ['390', '1440'], true]);
+    assert.deepEqual(kept?.widths['390']?.elements.map((x) => x.values.color), ['rgb(18, 52, 86)'], 'the touched element as designed, where step 3 leaves it out');
+  } finally { w.done(); }
+});
+
+test('a style handed to an agent keeps the page as it is then, once: asked again, the page that may have its change is not kept over it', async () => {
+  const e = edit();
+  const pics = pictures();
+  let n = 0;
+  const w = wire({ edits: [e], renderBefore: async () => { n++; return { page: { png: pics.png(blank(64, 200)), bitmap: blank(64, 200), elements: [], found: [e.id] }, design: { png: pics.png(blank(64, 200)), bitmap: blank(64, 200), elements: [heading(e.id, 'rgb(18, 52, 86)')], found: [e.id] } }; } });
+  try {
+    const a = await w.implement(e.id);
+    assert.ok(!a.ok && a.route === 'agent');
+    assert.equal(n, 2, 'both widths, when it was handed over');
+    const first = w.kept(e.id)?.at;
+    await w.implement(e.id);
+    assert.equal(n, 2, 'not again');
+    assert.equal(w.kept(e.id)?.at, first);
+  } finally { w.done(); }
+  // A render that fails is kept as why; the edit is made real all the same.
+  const t = edit({ label: 'Title', change: { type: 'text', value: 'Pagayer 102' }, target: { part: title(), inner: null, selector: null, textHash: layerTextHash('Pagayer 101') } });
+  const x = wire({ edits: [t] });
+  try {
+    x.page.parts = { p6: { '': [words('Pagayer 101', 'node:12:title:string:fr')] } };
+    await x.apply();
+    assert.equal((await x.implement(t.id)).ok, true);
+    assert.deepEqual(x.kept(t.id)?.failed, { 390: 'no render in this test', 1440: 'no render in this test' });
+  } finally { x.done(); }
+});
+
+test('step 3 compares the result with the page as it was: a native change that reached beyond the touched elements fails, though the design shows it too', async () => {
+  const { w, e } = retitled(true);
+  try {
+    await w.apply();
+    assert.equal((await w.implement(e.id)).ok, true);
+    const hold = w.befores[0]!.hold;
+    const v = await w.verify(e.id, { widths: [390] });
+    assert.ok(w.renders.every((r) => r.hold?.t === hold?.t && r.hold?.s === hold?.s), 'every render held as the page from before was');
+    assert.deepEqual([v.ok, v.failed], [false, 'rest'], 'the paragraph changed, and the design (today’s page with the layer) has it too');
+    assert.ok(v.differences.length > 0 && v.differences.every((d) => d.kind === 'leak' && d.against?.edit === e.id && d.against.at === 1_700_000_000_000));
+    assert.ok(v.differences.some((d) => d.kind === 'leak' && d.rect.y <= PARAGRAPH.y && d.rect.y + d.rect.height >= PARAGRAPH.y + PARAGRAPH.height), 'boxed where it is');
+    assert.deepEqual(v.before, { ran: true, at: 1_700_000_000_000, widths: [390] });
+    assert.equal(v.pictures[0]?.before, join(w.dataDir, 'live-layer', folderOf('p1'), e.id, 'before', '390-page.png'), 'the page as it was, pictured for the tray');
+    assert.ok(v.pictures[0]?.diff, 'the difference against it is pictured');
+    assert.deepEqual(w.marks.map((m) => m.state), ['implemented', 'implemented'], 'still in the site, with the verdict');
+  } finally { w.done(); }
+  // The same change without the leak passes, compared with the page before too.
+  const ok = retitled(false);
+  try {
+    await ok.w.apply();
+    await ok.w.implement(ok.e.id);
+    const v = await ok.w.verify(ok.e.id, { widths: [390] });
+    assert.deepEqual([v.ok, v.before, v.held], [true, { ran: true, at: 1_700_000_000_000, widths: [390] }, { at: 1_700_000_000 }]);
+    assert.equal(existsSync(join(ok.w.dataDir, 'live-layer', folderOf('p1'), ok.e.id, 'before', 'meta.json')), true, 'verifying keeps the page from before');
+  } finally { ok.w.done(); }
+});
+
+test('with no page from before, step 3 says it could not run and why, and the verdict does not claim it', async () => {
+  const e = edit({ state: 'implemented' });
+  const w = wire({ edits: [e], render: renders(e, { design: (b) => b, result: (b) => b }) });
+  try {
+    const v = await w.verify(e.id, { widths: [390] });
+    assert.equal(v.ok, true, 'steps 1 to 3 against the design passed');
+    assert.ok(v.before && !v.before.ran && /^No page from before was kept for it/.test(v.before.why), JSON.stringify(v.before));
+    assert.equal(v.pictures[0]?.before, null);
+    assert.ok(w.renders.every((r) => r.hold?.t === 1_700_000_000 && r.hold.s === 4242), 'held all the same, at the time it was verified');
+  } finally { w.done(); }
+});
+
+test('an edit made real on the page after the page from before was kept: step 3 cannot compare with it, and says which', async () => {
+  const { w, e } = retitled(false);
+  try {
+    await w.apply();
+    await w.implement(e.id);
+    const other = edit({ label: 'Lead paragraph', state: 'implemented' });
+    w.setEdits([...w.edits(), other]);
+    const v = await w.verify(e.id, { widths: [390] });
+    assert.ok(v.before && !v.before.ran && v.before.why.startsWith('“Lead paragraph” was made real on its page after its page from before was kept'), JSON.stringify(v.before));
+    assert.equal(v.ok, true);
+    // An edit already in the site when it was kept is in that page: it does not stop the comparison.
+    const earlier = retitled(false);
+    try {
+      const before = edit({ label: 'Older', state: 'verified' });
+      earlier.w.setEdits([...earlier.w.edits(), before]);
+      await earlier.w.apply();
+      await earlier.w.implement(earlier.e.id);
+      assert.deepEqual(earlier.w.kept(earlier.e.id)?.inSite, [before.id]);
+      assert.equal((await earlier.w.verify(earlier.e.id, { widths: [390] })).before?.ran, true);
+    } finally { earlier.w.done(); }
+  } finally { w.done(); }
+  // An edit of another page, for that page only, does not count.
+  const elsewhere = edit({ page: '/about', state: 'implemented' });
+  const kept: BeforeKept = { at: 1, page: '/paddling', hold: { t: 1, s: 1 }, inSite: [], widths: { 390: { found: true, elements: [], masks: [], steady: null, cut: null } }, failed: {} };
+  const self = edit({ state: 'implemented' });
+  assert.equal(beforeCheck(self, kept, [390, 1440], [self, elsewhere]).ran, true);
+  assert.deepEqual(beforeCheck(self, kept, [1440], [self]), { ran: false, why: 'Its page from before was kept at 390 px, not at the widths verified.' });
+  assert.match((beforeCheck(self, { ...kept, widths: {}, failed: { 390: 'The page did not load within 30 seconds.' } }, [390], [self]) as { why: string }).why, /could not be rendered when it was made real: The page did not load/);
+  assert.match((beforeCheck(self, { ...kept, widths: { 390: { ...kept.widths['390']!, found: false } } }, [390], [self]) as { why: string }).why, /not on its page from before/);
+  assert.equal(beforeKept({ ...kept, inSite: ['Not An Id'] }), null, 'what is read back is checked');
+  const long = [1, 2, 3].map((i) => edit({ label: `${'A very long heading '.repeat(10)}${i}`.slice(0, 200), state: 'implemented' }));
+  const said = beforeCheck(self, kept, [390], [self, ...long]);
+  assert.ok(!said.ran && said.why.length <= 600 && parseVerdict({ at: 1, ok: true, failed: null, widths: [390], noise: { maxDiff: 0, pixels: 0 }, differences: [], pictures: [], before: said }), 'however long the labels it names, a verdict can say it');
+});
+
+/* ── what the site says changes between renders ── */
+
+test('a part the site says changes between renders is left out of the pixel steps and named; the floor is measured over the rest, so a leak elsewhere is no longer forgiven', async () => {
+  const e = edit({ state: 'implemented' });
+  // A random-order view at the foot of the page draws differently each render; the result also changed a band in the
+  // middle of the page by a little, which the view's noise would forgive page-wide.
+  const VIEW = { x: 0, y: 170, width: 64, height: 30 };
+  const views = (n: number) => (b: Bitmap): Bitmap => painted(b, VIEW, n % 2 ? 40 : 220);
+  const leak = (b: Bitmap): Bitmap => painted(b, { x: 0, y: 100, width: 8, height: 2 }, 250);
+  const masked = (mask: boolean): LayerRender => {
+    let n = 0;
+    return async (r) => ({
+      png: Buffer.from('x'), bitmap: r.design ? views(n++)(blank(64, 200)) : leak(views(n++)(blank(64, 200))), elements: [heading(e.id, 'rgb(18, 52, 86)')], found: [e.id],
+      ...(mask ? { masks: [{ label: 'Picks (view)', why: 'built afresh for every request (never cached)', rects: [VIEW], held: false }] } : {}),
+    });
+  };
+  const without = wire({ edits: [e], render: masked(false) });
+  try {
+    const v = await without.verify(e.id, { widths: [390] });
+    assert.deepEqual([v.ok, v.noise.maxDiff, v.masked], [true, 180, []], 'unmasked, the view’s noise forgives the leak (as before masks)');
+  } finally { without.done(); }
+  const w = wire({ edits: [e], render: masked(true) });
+  try {
+    const v = await w.verify(e.id, { widths: [390] });
+    assert.deepEqual([v.ok, v.failed, v.noise], [false, 'rest', { maxDiff: 0, pixels: 0 }], 'masked, the floor is what is left, and the leak shows');
+    assert.ok(v.differences.every((d) => d.kind === 'leak' && d.rect.y >= 96 && d.rect.y < 110), 'only the leak, never the view');
+    assert.deepEqual(v.masked, [{ label: 'Picks (view)', why: 'built afresh for every request (never cached)', widths: [390], nearEdit: false }]);
+  } finally { w.done(); }
+});
+
+test('an edited element inside a part that changes between renders is compared all the same, and the verdict says the part was near it', async () => {
+  const e = edit({ state: 'implemented' });
+  const BLOCK = { x: 0, y: 0, width: 64, height: 120 };
+  // The design's heading is another colour than the result's: inside the masked block, it must still fail.
+  const w = wire({ edits: [e], render: async (r) => ({
+    png: Buffer.from('x'), bitmap: r.design ? painted(blank(64, 200), { x: 20, y: 40, width: 40, height: 24 }, 18) : blank(64, 200),
+    elements: [heading(e.id, 'rgb(18, 52, 86)')], found: [e.id], masks: [{ label: 'Account menu (block)', why: 'made for each user', rects: [BLOCK], held: false }],
+  }) });
+  try {
+    const v = await w.verify(e.id, { widths: [390] });
+    assert.deepEqual([v.ok, v.failed], [false, 'pixels'], 'the edited element is never left out');
+    assert.deepEqual(v.masked, [{ label: 'Account menu (block)', why: 'made for each user', widths: [390], nearEdit: true }]);
+  } finally { w.done(); }
+});
+
+test('a render’s masks: the trace’s parts by their boxes on the page, and the blocks a helper marked, checked as they come back', () => {
+  const traced: LiveTrace = { ...trace(), parts: [
+    { id: 'p1', kind: 'block', label: 'Who’s online', cache: { tags: [], contexts: ['user'], maxAge: 'permanent' } },
+    { id: 'p2', kind: 'block', label: 'Gone', cache: { tags: [], contexts: ['user'], maxAge: 'permanent' } },
+  ] };
+  const areas = areasOf({
+    parts: { p1: [{ x: 0, y: 10, width: 300, height: 40 }, { x: 0, y: 0, width: 0, height: 10 }], 'bad id!': [{ x: 0, y: 0, width: 1, height: 1 }] },
+    vary: [
+      { reason: 'random-order', held: null, name: 'core/gallery', box: { x: 0, y: 100, width: 200, height: 80 } },
+      { reason: 'relative-date', held: 'time', name: 'core/post-date', box: { x: 0, y: 200, width: 80, height: 20 } },
+      { reason: '<script>', held: null, name: 'core/x', box: { x: 0, y: 0, width: 1, height: 1 } },
+      { reason: 'today', held: null, name: 'not a block name', box: { x: 0, y: 0, width: 10, height: 10 } },
+    ],
+  });
+  assert.deepEqual(Object.keys(areas.parts), ['p1'], 'a box with no area, and an id the trace could not have, are dropped');
+  assert.deepEqual(masksOf(traced, null, areas), [
+    { label: 'Who’s online (block)', why: 'made for each user', rects: [{ x: 0, y: 10, width: 300, height: 40 }], held: false },
+    { label: 'The core/gallery block', why: 'shows its items in a random order', rects: [{ x: 0, y: 100, width: 200, height: 80 }], held: false },
+    { label: 'The core/post-date block', why: 'shows a date relative to now', rects: [{ x: 0, y: 200, width: 80, height: 20 }], held: false },
+    { label: 'A block', why: 'shows today’s date', rects: [{ x: 0, y: 0, width: 10, height: 10 }], held: false },
+  ], 'a part not on the page has no box; a reason the page made up is dropped; a held mark counts only when the helper confirmed the hold');
+  assert.equal(masksOf(null, { t: 1, s: 1, views: [] }, areas)[1]?.held, true, 'confirmed: the relative date was held still');
+  assert.deepEqual(areasOf('nothing'), { parts: {}, vary: [] });
+});
+
+/* ── what the site's helper held still ── */
+
+test('the helper’s answer to a hold is read only for the hold that was sent, with the views it seeded', () => {
+  const hold = { t: 1_700_000_000, s: 42 };
+  assert.deepEqual(steadyOf('t=1700000000;s=42', hold), { t: 1_700_000_000, s: 42, views: [] });
+  assert.deepEqual(steadyOf('t=1700000000;s=42;views=picks:block_1,news:page_1', hold), { t: 1_700_000_000, s: 42, views: ['picks:block_1', 'news:page_1'] });
+  assert.equal(steadyOf('t=1700000000;s=43', hold), null, 'another seed');
+  assert.equal(steadyOf('t=1699999999;s=42', hold), null, 'another time');
+  assert.equal(steadyOf('t=1700000000;s=42', null), null, 'nothing was sent');
+  assert.equal(steadyOf(undefined, hold), null, 'the helper said nothing: an older helper, or one that refused');
+  assert.deepEqual(steadyOf('t=1700000000;s=42;views=Bad View!', hold), null);
+});
+
+test('a change the helper held still is compared when every render was held alike, and left out when one was not', async () => {
+  const e = edit({ state: 'implemented' });
+  // A relative date at the foot of the page, which the helper held still: the same in every render held alike. The
+  // result also changed it (a leak), which is caught only because the date is compared.
+  const DATE = { x: 0, y: 180, width: 64, height: 20 };
+  const held = (confirm: (r: LayerRenderRequest, n: number) => boolean): LayerRender => {
+    let n = 0;
+    return async (r) => {
+      const me = n++;
+      return {
+        png: Buffer.from('x'), bitmap: r.design ? blank(64, 200) : painted(blank(64, 200), DATE, 100), elements: [heading(e.id, 'rgb(18, 52, 86)')], found: [e.id],
+        masks: [{ label: 'The core/post-date block', why: 'shows a date relative to now', rects: [DATE], held: confirm(r, me) }],
+        ...(confirm(r, me) ? { steady: { t: r.hold!.t, s: r.hold!.s, views: [] } } : {}),
+      };
+    };
+  };
+  const alike = wire({ edits: [e], render: held(() => true) });
+  try {
+    const v = await alike.verify(e.id, { widths: [390] });
+    assert.deepEqual([v.ok, v.failed, v.masked, v.held], [false, 'rest', [], { at: 1_700_000_000 }], 'held alike: compared, and the leak in it shows');
+  } finally { alike.done(); }
+  const once = wire({ edits: [e], render: held((_r, n) => n !== 2) });
+  try {
+    const v = await once.verify(e.id, { widths: [390] });
+    assert.deepEqual([v.ok, v.held, v.masked], [true, null, [{ label: 'The core/post-date block', why: 'shows a date relative to now', widths: [390], nearEdit: false }]],
+      'one render the helper did not hold: what it would change is left out and named, and the verdict does not say it was held');
+  } finally { once.done(); }
+});
+
+test('against a page from before held at another time, what the hold keeps still is left out of that comparison', async () => {
+  const { w, e } = retitled(false);
+  try {
+    await w.apply();
+    await w.implement(e.id);
+    // The page from before was kept with a relative date the helper held still at its own time.
+    const kept = w.kept(e.id)!;
+    const meta = join(w.dataDir, 'live-layer', folderOf('p1'), e.id, 'before', 'meta.json');
+    const at = { t: kept.hold.t, s: kept.hold.s, views: [] };
+    const DATE = { label: 'The core/post-date block', why: 'shows a date relative to now', rects: [PARAGRAPH], held: true };
+    writeFileSync(meta, JSON.stringify({ ...kept, widths: { 390: { ...kept.widths['390'], masks: [DATE], steady: at } } }));
+    assert.equal((await w.verify(e.id, { widths: [390] })).before?.ran, true);
+    assert.deepEqual(w.renders.map((r) => r.hold), w.renders.map(() => kept.hold), 'today’s renders are held at its time, so the date is the same');
+    // Held at another time (a hold the helper refused then): the date is left out of that comparison, and said.
+    w.setEdits(w.edits().map((x) => ({ ...x, state: 'implemented' })));
+    writeFileSync(meta, JSON.stringify({ ...kept, widths: { 390: { ...kept.widths['390'], masks: [DATE], steady: null } } }));
+    const v = await w.verify(e.id, { widths: [390] });
+    assert.deepEqual(v.masked, [{ label: 'The core/post-date block', why: 'shows a date relative to now', widths: [390], nearEdit: false }]);
+  } finally { w.done(); }
 });
 
 test('a render that never answers fails its verification, saying so, and the next verification still runs', { timeout: 10_000 }, async () => {

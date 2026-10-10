@@ -12,9 +12,11 @@
 // - Before → after, one line per value; whether a target is fragile; why an
 //   orphaned edit is one.
 // - What undo and redo would do, and what a verification said: the step that
-//   failed, each difference, the noise floor, all in words.
+//   failed, each difference, the noise floor, what was left out of the pixel
+//   steps and why, whether step 3 compared the page as it was before, what was
+//   held still, and how far down a long page was compared, all in words.
 import type {
-  LayerApplied, LayerDifference, LayerEdit, LayerRect, LayerSnapshot, LayerState, LayerVerdict, VerifyStep,
+  LayerApplied, LayerCut, LayerDifference, LayerEdit, LayerMask, LayerRect, LayerSnapshot, LayerState, LayerVerdict, VerifyStep,
 } from '../../../shared/design-layer.ts';
 import { kindKey, type LiveTrace, type PartIdentity, type TracePart } from '../../../shared/live-trace.ts';
 
@@ -150,11 +152,31 @@ export const STEP_WORDS: Record<VerifyStep, string> = {
 const widthsWords = (widths: readonly number[]): string =>
   widths.length === 1 ? `${widths[0]} px` : `${widths.slice(0, -1).join(', ')} and ${widths[widths.length - 1]} px`;
 
-/** What a verification said, in one line. */
+/** What a verification said, in one line. A pass whose step 3 could not compare the page as it was before says so. */
 export function verdictHeadline(v: LayerVerdict): string {
+  if (v.ok && v.before && !v.before.ran) return `Verified at ${widthsWords(v.widths)} against the design: the site renders it as designed. It was not compared with the page as it was before.`;
   if (v.ok) return `Verified at ${widthsWords(v.widths)}: the site renders it as designed.`;
   return `Not verified at ${widthsWords(v.widths)}: the site does not render it as designed yet.`;
 }
+
+/** Whether step 3 compared the result with the page as it was before the edit was made real, or why not; null on a verdict kept before it could. */
+export function beforeWords(v: LayerVerdict): string | null {
+  if (!v.before) return null;
+  if (v.before.ran) return `The rest of the page was also compared with the page as it was just before this was made real, at ${widthsWords(v.before.widths)}.`;
+  return `Not compared with the page as it was before it was made real: ${v.before.why}`;
+}
+
+/** How far down a page that went on was compared: a statement, passing or not. */
+export const cutWords = (c: LayerCut): string =>
+  `At ${c.width} px the page is ${c.full.toLocaleString('en')} px tall: compared down to ${c.to.toLocaleString('en')} px, and nothing below that.`;
+
+/** What the site's helper held still for every render compared; null when it did not, or on a verdict kept before it could. */
+export const heldWords = (v: LayerVerdict): string | null => (v.held
+  ? 'The site’s helper held relative dates and random orders still for every render, so they were compared rather than left out.' : null);
+
+/** One part left out of the pixel steps, and why. */
+export const maskWords = (m: LayerMask): string =>
+  `${m.label}: ${m.why}, at ${widthsWords(m.widths)}.${m.nearEdit ? ' It is around an edited element, which was compared in full all the same.' : ''}`;
 
 /** Which step failed, and that the ones after it did not run. */
 export function failedWords(v: LayerVerdict): string | null {
@@ -162,9 +184,9 @@ export function failedWords(v: LayerVerdict): string | null {
   return v.failed === 'rest' ? `${STEP_WORDS.rest} failed.` : `${STEP_WORDS[v.failed]} failed; the steps after it did not run.`;
 }
 
-/** The noise floor, as the verdict states it: two numbers, never a percentage. */
+/** The noise floor, as the verdict states it: two numbers, never a percentage, and over what was not left out. */
 export const noiseWords = (v: LayerVerdict): string =>
-  `Noise floor: up to ${v.noise.maxDiff} of 255 in ${many(v.noise.pixels, 'pixel')}, from rendering the site twice.`;
+  `Noise floor: up to ${v.noise.maxDiff} of 255 in ${many(v.noise.pixels, 'pixel')}, from rendering the site twice${v.masked?.length ? ', over what was not left out' : ''}.`;
 
 const rectWords = (r: LayerRect): string => `${Math.round(r.width)} × ${Math.round(r.height)} at ${Math.round(r.x)}, ${Math.round(r.y)}`;
 const boxWords = (r: LayerRect): string => `a ${Math.round(r.width)} × ${Math.round(r.height)} box at ${Math.round(r.x)}, ${Math.round(r.y)}`;
@@ -175,6 +197,8 @@ export function differenceWords(d: LayerDifference): string {
     case 'style': return `At ${d.width} px, ${d.element}: ${d.property} is ${d.result} in the site, ${d.design} in the design.`;
     case 'box': return `At ${d.width} px, ${d.element}’s box is ${rectWords(d.result)} in the site, ${rectWords(d.design)} in the design.`;
     case 'pixels': return `At ${d.width} px, ${many(d.pixels, 'pixel')} differ around it, by up to ${d.maxDiff} of 255, in ${boxWords(d.rect)}.`;
-    case 'leak': return `At ${d.width} px, ${many(d.pixels, 'pixel')} differ away from every edited element, by up to ${d.maxDiff} of 255, in ${boxWords(d.rect)}: the change reached further than it should.`;
+    case 'leak': return d.against
+      ? `At ${d.width} px, ${many(d.pixels, 'pixel')} away from every edited element differ from the page as it was before it was made real (with it as designed on it), by up to ${d.maxDiff} of 255, in ${boxWords(d.rect)}: the change reached further than it should.`
+      : `At ${d.width} px, ${many(d.pixels, 'pixel')} differ away from every edited element, by up to ${d.maxDiff} of 255, in ${boxWords(d.rect)}: the change reached further than it should.`;
   }
 }

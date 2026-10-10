@@ -9,8 +9,10 @@
 // - Per edit: Discard (a draft or an orphaned one), Make it real (words through
 //   the site helper, or the owner's own template when the helper cannot; a style
 //   or token goes to an agent as intent, through the note the Inspector writes,
-//   never by starting a session), Verify (the site against the design, with
-//   the step that failed, each difference and the pictures), Retire (verified).
+//   never by starting a session), Verify (the site against the design and the
+//   page as it was before, with the step that failed, each difference, what
+//   was left out and why, what was held still, how far down a long page was
+//   compared, and the pictures), Retire (verified).
 // - Undo and redo say what they would do; the page can be shown without the
 //   layer, to compare. After every change the log is read again and the layer
 //   applied to the page again (use-layer.ts).
@@ -23,8 +25,8 @@ import { ancestors } from '@shared/live-tree';
 import type { ProjectSummary } from '@shared/model';
 import { call } from '../../lib/api';
 import {
-  STATE_DETAIL, STATE_WORDS, byPage, changeLines, differenceWords, failedWords, isFragile, noiseWords, orphanWhy, reachWords, redoLabel,
-  undoLabel, verdictHeadline,
+  STATE_DETAIL, STATE_WORDS, beforeWords, byPage, changeLines, cutWords, differenceWords, failedWords, heldWords, isFragile, maskWords, noiseWords,
+  orphanWhy, reachWords, redoLabel, undoLabel, verdictHeadline,
 } from '../../lib/live-layer';
 import { liveBridge } from '../../lib/live';
 import { Button, Dialog, IconButton, useToast } from '../ui';
@@ -261,9 +263,15 @@ function TrayEdit({ edit: e, here, ctx }: { edit: LayerEdit; here: boolean; ctx:
   );
 }
 
-/** What the last verification said: the headline, the step that failed, each difference, the noise floor, and the pictures. */
+/**
+ * What the last verification said: the headline, the step that failed, each difference; then what it says whatever
+ * it decided (whether step 3 compared the page as it was before, how far down a long page was compared, what was
+ * held still), what was left out of the pixel steps and why, the noise floor, and the pictures.
+ */
 function Verdict({ verdict: v }: { verdict: LayerVerdict }) {
   const failed = failedWords(v);
+  const said = [beforeWords(v), ...(v.cut ?? []).map(cutWords), heldWords(v)].filter((x): x is string => !!x);
+  const masked = v.masked ?? [];
   return (
     <div className={`live-tray-verdict${v.ok ? ' ok' : ' failed'}`}>
       <p className="small live-tray-verdict-head">{verdictHeadline(v)}</p>
@@ -272,6 +280,19 @@ function Verdict({ verdict: v }: { verdict: LayerVerdict }) {
         <ul className="live-tray-differences" aria-label="What differs">
           {v.differences.map((d, i) => <li key={i} className="small">{differenceWords(d)}</li>)}
         </ul>
+      ) : null}
+      {said.length ? (
+        <ul className="live-tray-said" aria-label="How it was compared">
+          {said.map((w) => <li key={w} className="small">{w}</li>)}
+        </ul>
+      ) : null}
+      {masked.length ? (
+        <div className="live-tray-masked">
+          <p className="small">Left out of the pixel comparison, because the site says they change from one render to the next:</p>
+          <ul className="live-tray-differences" aria-label="Left out of the pixel comparison">
+            {masked.map((m) => <li key={`${m.label}|${m.why}`} className="small">{maskWords(m)}</li>)}
+          </ul>
+        </div>
       ) : null}
       <p className="faint small">{noiseWords(v)}</p>
       {v.pictures.length ? <Pictures pictures={v.pictures} at={v.at} /> : null}
@@ -288,16 +309,16 @@ const picture = (path: string, at: number): Promise<string | null> => {
   return p;
 };
 
-const KINDS = [['design', 'The design'], ['result', 'The site'], ['diff', 'Difference']] as const;
+const KINDS = [['before', 'The page before'], ['design', 'The design'], ['result', 'The site'], ['diff', 'Difference']] as const;
 
-/** The design, the site and their difference, at each width; each opens larger. */
+/** The page as it was before it was made real (where one was kept), the design, the site and their difference, at each width; each opens larger. */
 function Pictures({ pictures, at }: { pictures: LayerVerdict['pictures']; at: number }) {
   const [srcs, setSrcs] = useState<Record<string, string | null>>({});
   const [large, setLarge] = useState<{ src: string; alt: string } | null>(null);
   useEffect(() => {
     let current = true;
     setSrcs({});
-    for (const p of pictures) for (const path of [p.design, p.result, p.diff]) {
+    for (const p of pictures) for (const path of [p.before, p.design, p.result, p.diff]) {
       if (!path) continue;
       void picture(path, at).then((data) => { if (current) setSrcs((s) => ({ ...s, [path]: data ? `data:image/png;base64,${data}` : null })); });
     }
@@ -307,8 +328,8 @@ function Pictures({ pictures, at }: { pictures: LayerVerdict['pictures']; at: nu
     <div className="live-tray-pictures">
       {pictures.map((p) => (
         <div key={p.width} className="live-tray-picture-row" role="group" aria-label={`At ${p.width} px`}>
-          {KINDS.map(([kind, label]) => {
-            const path = p[kind];
+          {KINDS.filter(([kind]) => kind !== 'before' || p.before !== undefined).map(([kind, label]) => {
+            const path = p[kind] ?? null;
             const alt = `${label} at ${p.width} px`;
             const src = path ? srcs[path] : null;
             return (
@@ -317,7 +338,7 @@ function Pictures({ pictures, at }: { pictures: LayerVerdict['pictures']; at: nu
                   <button type="button" className="live-tray-picture-open" aria-label={`${alt}, larger`} onClick={() => setLarge({ src, alt })}>
                     <img src={src} alt={alt} />
                   </button>
-                ) : <span className="live-tray-picture-none faint small">{!path ? 'No difference' : path in srcs ? 'Not readable' : '…'}</span>}
+                ) : <span className="live-tray-picture-none faint small">{!path ? (kind === 'before' ? 'None kept' : 'No difference') : path in srcs ? 'Not readable' : '…'}</span>}
                 <figcaption className="faint small">{label} · {p.width} px</figcaption>
               </figure>
             );

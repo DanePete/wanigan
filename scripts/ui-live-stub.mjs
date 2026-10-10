@@ -721,19 +721,31 @@ export function liveStub(f) {
       if (!e) throw new Error('That edit is not in the layer.');
       if (e.state !== 'implemented') throw new Error(`Only an implemented edit is verified; this one is ${e.state}. Make it real first.`);
       const how = window.__wgLive.verdict;
+      // A failure at the styles had no page from before (made real elsewhere); the others did, kept under before/.
+      const kept = how !== 'styles';
       const pictures = [390, 1440].map((width) => ({
         width, design: `/stand-in/live-layer/${id}/${width}-design.png`, result: `/stand-in/live-layer/${id}/${width}-result.png`, diff: how === 'pass' ? null : `/stand-in/live-layer/${id}/${width}-diff.png`,
+        before: kept ? `/stand-in/live-layer/${id}/before/${width}-page.png` : null,
       }));
       const differences = how === 'styles'
         ? [{ kind: 'style', edit: id, width: 1440, element: 'h3.teaser__title', property: 'color', design: 'rgb(192, 57, 43)', result: 'rgb(20, 20, 20)' }]
         : how === 'pixels' ? [{ kind: 'pixels', edit: id, width: 390, rect: { x: 24, y: 910, width: 320, height: 60 }, pixels: 1840, maxDiff: 172 }] : [];
-      const verdict = { at: Date.now(), ok: how === 'pass', failed: how === 'pass' ? null : how, widths: [390, 1440], noise: { maxDiff: 3, pixels: 12 }, differences, pictures };
+      const verdict = {
+        at: Date.now(), ok: how === 'pass', failed: how === 'pass' ? null : how, widths: [390, 1440], noise: { maxDiff: 3, pixels: 12 }, differences, pictures,
+        // What it left out and why, whether the page from before was compared, what the helper held still, and how far
+        // down the long page was compared: statements, never differences.
+        masked: [{ label: 'Who’s online (block)', why: 'made for each user', widths: [390, 1440], nearEdit: false }],
+        before: kept ? { ran: true, at: Date.now() - 60_000, widths: [390, 1440] }
+          : { ran: false, why: 'No page from before was kept for it: it was made real some other way than Make it real here (in a template, or marked by an agent), or before Wanigan kept one. The rest of the page was compared with the design only.' },
+        held: kept ? { at: Math.floor(Date.now() / 1000) - 60 } : null,
+        cut: [{ width: 1440, to: 6000, full: 9412 }],
+      };
       e.state = verdict.ok ? 'verified' : 'draft';
       e.verdict = verdict;
       return verdict;
     },
     async layerPicture(path) {
-      const m = /\/(\d+)-(design|result|diff)\.png$/.exec(path);
+      const m = /\/(\d+)-(design|result|diff|page)\.png$/.exec(path);
       if (!m) return null;
       const width = Number(m[1]) / 2, height = 420, kind = m[2];
       const c = document.createElement('canvas');
