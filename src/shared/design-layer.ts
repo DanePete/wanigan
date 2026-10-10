@@ -107,9 +107,13 @@ export function layerValue(raw: unknown): string | null {
   if (/[;{}<>\\@]|\/\*|\*\//.test(v)) return null;
   if (/\b(?:url|image-set|expression|element|attr|env)\s*\(/i.test(v)) return null;
   if (!/^[a-zA-Z0-9#%.,()\-+/*_ '"]+$/.test(v)) return null;
-  // Quotes must pair, so a value cannot close a string the rule opened.
-  if ((v.match(/"/g)?.length ?? 0) % 2 || (v.match(/'/g)?.length ?? 0) % 2) return null;
-  return v;
+  // Every quoted string closes, read as CSS reads it: inside one, the other quote is a letter ("O'Reilly Sans"). A
+  // string left open would swallow the rest of the sheet, every later rule and token with it.
+  let open: string | null = null;
+  for (const c of v) {
+    if (open) { if (c === open) open = null; } else if (c === '"' || c === "'") open = c;
+  }
+  return open ? null : v;
 }
 
 /** An edit from outside (an agent, a file), checked field by field; null with the reason when it is not one. */

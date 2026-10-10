@@ -23,6 +23,14 @@ test('a value is words, numbers, colours, tokens and calc(); never a way out of 
   assert.equal(layerValue(12), null);
 });
 
+test('a value’s quotes are read as CSS reads them: every quoted string closes, and the other quote inside one is a letter', () => {
+  for (const ok of [`"O'Reilly Sans", serif`, `'Say "hi"', sans-serif`, `"a" 'b'`, `""`]) assert.equal(layerValue(ok), ok, ok);
+  // Counted, these pair; read, the last single quote opens a string that never closes and takes the sheet with it.
+  for (const bad of [`"'"'`, `"a" 'b`, `'"' "`, `"O'Reilly Sans`]) assert.equal(layerValue(bad), null, bad);
+  const css = compileLayer([edit({ id: 'e1', change: { type: 'style', values: { 'font-family': `"O'Reilly Sans", serif` } } })], []);
+  assert.equal(css, `[data-wl-edit~="e1"][data-wl-edit~="e1"] { font-family: "O'Reilly Sans", serif !important; }`);
+});
+
 test('an edit from outside is checked field by field, and says why it is refused', () => {
   const good = layerEdit({ id: 'e1', target: title, label: 'Title of Paddling 101', page: '/paddling', scope: 'this', breakpoint: 'all', change: { type: 'style', values: { 'font-size': '2rem' } } });
   assert.equal(good.refused, null);
