@@ -3,8 +3,10 @@
 // validation, text format and render APIs they call made up here and recording which translation was saved. What it
 // proves: the words go to the translation and the item the request names and to nothing else, a translation that is
 // not there or an item whose words changed is refused, two items holding the same words are never guessed between, and
-// the answer carries the new revision; it saves only over what the page showed: any violation (another field's, the
-// workflow's) refuses it, as do a newer draft, a page from before another save, and an inline Layout Builder block; and
+// the answer carries the new revision; it saves only over what the page showed: a violation Drupal's own form for that
+// field would flag (the field's, the content's as a whole), the workflow's, or one the change brings, wherever it is,
+// refuses it (a problem the content already had in a field the change does not touch is said, not refused), as do a
+// newer draft, a page from before another save, and an inline Layout Builder block; and
 // in formatted text one run of words is spliced where it is kept, every other byte kept, and saved only when the text's
 // own format shows nothing else changed (filter-made words, words across tags or twice, a trimmed cut are refused).
 // Nothing here runs Drupal or touches a site; it needs PHP. Made-up content (acme, example.test); nothing real.
@@ -28,6 +30,10 @@ namespace Drupal\Core\Controller {
 }
 namespace Drupal\Core\Entity { interface EntityInterface {} interface ContentEntityInterface extends EntityInterface {} interface RevisionLogInterface {} }
 namespace Drupal\Core\Field { interface FieldItemInterface {} }
+namespace Drupal\Core\Entity\Plugin\Validation\Constraint {
+  // A constraint on more than one field, as core's composite constraints are: it names the fields it covers.
+  class CompositeConstraintBase { public function __construct(private array $fields) {} public function coversFields() { return $this->fields; } }
+}
 namespace Drupal\Component\Utility {
   // Core's Html parses with an HTML5 parser; PHP's own DOM stands in for it here.
   class Html {
@@ -106,11 +112,17 @@ namespace {
     public function access($op) { return TRUE; }
     public function getFieldDefinition() { return new class($this->type) { public function __construct(private string $t) {} public function getType() { return $this->t; } }; }
   }
-  final class Violation { public function __construct(private string $path, private string $message) {} public function getPropertyPath() { return $this->path; } public function getMessage() { return $this->message; } }
+  final class Violation {
+    public function __construct(private string $path, private string $message, private $constraint = NULL) {}
+    public function getPropertyPath() { return $this->path; }
+    public function getMessage() { return $this->message; }
+    public function getConstraint() { return $this->constraint; }
+  }
   /**
    * One stored piece of content: its type, its translations by language (the default first), its default revision,
    * the newest revision that changed each translation when that is newer (a draft), when it last changed, and what
-   * validating it finds.
+   * validating it finds: [property path, message], with, where given, when it is found (a test of the translation as it
+   * is then: a violation a change brings is not there before it) and the fields a composite constraint covers.
    */
   final class Content {
     public string $type = 'node';
@@ -144,7 +156,10 @@ namespace {
     public function setRevisionLogMessage($m) {}
     public function setRevisionUserId($v) {}
     public function setRevisionCreationTime($v) {}
-    public function validate() { return array_map(fn ($v) => new Violation($v[0], $v[1]), $this->content->violations); }
+    public function validate() {
+      $found = array_filter($this->content->violations, fn ($v) => !isset($v[2]) || $v[2]($this));
+      return array_map(fn ($v) => new Violation($v[0], $v[1], isset($v[3]) ? new Drupal\Core\Entity\Plugin\Validation\Constraint\CompositeConstraintBase($v[3]) : NULL), array_values($found));
+    }
     public function save() { $this->content->rev++; $this->content->saved[] = $this->langcode; }
     public function label() { return 'Paddling'; }
     public function getRevisionId() { return $this->content->rev; }
@@ -228,9 +243,36 @@ const SAVES = String.raw`
   $fresh = function (?callable $change = NULL) { World::make(['en' => ['title' => ['Paddling 101']]]); if ($change) $change(World::$content); };
   $fresh();
   $out['shown'] = [$save($at()), World::$content->saved];
-  // Violations on other fields than the one changed: refused, saying which.
-  $fresh(fn ($c) => $c->violations = [['field_summary', 'This value is too long. It should have 255 characters or less.'], ['field_tags.0.value', 'This value should not be null.']]);
-  $out['otherField'] = [$save($at()), World::$content->saved];
+  // Validation, as Drupal's own form for the one field changed has it. Content with more fields than the one changed;
+  // a violation given $brought is found only once the title is changed (the change brings it).
+  $fuller = function (array $violations) {
+    World::make(['en' => ['title' => ['Paddling 101'], 'uuid' => ['acme-0012'], 'field_summary' => [str_repeat('Long ', 60)], 'field_tags' => ['Canoe']]]);
+    World::$content->violations = $violations;
+  };
+  $brought = fn ($node) => $node->get('title')->get(0)->value !== 'Paddling 101';
+  // Violations the change brings, on other fields than the one changed: refused, saying which.
+  $fuller([['field_summary', 'This value is too long. It should have 255 characters or less.', $brought], ['field_tags.0.value', 'This value should not be null.', $brought]]);
+  $out['brought'] = [$save($at()), World::$content->saved];
+  // A stored value core's validator rejects, in a field the change does not touch (old content's UUID): the words are
+  // saved, as Drupal's own form saves them, and the answer says what was already there.
+  $fuller([['uuid.0.value', 'This is not a valid UUID.']]);
+  $out['already'] = [$save($at()), World::words('en', 'title'), World::$content->saved];
+  $fuller([['uuid.0.value', 'This is not a valid UUID.'], ['field_summary', 'This value is too long. It should have 255 characters or less.']]);
+  $out['alreadyTwo'] = $save($at())[1]['note'] ?? NULL;
+  // One already there and one the change brings: refused for the one it brings.
+  $fuller([['uuid.0.value', 'This is not a valid UUID.'], ['field_tags.0.value', 'This value should not be null.', $brought]]);
+  $out['alreadyAndBrought'] = [$save($at()), World::$content->saved];
+  // On the content as a whole (no field's path), already there: refused, as Drupal's form flags it.
+  $fuller([['', 'The content has either been modified by another user, or you have already submitted modifications.']]);
+  $out['entityLevel'] = [$save($at()), World::$content->saved];
+  $fuller([['acme_rule', 'Acme rules this out.']]);
+  $out['notAField'] = $save($at())[0];
+  // On the field changed, already there and still there after: refused.
+  $fuller([['title.0.value', 'This value is too long.']]);
+  $out['editedField'] = [$save($at()), World::$content->saved];
+  // On another field, already there, but its constraint covers the field changed too: refused, as core moves it there.
+  $fuller([['field_tags', 'Acme pairs tags with titles.', NULL, ['field_tags', 'title']]]);
+  $out['composite'] = [$save($at()), World::$content->saved];
   // The workflow's transition check, on its own field: a save keeps the state, so a user who may not publish saves nothing.
   $fresh(fn ($c) => $c->violations = [['moderation_state', 'You do not have access to transition from Published to Published.']]);
   $out['workflow'] = [$save($at()), World::$content->saved];
@@ -360,15 +402,30 @@ test('words are saved to the translation and the item named, and to nothing else
     'the label’s words go to the label, never to an item');
 });
 
-test('words are saved only over what the page showed: any violation, a newer draft or a later save refuses them; an inline block’s go through its layout', (t) => {
+test('words are saved only over what the page showed: a violation of the field, the content, its workflow or the change, a newer draft or a later save refuses them; a problem already there elsewhere is said; an inline block’s go through its layout', (t) => {
   const out = runSaves(t, SAVES);
   if (!out) return;
   type Answer = [number, { ok: boolean; error?: string }];
 
   assert.deepEqual(out.shown, [[200, { ok: true, value: 'Paddling 102', label: 'Paddling', revision: '8', state: null }], ['en']], 'the version the page showed, saved as a new revision');
-  const [other, otherSaved] = out.otherField as [Answer, string[]];
-  assert.deepEqual([other[0], otherSaved], [422, []], 'a violation on another field refuses it too');
+  const [other, otherSaved] = out.brought as [Answer, string[]];
+  assert.deepEqual([other[0], otherSaved], [422, []], 'a violation the change brings refuses it, on another field too');
   assert.equal(other[1].error, 'Drupal would not save it. field_summary: This value is too long. It should have 255 characters or less. field_tags.0.value: This value should not be null.');
+  const [already, alreadyWords, alreadySaved] = out.already as [[number, { ok: boolean; note?: string; error?: string }], string[], string[]];
+  assert.deepEqual([already[0], already[1].ok, alreadyWords, alreadySaved], [200, true, ['Paddling 102'], ['en']],
+    'a problem the content already had, in a field the change does not touch, does not stop the save');
+  assert.equal(already[1].note, 'Saved. Note that this content already had a problem Drupal reports, in a field this change does not touch: uuid.0.value: This is not a valid UUID.');
+  assert.equal(out.alreadyTwo, 'Saved. Note that this content already had problems Drupal reports, in fields this change does not touch: uuid.0.value: This is not a valid UUID. field_summary: This value is too long. It should have 255 characters or less.');
+  const [both, bothSaved] = out.alreadyAndBrought as [Answer, string[]];
+  assert.deepEqual([both[0], both[1].error, bothSaved], [422, 'Drupal would not save it. field_tags.0.value: This value should not be null.', []], 'refused for the one the change brings, and only that one is named');
+  const [whole, wholeSaved] = out.entityLevel as [Answer, string[]];
+  assert.deepEqual([whole[0], wholeSaved], [422, []], 'a violation of the content as a whole refuses it, already there or not');
+  assert.match(whole[1].error ?? '', /^Drupal would not save it\. The content has either been modified by another user/);
+  assert.equal(out.notAField, 422, 'a path that starts with no field of the content is the content’s as a whole');
+  const [edited, editedSaved] = out.editedField as [Answer, string[]];
+  assert.deepEqual([edited[0], edited[1].error, editedSaved], [422, 'Drupal would not save it. title.0.value: This value is too long.', []], 'the field changed is checked whole, as its form would');
+  const [composite, compositeSaved] = out.composite as [Answer, string[]];
+  assert.deepEqual([composite[0], compositeSaved], [422, []], 'a constraint covering the field changed counts as on it');
   const [workflow, workflowSaved] = out.workflow as [Answer, string[]];
   assert.deepEqual([workflow[0], workflowSaved], [403, []]);
   assert.match(workflow[1].error ?? '', /^Its workflow does not let the user .* \(You do not have access to transition from Published to Published\.\).* nothing is made a draft instead/);

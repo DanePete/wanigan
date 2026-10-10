@@ -10,6 +10,7 @@ namespace Drupal\wanigan_live\Save;
 use Drupal\Component\Utility\Html;
 use Drupal\Core\Entity\ContentEntityInterface;
 use Drupal\Core\Entity\EntityInterface;
+use Drupal\Core\Entity\Plugin\Validation\Constraint\CompositeConstraintBase;
 use Drupal\Core\Field\FieldItemInterface;
 
 /**
@@ -74,6 +75,67 @@ final class Words {
    */
   public static function fold(string $text): string {
     return trim(preg_replace('/\s+/u', ' ', $text) ?? $text);
+  }
+
+  /**
+   * What Drupal's validation reports of a content entity, each violation
+   * placed as core's entity forms place it (EntityConstraintViolationList::
+   * groupViolationOffsets()): on the field its property path starts with
+   * when the entity has that field, else on the entity as a whole. Each is
+   * [field or NULL, "path: message", message, the fields a composite
+   * constraint covers, whether it is the workflow's (moderation_state)].
+   */
+  public static function problems(ContentEntityInterface $entity): array {
+    $out = [];
+    foreach ($entity->validate() as $violation) {
+      $path = (string) $violation->getPropertyPath();
+      $message = trim(strip_tags((string) $violation->getMessage()));
+      $field = $path !== '' ? explode('.', $path, 2)[0] : '';
+      $constraint = method_exists($violation, 'getConstraint') ? $violation->getConstraint() : NULL;
+      $out[] = [
+        $field !== '' && $entity->hasField($field) ? $field : NULL,
+        ($path !== '' ? $path . ': ' : '') . $message,
+        $message,
+        $constraint instanceof CompositeConstraintBase ? array_values((array) $constraint->coversFields()) : [],
+        $field === 'moderation_state',
+      ];
+    }
+    return $out;
+  }
+
+  /**
+   * Which problems (problems()) after a change to one field refuse it, as
+   * Drupal's own form for that field would (ContentEntityForm::
+   * validateForm(): every violation outside the fields the form edits is
+   * filtered out, and ::flagViolations() flags the entity's own and the
+   * edited fields'), with two kept besides: every one of the workflow's,
+   * whose transition check a save must not get round, and every one the
+   * change itself brought, wherever it is (one the problems before the
+   * change, $before, do not hold). A composite constraint covering the
+   * edited field counts as on it (EntityConstraintViolationList::
+   * filterByFields() moves it there). What is left was there before, on a
+   * field the change does not touch: not a reason to refuse it, and said.
+   * [workflow messages, refusing "path: message"s, already there].
+   */
+  public static function judge(array $before, array $after, string $edited): array {
+    $was = [];
+    foreach ($before as $problem) {
+      $was[$problem[1]] = ($was[$problem[1]] ?? 0) + 1;
+    }
+    $workflow = $refuse = $already = [];
+    foreach ($after as [$field, $said, $message, $covers, $moderation]) {
+      if ($moderation) {
+        $workflow[] = $message;
+      }
+      elseif ($field === NULL || $field === $edited || in_array($edited, $covers, TRUE) || ($was[$said] ?? 0) === 0) {
+        $refuse[] = $said;
+      }
+      else {
+        $was[$said]--;
+        $already[] = $said;
+      }
+    }
+    return [$workflow, $refuse, $already];
   }
 
   /**
