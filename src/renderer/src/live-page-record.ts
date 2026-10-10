@@ -96,7 +96,9 @@ export function livePageRecord(): void {
     if (hit instanceof HTMLInputElement && /^(checkbox|radio)$/.test(hit.type)) return `${hit.type}${said(labelOf(hit))}`;
     if (hit instanceof HTMLInputElement && /^(button|submit|reset)$/.test(hit.type)) return `button${said(words(hit.getAttribute('value')) || labelOf(hit))}`;
     if (field(hit)) return fieldName(hit);
-    const text = words(hit.getAttribute('aria-label')) || words(hit.textContent) || words(hit.getAttribute('title'));
+    // The words as the page shows them: a heading and the paragraph under it are two runs of words, not one.
+    const shown = hit instanceof HTMLElement ? hit.innerText : hit.textContent;
+    const text = words(hit.getAttribute('aria-label')) || words(shown) || words(hit.getAttribute('title'));
     if (tag === 'a' || hit.getAttribute('role') === 'link') return `link${said(text)}`;
     if (tag === 'button' || hit.getAttribute('role') === 'button') return `button${said(text)}`;
     if (tag === 'img') return `picture${said(words(hit.getAttribute('alt')))}`;

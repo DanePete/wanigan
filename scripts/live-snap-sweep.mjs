@@ -288,7 +288,7 @@ try {
   await page.setContent(`<!doctype html><html><body style="margin:0;font:14px sans-serif">
 <!-- THEME HOOK: 'block' -->
 <!-- BEGIN OUTPUT from 'themes/custom/acme/templates/block--hours.html.twig' -->
-<!-- wl:part id="p-hours" --><div id="hours" data-wl-block="block_content:hours@acme_hours" style="height:60px;background:#eee">Opening hours</div><!-- /wl:part id="p-hours" -->
+<!-- wl:part id="p-hours" --><div id="hours" data-wl-block="block_content:hours@acme_hours" style="height:60px;background:#eee"><h2 style="margin:0">Opening hours</h2><p style="margin:0">7 to 6</p></div><!-- /wl:part id="p-hours" -->
 <!-- END OUTPUT from 'themes/custom/acme/templates/block--hours.html.twig' -->
 <form onsubmit="return false" style="padding:10px">
   <label>Search <input id="q" name="q"></label>
@@ -300,7 +300,8 @@ try {
 </body></html>`);
   await page.addScriptTag({ content: script });
   await page.evaluate(() => { window.__wl.scan(); window.__wl.recordOn(Date.now()); });
-  await page.click('#hours');
+  // Below its heading and its words, so the click is on the block itself.
+  await page.click('#hours', { position: { x: 5, y: 56 } });
   await page.click('#pw');
   await page.keyboard.type('hunter2');
   // A password field switched to show its words stays secret for the rest of the recording.
@@ -317,7 +318,7 @@ try {
   const raw = await page.evaluate(() => window.__wl.recordOff().steps);
   const kinds = raw.map((s) => s.type);
   const click = raw.find((s) => s.type === 'click');
-  if (click?.part !== 'p-hours' || !/^div “Opening hours”/.test(click.target) || !/^template block--hours\.html\.twig/.test(click.made ?? '')) fail(`page script: the click was logged as ${JSON.stringify(click)}`);
+  if (click?.part !== 'p-hours' || click.target !== 'div “Opening hours 7 to 6”' || !/^template block--hours\.html\.twig/.test(click.made ?? '')) fail(`page script: the click was logged as ${JSON.stringify(click)}`);
   if (raw.find((s) => s.type === 'click' && s.target === 'link “More hours”') === undefined) fail('page script: a click on a link was not named by its words');
   const typed = raw.filter((s) => s.type === 'typed');
   const search = typed.find((s) => s.target === 'field “Search”');
