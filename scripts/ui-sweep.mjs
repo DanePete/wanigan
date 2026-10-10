@@ -1400,16 +1400,16 @@ try {
     await page.waitForSelector('.mcp-status.tone-ok', { timeout: 8000 }).catch(() => failures.push(`${theme}: Check connections never showed a status`));
     await page.waitForTimeout(250);
     await page.screenshot({ path: join(out, `${theme}-mcp-checked.png`) });
-    await page.click('.topbar-tools [role="radio"]:has-text("Store")');
-    await page.waitForSelector('.store-card');
+    await page.click('.topbar-tools [role="tab"]:has-text("Store")');
+    await page.waitForSelector('.store-item');
     await page.waitForTimeout(250);
     await page.screenshot({ path: join(out, `${theme}-mcp-store.png`) });
-    await page.click('.store-card:has-text("GitHub") button');
+    await page.click('.store-item:has-text("GitHub") button');
     await page.waitForSelector('.dialog .plan-command', { timeout: 8000 }).catch(() => failures.push(`${theme}: the GitHub add plan never showed`));
     await page.waitForTimeout(250);
     await page.screenshot({ path: join(out, `${theme}-mcp-add-key.png`) });
     await page.keyboard.press('Escape');
-    await page.click('.store-card:has-text("Notion") button');
+    await page.click('.store-item:has-text("Notion") button');
     await page.waitForSelector('.dialog .plan-command', { timeout: 8000 }).catch(() => failures.push(`${theme}: the Notion add plan never showed`));
     await page.click('.dialog [role="radio"]:has-text("The repository")');
     await page.waitForSelector('.dialog .plan-command', { timeout: 8000 });
@@ -1417,7 +1417,7 @@ try {
     await page.screenshot({ path: join(out, `${theme}-mcp-add.png`) });
     await page.keyboard.press('Escape');
     // Gemini CLI: one sign-in, picked as itself; its repository scope runs trusted for that one command.
-    await page.click('.store-card:has-text("Linear") button');
+    await page.click('.store-item:has-text("Linear") button');
     await page.waitForSelector('.dialog .plan-command', { timeout: 8000 });
     await page.click('#mcp-account');
     await page.click('.sel-list [role="option"]:has-text("Gemini CLI")').catch(() => failures.push(`${theme}: the add dialog does not offer Gemini CLI`));
@@ -1428,7 +1428,7 @@ try {
     await page.screenshot({ path: join(out, `${theme}-mcp-add-gemini.png`) });
     await page.keyboard.press('Escape');
     // Gemini's own servers, filtered.
-    await page.click('.topbar-tools [role="radio"]:has-text("Installed")');
+    await page.click('.topbar-tools [role="tab"]:has-text("Installed")');
     await page.click('.topbar-tools [role="radio"]:has-text("Gemini CLI")');
     await page.waitForSelector('.mcp-row:has-text("northstar-search")', { timeout: 3000 }).catch(() => failures.push(`${theme}: the MCP view does not list Gemini CLI’s servers`));
     if (await page.$('.mcp-row:has-text("drupal-db")')) failures.push(`${theme}: the Gemini CLI filter shows a Claude Code server`);
@@ -1570,7 +1570,7 @@ try {
     await bare.screenshot({ path: join(out, `${theme}-needs-not-installed.png`) });
     await bare.goto(`${base}#/accounts`);
     await bare.waitForSelector('.account-status:has-text("Codex is not installed")', { timeout: 5000 }).catch(() => failures.push(`${theme}/not installed: Accounts does not say so`));
-    if (await bare.$('section[aria-labelledby="acct-codex"] .account-list button:has-text("Sign in")')) failures.push(`${theme}/not installed: Accounts offers to sign in to a CLI that is not there`);
+    if (await bare.$('.account-group-codex .account button:has-text("Sign in")')) failures.push(`${theme}/not installed: Accounts offers to sign in to a CLI that is not there`);
     await bare.screenshot({ path: join(out, `${theme}-accounts-not-installed.png`) });
     await bare.evaluate(() => window.__wgCommand('new-session'));
     await bare.click('.dialog [role="radio"]:has-text("Codex")');

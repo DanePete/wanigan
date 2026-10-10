@@ -1,13 +1,16 @@
-// Every skill your agents can see, by where it lives. Reading is free; copying
-// and removing happen only when you click, after you have seen what changes.
+// Settings › Skills: every skill your agents can see, by where it lives, with
+// the one chosen open beside the list. Reading is free; copying and removing
+// happen only when you click, after you have seen what changes.
 import { Select } from '../components/Select';
 import { useEffect, useMemo, useState } from 'react';
 import type { Account, ProjectSummary } from '@shared/model';
 import { parseFrontmatter } from '@shared/skills';
 import type { Skill, SkillAgent, SkillCopyPlan, SkillGroup, SkillTarget } from '@shared/skills';
 import { attempt, bridge, call, useQuery } from '../lib/api';
-import { ago, plural } from '../lib/format';
-import { Button, Dialog, Empty, Segmented, useToast } from '../components/ui';
+import { ago, fileManager, plural } from '../lib/format';
+import { useHow } from '../lib/how';
+import { Badge, Button, Count, Dialog, Disclosure, EmptyState, NotAnswering, ProjectMark, Segmented, useToast } from '../components/ui';
+import { HowArrow, HowBox, HowButton, HowDialog, HowLane, HowNote, howNum } from '../components/How';
 import { Icon } from '../components/icons';
 import { Markdown } from '../components/Markdown';
 import '../styles/library.css';
@@ -33,43 +36,50 @@ export function SkillsView({ projects }: { projects: ProjectSummary[] | undefine
   const visible = groups.flatMap((g) => g.skills);
   const total = listing.data?.groups.reduce((n, g) => n + g.skills.length, 0) ?? 0;
   const current = visible.find((s) => s.id === selected) ?? visible[0] ?? null;
+  const how = useHow('skills');
 
   return (
     <section className="view" aria-labelledby="skills-title">
       <header className="topbar">
         <div className="topbar-title">
           <h1 id="skills-title">Skills</h1>
-          {listing.data ? <span className="faint small">{plural(total, 'skill')}</span> : null}
+          {listing.data ? <Count n={total} label={plural(total, 'skill')} /> : null}
         </div>
         <div className="topbar-tools">
-          <Segmented size="s" label="Agent" value={filter} onChange={setFilter}
-            options={[{ value: 'all', label: 'All' }, { value: 'claude', label: 'Claude Code' }, { value: 'codex', label: 'Codex' }, { value: 'gemini', label: 'Gemini CLI' }]} />
-          <label className="search-field">
+          <span data-tour="skills-filter">
+            <Segmented size="s" label="Agent" value={filter} onChange={setFilter}
+              options={[{ value: 'all', label: 'All' }, { value: 'claude', label: 'Claude Code' }, { value: 'codex', label: 'Codex' }, { value: 'gemini', label: 'Gemini CLI' }]} />
+          </span>
+          <label className="search-field" data-tour="skills-search">
             <Icon name="search" size={14} />
             <span className="visually-hidden">Search skills</span>
-            <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search by name or description" />
+            <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search by name or description"
+              onKeyDown={(e) => { if (e.key === 'Escape' && query) { e.preventDefault(); setQuery(''); } }} />
           </label>
+          <HowButton onClick={how.show} />
         </div>
       </header>
-      <div className="library">
-        <div className="library-list">
-          {listing.error ? <p className="error-text view-pad">{listing.error.message}</p> : null}
-          {groups.map((g) => (
-            <GroupList key={g.id} group={g} projects={projects} current={current?.id ?? null} onPick={setSelected} />
-          ))}
-          {listing.data && !groups.length ? (
-            <Empty title={query ? 'No skill matches' : 'No skills yet'}>
-              {query ? 'Try another word, or show every agent.' : 'Skills appear here as soon as one is in a folder your agents read.'}
-            </Empty>
-          ) : null}
-          {listing.data ? <Footnotes listing={listing.data} filter={filter} /> : null}
+      {listing.error ? <NotAnswering error={listing.error} onRetry={listing.reload} /> : (
+        <div className="library">
+          <div className="library-list" data-tour="skills-list">
+            {groups.map((g) => (
+              <GroupList key={g.id} group={g} projects={projects} current={current?.id ?? null} onPick={setSelected} />
+            ))}
+            {listing.data && !groups.length ? (
+              <EmptyState title={query ? 'No skill matches' : 'No skills yet'} icon="skill">
+                {query ? 'Try another word, or show every agent.' : 'Skills appear here as soon as one is in a folder your agents read.'}
+              </EmptyState>
+            ) : null}
+            {listing.data ? <Footnotes listing={listing.data} filter={filter} /> : null}
+          </div>
+          <div className="library-detail" data-tour="skills-detail">
+            {current ? (
+              <SkillDetail key={current.id} skill={current} projects={projects ?? []} accounts={accounts.data ?? []} />
+            ) : listing.data ? <EmptyState title="Pick a skill" icon="skill">Its SKILL.md opens here.</EmptyState> : null}
+          </div>
         </div>
-        <div className="library-detail">
-          {current ? (
-            <SkillDetail key={current.id} skill={current} projects={projects ?? []} accounts={accounts.data ?? []} />
-          ) : listing.data ? <Empty title="Pick a skill">Its SKILL.md opens here.</Empty> : null}
-        </div>
-      </div>
+      )}
+      {how.open ? <SkillsHow total={listing.data ? total : null} groups={listing.data?.groups.length ?? null} onClose={how.hide} /> : null}
     </section>
   );
 }
@@ -82,12 +92,11 @@ function GroupList({ group, projects, current, onPick }: {
     <section className="lib-group" aria-label={`${group.title}${group.account ? `, ${group.account}` : ''}, ${AGENT[group.agent]}`}>
       <header className="lib-group-head">
         <p className="lib-group-title">
-          {project ? <span className="pmark pmark-s" aria-hidden="true">{project.key}</span> : null}
-          <span>{group.title}</span>
-          {group.account ? <span className="faint">· {group.account}</span> : null}
-          <span className={`lib-agent lib-agent-${group.agent}`}>{AGENT[group.agent]}</span>
+          {project ? <ProjectMark projectKey={project.key} size="s" /> : null}
+          <span className="lib-group-name">{group.title}{group.account ? <span className="faint"> · {group.account}</span> : null}</span>
+          <Badge>{AGENT[group.agent]}</Badge>
         </p>
-        <p className="lib-where mono" title={group.where}>{group.where}</p>
+        <p className="lib-where mono" data-tip={group.where}>{group.where}</p>
         {group.note ? <p className="lib-group-note">{group.note}</p> : null}
       </header>
       <ul className="lib-rows">
@@ -96,8 +105,8 @@ function GroupList({ group, projects, current, onPick }: {
             <button type="button" className={`lib-row${s.id === current ? ' active' : ''}`} aria-current={s.id === current ? 'true' : undefined} onClick={() => onPick(s.id)}>
               <span className="lib-row-name">
                 {s.name}
-                {s.enabled === false ? <span className="lib-tag">off</span> : null}
-                {s.linkedTo ? <span className="lib-tag">linked</span> : null}
+                {s.enabled === false ? <Badge>off</Badge> : null}
+                {s.linkedTo ? <Badge>linked</Badge> : null}
               </span>
               <span className="lib-row-desc">{s.description}</span>
             </button>
@@ -137,30 +146,29 @@ function SkillDetail({ skill, projects, accounts }: { skill: Skill; projects: Pr
         <dl className="lib-facts">
           <div><dt>Seen by</dt><dd>{seenBy(skill, projects, accounts)}</dd></div>
           {skill.invoke ? <div><dt>Call it</dt><dd className="mono">{skill.invoke}</dd></div> : null}
-          {skill.enabled === false ? <div><dt>Plugin</dt><dd className="status-amber">Switched off in this account’s settings, so its skills are not loaded.</dd></div> : null}
+          {skill.enabled === false ? <div><dt>Plugin</dt><dd>Switched off in this account’s settings, so its skills are not loaded.</dd></div> : null}
           <div>
             <dt>Folder</dt>
             <dd>
               <span className="mono lib-path">{skill.displayDir}</span>
               {skill.linkedTo ? <span className="faint small"> → <span className="mono">{skill.linkedTo}</span></span> : null}
-              {' '}<button type="button" className="linkish small" onClick={() => void bridge().openPath(`${skill.dir}/SKILL.md`)}>Show in Finder</button>
+              {' '}<button type="button" className="linkish small" onClick={() => void bridge().openPath(`${skill.dir}/SKILL.md`)}>Show in {fileManager(bridge().platform)}</button>
             </dd>
           </div>
           <div><dt>Size</dt><dd>{plural(skill.files, 'file')} · {size(skill.bytes)}{skill.modified ? ` · changed ${ago(skill.modified)}` : ''}</dd></div>
         </dl>
-        <div className="lib-actions">
+        <div className="lib-actions" data-tour="skills-copy">
           <Button size="s" icon="copy" onClick={() => setCopying('project')} disabled={!projects.length}>Copy to a project…</Button>
           <Button size="s" tone="quiet" onClick={() => setCopying('personal')}>Copy to my skills…</Button>
           {skill.removable ? <Button size="s" tone="quiet" onClick={() => setRemoving(true)}>Remove…</Button> : null}
         </div>
       </header>
       <div className="lib-detail-body">
-        {read.error ? <p className="error-text">{read.error.message}</p> : null}
+        {read.error ? <p className="error-text" role="alert">{read.error.message}</p> : null}
         {extra.length ? (
-          <details className="lib-frontmatter">
-            <summary>Frontmatter</summary>
+          <Disclosure title="Frontmatter" summary={plural(extra.length, 'more field')} className="lib-frontmatter">
             <dl>{extra.map(([k, v]) => <div key={k}><dt className="mono">{k}</dt><dd>{Array.isArray(v) ? v.join(', ') : v}</dd></div>)}</dl>
-          </details>
+          </Disclosure>
         ) : null}
         {parsed ? <Markdown source={parsed.body} /> : read.loading ? <p className="faint">Reading SKILL.md…</p> : null}
         {read.data?.truncated ? <p className="faint small">Only the first 512 KB is shown.</p> : null}
@@ -308,4 +316,47 @@ function size(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(bytes < 10_240 ? 1 : 0)} KB`;
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+}
+
+/** How Skills works, as a picture: every sentence is a rule the core's skills reader and copier enforce. */
+function SkillsHow({ total, groups, onClose }: { total: number | null; groups: number | null; onClose: () => void }) {
+  return (
+    <HowDialog place="skills" title="How skills work" onClose={onClose}
+      intro={<><strong>Every skill your agents can see, read from their own folders.</strong> Reading is free; nothing is copied or removed until you click, after you have seen what changes.</>}
+      side={(
+        <>
+          <HowNote title="Where they live" tone="quiet">
+            <ul>
+              <li><strong>Personal:</strong> in an account’s own folder, for every project.</li>
+              <li><strong>Project:</strong> in the repository, for that project: <code>.claude/skills</code>, <code>.agents/skills</code>, <code>.gemini/skills</code>.</li>
+              <li><strong>Plugin</strong> and <strong>synced from claude.ai:</strong> read as they are; switched-off plugins say so.</li>
+              <li>Codex and Gemini CLI both read <code>.agents/skills</code>.</li>
+            </ul>
+          </HowNote>
+        </>
+      )}>
+      <HowLane n={1} title="Finding them" actor="wanigan">
+        <HowBox actor="wanigan" title="Read from every folder" num={howNum(groups, 'folder with skills', 'folders with skills')}>
+          Each account’s folder, each open project, and the shared Agent Skills folder. Folders with none are listed at the foot.
+        </HowBox>
+        <HowArrow />
+        <HowBox actor="you" title="Pick one" num={howNum(total, 'skill', 'skills')}>
+          Its SKILL.md opens beside the list, with who sees it, how to call it and where its folder is.
+        </HowBox>
+      </HowLane>
+      <HowLane n={2} title="Copying and removing" actor="you">
+        <HowBox actor="you" title="Copy to a project, or to your skills">
+          The plan comes first: every file it would write, and where. What is already there is replaced only if you tick Replace it, and goes to Wanigan’s trash.
+        </HowBox>
+        <HowArrow />
+        <HowBox actor="board" title="In a project, git sees it">
+          A copy into a project folder is a change for git to see. Nothing is committed.
+        </HowBox>
+        <HowArrow />
+        <HowBox actor="you" title="Remove">
+          A skill’s folder goes to Wanigan’s trash, where you can take it back; a link is removed and what it points to stays. Sessions that start after stop seeing it.
+        </HowBox>
+      </HowLane>
+    </HowDialog>
+  );
 }

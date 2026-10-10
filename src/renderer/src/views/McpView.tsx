@@ -1,6 +1,6 @@
-// MCP servers: what each account has, and a small store of well-known ones.
-// Everything here is read from the agents' own files. A change runs the agent's
-// own CLI only when you click, after you have seen the exact command.
+// Settings › MCP servers: what each account has, and a small store of
+// well-known ones. Everything here is read from the agents' own files. A change
+// runs the agent's own CLI only when you click, after you have seen the exact command.
 import { Select } from '../components/Select';
 import { useEffect, useMemo, useState } from 'react';
 import type { Account, ProjectSummary } from '@shared/model';
@@ -8,7 +8,10 @@ import type { McpAgent, McpCatalogEntry, McpCheck, McpCheckResult, McpGroup, Mcp
 import { attempt, call, useQuery } from '../lib/api';
 import { ago, plural } from '../lib/format';
 import { navigate } from '../lib/router';
-import { Button, Dialog, Empty, Segmented, useToast } from '../components/ui';
+import { useHow } from '../lib/how';
+import { Badge, Button, Count, Dialog, EmptyState, NotAnswering, ProjectMark, Segmented, tipProps, useToast } from '../components/ui';
+import { HowArrow, HowBox, HowButton, HowDialog, HowLane, HowNote, howNum } from '../components/How';
+import { TabPanel, Tabs } from '../components/Tabs';
 import '../styles/library.css';
 
 const AGENT: Record<McpAgent, string> = { claude: 'Claude Code', codex: 'Codex', gemini: 'Gemini CLI' };
@@ -26,27 +29,32 @@ export function McpView({ projects }: { projects: ProjectSummary[] | undefined }
   const [filter, setFilter] = useState<Filter>('all');
   const [adding, setAdding] = useState<McpCatalogEntry | null>(null);
   const total = listing.data?.groups.reduce((n, g) => n + g.servers.length, 0) ?? 0;
+  const how = useHow('mcp');
 
   return (
     <section className="view" aria-labelledby="mcp-title">
       <header className="topbar">
         <div className="topbar-title">
           <h1 id="mcp-title">MCP servers</h1>
-          {listing.data ? <span className="faint small">{plural(total, 'server')} found</span> : null}
+          {listing.data ? <Count n={total} label={`${plural(total, 'server')} found`} /> : null}
         </div>
         <div className="topbar-tools">
           {tab === 'installed' ? (
-            <Segmented size="s" label="Agent" value={filter} onChange={setFilter}
-              options={[{ value: 'all', label: 'All' }, { value: 'claude', label: 'Claude Code' }, { value: 'codex', label: 'Codex' }, { value: 'gemini', label: 'Gemini CLI' }]} />
+            <span data-tour="mcp-filter">
+              <Segmented size="s" label="Agent" value={filter} onChange={setFilter}
+                options={[{ value: 'all', label: 'All' }, { value: 'claude', label: 'Claude Code' }, { value: 'codex', label: 'Codex' }, { value: 'gemini', label: 'Gemini CLI' }]} />
+            </span>
           ) : null}
-          <Segmented size="s" label="Show" value={tab} onChange={setTab}
-            options={[{ value: 'installed', label: 'Installed' }, { value: 'store', label: 'Store' }]} />
+          <span data-tour="mcp-tabs">
+            <Tabs id="mcp-show" label="Show" form="pill" size="s" value={tab} onChange={setTab}
+              tabs={[{ value: 'installed', label: 'Installed', ...(listing.data ? { count: total } : {}) }, { value: 'store', label: 'Store' }]} />
+          </span>
+          <HowButton onClick={how.show} />
         </div>
       </header>
       <div className="view-body">
-        <div className="view-pad mcp">
-          {listing.error ? <p className="error-text">{listing.error.message}</p> : null}
-          {tab === 'installed' ? (
+        <TabPanel tabs="mcp-show" value={tab} className="settings-body settings-body-l mcp">
+          {listing.error ? <NotAnswering error={listing.error} onRetry={listing.reload} /> : tab === 'installed' ? (
             <Installed groups={(listing.data?.groups ?? []).filter((g) => filter === 'all' || g.agent === filter)}
               checks={listing.data?.checks ?? []} projects={projects ?? []} loaded={!!listing.data}
               empty={(listing.data?.empty ?? []).filter((e) => filter === 'all' || e.agent === filter)} notes={listing.data?.notes ?? []}
@@ -54,11 +62,12 @@ export function McpView({ projects }: { projects: ProjectSummary[] | undefined }
           ) : (
             <Store catalog={catalog.data ?? []} groups={listing.data?.groups ?? []} accounts={accounts.data ?? []} projects={projects ?? []} onAdd={setAdding} />
           )}
-        </div>
+        </TabPanel>
       </div>
       {adding ? (
         <AddDialog entry={adding} accounts={accounts.data ?? []} projects={projects ?? []} onClose={() => setAdding(null)} />
       ) : null}
+      {how.open ? <McpHow total={listing.data ? total : null} store={catalog.data?.length ?? null} onClose={how.hide} onStore={() => setTab('store')} /> : null}
     </section>
   );
 }
@@ -71,29 +80,27 @@ function Installed({ groups, checks, projects, loaded, empty, notes, onStore }: 
 }) {
   if (loaded && !groups.length) {
     return (
-      <Empty title="No MCP servers here" action={<Button tone="primary" onClick={onStore}>Browse the store</Button>}>
+      <EmptyState title="No MCP servers here" icon="plug" action={<Button tone="primary" onClick={onStore}>Browse the store</Button>}>
         Servers you add to Claude Code, Codex or Gemini CLI, by hand or from the store, appear here.
-      </Empty>
+      </EmptyState>
     );
   }
   return (
     <>
-      <p className="lede">
-        Read from each agent’s own settings. Values that look like keys or tokens are hidden. Changes go through the agent’s own command, only when you click.
-      </p>
-      {groups.map((g) => {
+      {groups.map((g, i) => {
         const check = g.check ? checks.find((c) => c.accountId === g.check?.accountId && c.projectId === g.check?.projectId) ?? null : null;
-        return <GroupSection key={g.id} group={g} check={check} project={projects.find((p) => p.id === g.projectId)} />;
+        return <GroupSection key={g.id} group={g} check={check} project={projects.find((p) => p.id === g.projectId)} first={i === 0} />;
       })}
-      <div className="lib-foot mcp-foot">
-        {empty.length ? <p><span className="faint">No servers in:</span> {empty.map((e, i) => <span key={e.where} className="mono">{i ? ', ' : ''}{e.where}</span>)}</p> : null}
-        {notes.map((n) => <p key={n} className="faint">{n}</p>)}
+      <div className="settings-foot mcp-foot">
+        <p>Read from each agent’s own settings. Values that look like keys or tokens are hidden. Changes go through the agent’s own command, only when you click.</p>
+        {empty.length ? <p>No servers in: {empty.map((e, i) => <span key={e.where} className="mono">{i ? ', ' : ''}{e.where}</span>)}</p> : null}
+        {notes.map((n) => <p key={n}>{n}</p>)}
       </div>
     </>
   );
 }
 
-function GroupSection({ group, check, project }: { group: McpGroup; check: McpCheck | null; project: ProjectSummary | undefined }) {
+function GroupSection({ group, check, project, first }: { group: McpGroup; check: McpCheck | null; project: ProjectSummary | undefined; first: boolean }) {
   const toast = useToast();
   const [checking, setChecking] = useState(false);
   const [removing, setRemoving] = useState<McpServer | null>(null);
@@ -107,26 +114,26 @@ function GroupSection({ group, check, project }: { group: McpGroup; check: McpCh
   };
 
   return (
-    <section className="mcp-group" aria-labelledby={`mcp-${group.id}`}>
+    <section className="mcp-group" aria-labelledby={`mcp-${group.id}`} data-tour={first ? 'mcp-list' : undefined}>
       <header className="mcp-group-head">
         <div className="mcp-group-text">
           <h2 id={`mcp-${group.id}`}>
-            {project ? <span className="pmark pmark-s" aria-hidden="true">{project.key}</span> : null}
-            {group.title}{group.account ? <span className="faint"> · {group.account}</span> : null}
-            {group.projectId ? <span className="lib-agent-inline">{AGENT[group.agent]}</span> : null}
+            {project ? <ProjectMark projectKey={project.key} size="s" /> : null}
+            <span>{group.title}{group.account ? <span className="faint"> · {group.account}</span> : null}</span>
+            {group.projectId ? <Badge>{AGENT[group.agent]}</Badge> : null}
           </h2>
           <p className="lib-where mono">{group.where}</p>
         </div>
         {group.check ? (
-          <div className="mcp-check">
-            <span className="faint small">{checking ? 'Asking Claude Code…' : check ? `Checked ${ago(check.at)}` : ''}</span>
+          <div className="mcp-check" data-tour={first ? 'mcp-check' : undefined}>
+            <span className="settings-meta" aria-live="polite">{checking ? 'Asking Claude Code…' : check ? `Checked ${ago(check.at)}` : ''}</span>
             <Button size="s" tone="quiet" icon="refresh" disabled={checking} onClick={() => runCheck()}
-              title="Runs claude mcp list as this account. It starts each server to see whether it answers.">Check connections</Button>
+              {...tipProps('Runs claude mcp list as this account. It starts each server to see whether it answers.')}>Check connections</Button>
           </div>
         ) : null}
       </header>
       {group.note ? <p className="mcp-note">{group.note}</p> : null}
-      {check?.error ? <p className="error-text small">{check.error}</p> : null}
+      {check?.error ? <p className="error-text small" role="alert">{check.error}</p> : null}
       <ul className="mcp-list">
         {group.servers.map((s) => (
           <ServerRow key={s.id} server={s} result={check?.results.find((r) => r.name === s.name) ?? null} project={project}
@@ -153,12 +160,12 @@ function ServerRow({ server: s, result, project, onRemove }: { server: McpServer
       <div className="mcp-main">
         <p className="mcp-name">
           <span>{s.name}</span>
-          <span className="lib-tag">{s.transport === 'unknown' ? '?' : s.transport}</span>
-          <span className="lib-tag" title={scopeHint(s)}>{scope}</span>
-          {!s.enabled ? <span className="lib-tag">off</span> : null}
-          {s.notInWanigan ? <span className="lib-tag">not in Wanigan’s sessions</span> : null}
+          <Badge>{s.transport === 'unknown' ? '?' : s.transport}</Badge>
+          <span className="mcp-scope" tabIndex={0} {...tipProps(scopeHint(s))}><Badge>{scope}</Badge></span>
+          {!s.enabled ? <Badge>off</Badge> : null}
+          {s.notInWanigan ? <Badge>not in Wanigan’s sessions</Badge> : null}
         </p>
-        <p className="mcp-target mono" title={s.target}>{s.target}</p>
+        <p className="mcp-target mono" data-tip={s.target}>{s.target}</p>
         {pairs.length ? <p className="mcp-pairs mono">{pairs.join('   ')}</p> : null}
         {result ? <p className={`mcp-status tone-${result.tone}`}>{result.status}{result.issue ? <span className="faint"> — {result.issue}</span> : null}</p> : null}
         {s.note ? <p className="faint small">{s.note}</p> : null}
@@ -174,7 +181,7 @@ function ServerRow({ server: s, result, project, onRemove }: { server: McpServer
 
 function StatusDot({ result }: { result: McpCheckResult | null }) {
   const tone = result?.tone ?? 'none';
-  return <span className={`mcp-dot dot-${tone}`} role="img" aria-label={result ? result.status : 'Not checked'} title={result ? result.status : 'Not checked'} />;
+  return <span className={`mcp-dot dot-${tone}`} role="img" aria-label={result ? result.status : 'Not checked'} data-tip={result ? result.status : 'Not checked'} />;
 }
 
 function scopeHint(s: McpServer): string {
@@ -238,32 +245,32 @@ function Store({ catalog, groups, accounts, projects, onAdd }: {
   }, [groups, accounts, projects]);
   return (
     <>
-      <p className="lede">
-        Well-known servers, with install commands checked against each publisher’s own documentation. Adding one runs the agent’s own command, as the account you pick.
-        Wanigan never asks for or keeps a key.
-      </p>
-      <ul className="store">
+      <ul className="store" data-tour="mcp-store">
         {catalog.map((e) => (
-          <li key={e.id} className="store-card">
+          <li key={e.id} className="store-item">
             <div className="store-head">
               <p className="store-name">{e.name}</p>
               <p className="faint small">{e.publisher}</p>
             </div>
             <p className="store-purpose">{e.purpose}</p>
             <p className="store-facts">
-              <span className="lib-tag">{e.transport === 'http' ? 'remote' : 'runs locally'}</span>
-              <span className={`lib-tag${e.auth === 'key' ? ' tag-key' : ''}`}>{AUTH[e.auth]}</span>
-              {!e.claude ? <span className="lib-tag">Codex only</span> : !e.codex ? <span className="lib-tag">Claude Code only</span> : null}
+              <Badge>{e.transport === 'http' ? 'remote' : 'runs locally'}</Badge>
+              <Badge>{AUTH[e.auth]}</Badge>
+              {!e.claude ? <Badge>Codex only</Badge> : !e.codex ? <Badge>Claude Code only</Badge> : null}
             </p>
             {e.needs ? <p className="faint small">Needs {e.needs}.</p> : null}
-            {installed.get(e.id) ? <p className="store-added small">Added for {installed.get(e.id)?.join(', ')}</p> : null}
+            {installed.get(e.id) ? <p className="store-added small"><Badge tone="green">Added</Badge> for {installed.get(e.id)?.join(', ')}</p> : null}
             <div className="store-foot">
-              <span className="store-source mono" title={e.source}>{e.source.replace(/^https:\/\//, '')}</span>
-              <Button size="s" onClick={() => onAdd(e)}>Add…</Button>
+              <span className="store-source mono" data-tip={e.source}>{e.source.replace(/^https:\/\//, '')}</span>
+              <Button size="s" onClick={() => onAdd(e)} aria-label={`Add ${e.name}`}>Add…</Button>
             </div>
           </li>
         ))}
       </ul>
+      <p className="settings-foot">
+        Well-known servers, with install commands checked against each publisher’s own documentation. Adding one runs the agent’s own command, as the account you pick.
+        Wanigan never asks for or keeps a key.
+      </p>
     </>
   );
 }
@@ -388,5 +395,50 @@ function AddDialog({ entry, accounts, projects, onClose }: { entry: McpCatalogEn
         </div>
       ) : !error ? <p className="faint">Working out the command…</p> : null}
     </Dialog>
+  );
+}
+
+/** How MCP servers work here, as a picture: every sentence is a rule the core's MCP reader and planner enforce. */
+function McpHow({ total, store, onClose, onStore }: { total: number | null; store: number | null; onClose: () => void; onStore: () => void }) {
+  return (
+    <HowDialog place="mcp" title="How MCP servers work" onClose={onClose}
+      intro={<><strong>The tools your agents can reach, read from their own settings.</strong> Wanigan changes them only through each agent’s own command, when you click, after you have seen it.</>}
+      side={(
+        <>
+          <HowNote title="Where a server is kept" tone="quiet">
+            <ul>
+              <li><strong>User:</strong> every project, for that account.</li>
+              <li><strong>Local:</strong> one folder, for that account.</li>
+              <li><strong>Project:</strong> in the repository, for everyone who clones it.</li>
+              <li><strong>Plugin:</strong> comes with a plugin.</li>
+            </ul>
+          </HowNote>
+          <HowNote title="Keys">
+            <ul>
+              <li>Values that look like keys or tokens are never shown.</li>
+              <li>Wanigan never asks for or keeps a key: a server that needs one is finished in a terminal, or in your own.</li>
+            </ul>
+          </HowNote>
+        </>
+      )}>
+      <HowLane n={1} title="What is there" actor="wanigan">
+        <HowBox actor="wanigan" title="Read from each agent’s files" num={howNum(total, 'server found', 'servers found')}>
+          Claude Code’s, Codex’s and Gemini CLI’s own settings, for every account and open project.
+        </HowBox>
+        <HowArrow label="you ask" />
+        <HowBox actor="agents" title="Check connections">
+          Runs claude mcp list as that account, which starts each server to see whether it answers, and lists any it found elsewhere.
+        </HowBox>
+      </HowLane>
+      <HowLane n={2} title="Adding and removing" actor="you">
+        <HowBox actor="you" title="From the store" num={howNum(store, 'well-known server', 'well-known servers')} onClick={() => { onClose(); onStore(); }} hint="Show the store">
+          Install commands checked against each publisher’s documentation. Choose the account and where it is kept.
+        </HowBox>
+        <HowArrow />
+        <HowBox actor="agents" title="The agent’s own command">
+          You see the exact command first; Wanigan runs it with no shell, as the account you chose. Remove works the same way.
+        </HowBox>
+      </HowLane>
+    </HowDialog>
   );
 }
