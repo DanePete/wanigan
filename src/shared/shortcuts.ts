@@ -101,6 +101,12 @@ export const SHORTCUTS: readonly Shortcut[] = [
   { id: null, label: 'Accept into Ready (Inbox)', group: 'On the board', keys: ['A'] },
   { id: null, label: 'Archive (Inbox)', group: 'On the board', keys: ['X'] },
   { id: null, label: 'Apply a saved view, by its number', group: 'On the board', keys: ['1–9'] },
+  // Moving a card by keyboard follows the same rules as a drag (views/Board.tsx).
+  { id: null, label: 'Move the card up or down its column', group: 'On the board', keys: ['Mod', '↑'], alt: [['Mod', '↓']] },
+  { id: null, label: 'Move the card to the next column', group: 'On the board', keys: ['Mod', '→'], alt: [['Mod', '←']] },
+  // The List, the board's other mode (views/ListView.tsx).
+  { id: null, label: 'First or last card in the List', group: 'On the board', keys: ['Home'], alt: [['End']] },
+  { id: null, label: 'A page down or up the List', group: 'On the board', keys: ['PageDown'], alt: [['PageUp']] },
   // So does the Changes view (views/git/WorkingTree.tsx, and its commit box).
   { id: null, label: 'Next file', group: 'In Changes', keys: ['J'] },
   { id: null, label: 'Previous file', group: 'In Changes', keys: ['K'] },
