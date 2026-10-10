@@ -56,6 +56,15 @@ export const LIVE_DEFAULTS = String.raw`(() => {
     gotoFocus: async () => false,
     gotoReturn: async () => {},
     openInBrowser: async () => false,
+    // Snap and Record (live-snap.ts, live-record.ts): nothing to picture, and nothing records.
+    snap: async () => ({ error: nothing }),
+    recordStart: async () => ({ on: false, projectId: null, startedAt: null, limitMs: 120000, frames: 0, steps: 0, saving: false, done: null, error: nothing }),
+    recordStop: async () => null,
+    recordSay: async () => false,
+    onRecord: () => () => {},
+    recordFile: async () => null,
+    recordReveal: async () => false,
+    recordDelete: async () => false,
   };
   for (const [name, answer] of Object.entries(quiet)) if (typeof live[name] !== 'function') live[name] = answer;
 })();`;

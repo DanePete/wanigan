@@ -369,6 +369,8 @@ export function liveStub(f) {
     // What the helper says of the site's AI: a Drupal site, so core has no AI API, and what saving runs.
     siteAi: { state: 'ok', ai: { version: 1, platform: 'drupal', coreAi: false, supports: null, connectors: null, abilities: null, watches: { prompts: false, abilities: false }, saves: f.trace.saves } },
   };
+  // The wireframe at a size, for a stand-in that pictures the view (scripts/ui-snap-stub.mjs).
+  window.__wgLive.wire = wireAt;
   window.__wgApp.settings = { ...window.__wgApp.settings, liveView: true, liveFollow: true, liveDrupal: true, liveWordpress: true, liveSites: true, liveShots: false };
   // `platform`: the sweep may make the made-up site a WordPress one from the start (its helper's kind with it).
   const site = (projectId) => ({

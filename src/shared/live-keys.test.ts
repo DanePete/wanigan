@@ -37,6 +37,8 @@ test('the shortcut sheet lists exactly the live view’s keys, and each does wha
     'Compare Local with a hosted environment: compare',
     'The site’s component library: library',
     'Your edits to the page, in the design layer: edits',
+    'Snap a picture of the page to mark up and send to an agent: snap',
+    'Start or stop recording the page (Escape stops it too): record',
     'Type on the chosen part’s words on the page, or every way to edit it: edit',
     'Move the chosen part: move',
     'The chosen part’s code, in the code editor: code',
@@ -95,6 +97,10 @@ test('modifiers other than Shift are never a live view key, and Shift is part of
   assert.equal(liveKey({ key: 'X', shiftKey: true, metaKey: false, ctrlKey: false, altKey: false }), 'take-out');
   assert.equal(liveKey({ key: 'B', shiftKey: true, metaKey: false, ctrlKey: false, altKey: false }), 'library');
   assert.equal(liveKey({ key: 'E', shiftKey: true, metaKey: false, ctrlKey: false, altKey: false }), 'edits', 'plain E edits the chosen part');
+  assert.equal(liveKey({ key: 'S', shiftKey: true, metaKey: false, ctrlKey: false, altKey: false }), 'snap');
+  assert.equal(liveKey({ key: 's', shiftKey: false, metaKey: false, ctrlKey: false, altKey: false }), null, 'plain S is Compare’s slider');
+  assert.equal(liveKey({ key: 'R', shiftKey: true, metaKey: false, ctrlKey: false, altKey: false }), 'record');
+  assert.equal(liveKey({ key: 'r', shiftKey: false, metaKey: true, ctrlKey: false, altKey: false }), null, '⌘R reloads the window');
   assert.equal(liveKey({ key: '}', shiftKey: true, metaKey: false, ctrlKey: false, altKey: false }), 'dock-next', '⇧] steps the dock');
   assert.equal(liveKey({ key: '{', shiftKey: true, metaKey: false, ctrlKey: false, altKey: false }), 'dock-previous');
   assert.equal(liveKey({ key: ']', shiftKey: false, metaKey: false, ctrlKey: false, altKey: false }), 'tab-next', '] alone still steps the side panel');
@@ -106,7 +112,7 @@ test('modifiers other than Shift are never a live view key, and Shift is part of
 });
 
 test('the page gives up only the keys that need no chosen part, and the window handles every key', () => {
-  assert.deepEqual(LIVE_PAGE_KEYS.map((k) => k.id), ['pick', 'lens', 'width-phone', 'width-tablet', 'width-full', 'tab-previous', 'tab-next', 'dock-previous', 'dock-next', 'compare', 'library', 'edits']);
+  assert.deepEqual(LIVE_PAGE_KEYS.map((k) => k.id), ['pick', 'lens', 'width-phone', 'width-tablet', 'width-full', 'tab-previous', 'tab-next', 'dock-previous', 'dock-next', 'compare', 'library', 'edits', 'snap', 'record']);
   assert.ok(isLiveKeyId('compare') && !isLiveKeyId('goto') && !isLiveKeyId(null));
   const live = readFileSync(resolve(import.meta.dirname, '../renderer/src/components/Live.tsx'), 'utf8');
   for (const k of LIVE_KEYS) assert.ok(live.includes(`case '${k.id}'`), `the live view does not handle ${k.id}`);

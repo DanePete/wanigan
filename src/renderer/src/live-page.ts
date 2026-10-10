@@ -1851,5 +1851,7 @@ export function livePage(): void {
     mutations: () => mutations,
     /** The picked element described again. */
     picked: () => { const el = target(); return el ? describe(el) : null; },
+    /** Any element of the page described as a pick is (Record's clicks, live-page-record.ts); null for Wanigan's own overlay. */
+    describeEl: (el: unknown) => (el instanceof Element && !el.closest(`#${HOST_ID}`) ? describe(el) : null),
   };
 }

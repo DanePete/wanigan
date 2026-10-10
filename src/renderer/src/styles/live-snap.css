@@ -1,0 +1,377 @@
+/* Snap and Record (components/live/Snap.tsx, Record.tsx): drawn in the stage where the page is, as Compare is. */
+
+.live-stage-snap {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  background: var(--bg);
+  overflow: hidden;
+  container-type: inline-size;
+}
+
+.live-stage-snap > * {
+  flex-shrink: 0;
+}
+
+.live-snap-head,
+.live-snap-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.live-snap-title {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0;
+  font: 600 var(--text-md) / var(--leading-tight) var(--font-ui);
+  white-space: nowrap;
+}
+
+.live-snap-title > svg {
+  color: var(--water);
+}
+
+.live-snap-steps {
+  display: flex;
+  gap: var(--space-3);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  color: var(--faint);
+}
+
+.live-snap-steps [aria-current='step'] {
+  color: var(--fg);
+  font-weight: 600;
+}
+
+.live-snap-spacer {
+  flex: 1;
+}
+
+.live-snap-path {
+  min-width: 0;
+  max-width: 40%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.live-snap-bar p {
+  margin: 0;
+}
+
+.live-snap-tools {
+  display: inline-flex;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-m);
+  background: var(--sunken);
+}
+
+.live-stage-snap .btn-primary .live-key {
+  border-color: var(--water-ink);
+  color: var(--water-ink);
+}
+
+.live-snap-tools .btn[aria-checked='true'] {
+  background: var(--water-soft);
+  color: var(--water);
+}
+
+.live-snap-wait {
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: var(--space-2);
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.live-snap-wait p {
+  margin: 0;
+}
+
+/* The picture takes the room the stage has, whole: a tall page scrolls inside it. */
+.live-snap-frame {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-m);
+  background: var(--sunken);
+}
+
+/* Sized to the picture by the window (shown whole, or as wide as the frame for a whole page), so a point on it is a point on the picture. */
+.live-snap-area,
+.live-snap-mark {
+  position: relative;
+  flex: none;
+  cursor: crosshair;
+  touch-action: none;
+  user-select: none;
+}
+
+.live-snap-area img,
+.live-snap-mark canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.live-snap-drag {
+  position: absolute;
+  border: 2px solid var(--water);
+  background: var(--water-soft);
+  pointer-events: none;
+}
+
+.live-snap-mark canvas[data-tool='text'] {
+  cursor: text;
+}
+
+.live-snap-label {
+  position: absolute;
+  width: 220px;
+  transform: translateY(-100%);
+  font-size: var(--text-sm);
+}
+
+.live-snap-foot {
+  margin: 0;
+}
+
+/* Ask an agent: the picture (or the key frames) beside the composer; under it when the stage is narrow. */
+.live-snap-compose {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: var(--space-4);
+  overflow: auto;
+}
+
+@container (max-width: 760px) {
+  .live-snap-compose {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.live-snap-compose > .live-compose {
+  align-content: start;
+}
+
+.live-snap-picture {
+  display: grid;
+  align-content: start;
+  gap: var(--space-1);
+  min-width: 0;
+  margin: 0;
+}
+
+.live-snap-picture img {
+  max-width: 100%;
+  max-height: 60vh;
+  object-fit: contain;
+  object-position: left top;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-s);
+}
+
+/* The composer opened with a snap or a recording: the explanation with voice input's place beside it, then the context. */
+.live-compose-say {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+}
+
+.live-compose-say textarea {
+  flex: 1;
+  min-width: 0;
+}
+
+.live-compose-voice:empty {
+  display: none;
+}
+
+.live-compose-context {
+  display: grid;
+  gap: var(--space-1);
+}
+
+.live-compose-context textarea {
+  font-size: var(--text-xs);
+  line-height: var(--lh-sm);
+}
+
+/* ── Record ──────────────────────────────────────────────────────────────── */
+
+.live-record-time {
+  font-variant-numeric: tabular-nums;
+}
+
+/* While it records, the status line says so in Wanigan's water blue: never amber, which means "needs you". */
+.live-status-said.live-recording,
+.live-status-said.live-recording > svg {
+  color: var(--water);
+}
+
+.live.recording .live-status {
+  border-top-color: var(--water-line);
+}
+
+.live-record-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+  gap: var(--space-4);
+}
+
+@container (max-width: 760px) {
+  .live-record-body {
+    grid-template-columns: minmax(0, 1fr);
+    overflow: auto;
+  }
+}
+
+.live-record-clip,
+.live-record-log {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-height: 0;
+  min-width: 0;
+}
+
+.live-record-clip {
+  overflow: hidden;
+}
+
+/* The clip takes what the column has left after the key frames, which are always in sight. */
+.live-record-clip video {
+  display: block;
+  flex: 1 1 0;
+  min-height: 96px;
+  width: 100%;
+  object-fit: contain;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-m);
+  background: var(--sunken);
+}
+
+.live-record-frames {
+  flex: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.live-record-frame {
+  display: grid;
+  gap: var(--space-1);
+  width: 132px;
+  padding: var(--space-1);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-s);
+  background: var(--surface);
+  color: var(--fg);
+  text-align: left;
+  cursor: pointer;
+}
+
+.live-record-frame:hover {
+  border-color: var(--water-line);
+}
+
+.live-record-frame img,
+.live-record-frames.compact img {
+  display: block;
+  width: 100%;
+  height: 72px;
+  object-fit: cover;
+  object-position: top;
+  border-radius: var(--radius-s);
+}
+
+.live-record-frames.compact img {
+  width: 132px;
+  border: 1px solid var(--line);
+}
+
+.live-record-frame .small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.live-record-log .live-section-title {
+  margin: 0;
+}
+
+.live-record-steps {
+  flex: 1 1 auto;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  overflow: auto;
+  list-style: none;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-m);
+  background: var(--surface);
+}
+
+.live-record-steps li + li {
+  border-top: 1px solid var(--line);
+}
+
+.live-record-steps button {
+  display: grid;
+  grid-template-columns: 52px minmax(0, 1fr);
+  gap: var(--space-2);
+  width: 100%;
+  padding: var(--space-1) var(--space-2);
+  border: 0;
+  background: none;
+  color: var(--fg);
+  text-align: left;
+  cursor: pointer;
+}
+
+.live-record-steps button:hover {
+  background: var(--hover);
+}
+
+.live-record-steps [data-error] .small {
+  color: var(--red);
+}
+
+.live-record-kept {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.live-record-kept p {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.live-record-kept-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}

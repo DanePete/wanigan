@@ -29,6 +29,13 @@ export interface LiveNote {
   shot: string | null;
   /** For a part dragged where its order is in a template: a PNG of the order wanted, beside `shot` (the order now). */
   after?: string | null;
+  /**
+   * A snap (the marked-up picture is `shot`, its context in `text`) or a recording (its key frames are `frames`, JPEG,
+   * its step log in `text`); absent for a note about a part.
+   */
+  kind?: 'snap' | 'recording';
+  /** A recording's key frames, in time order: sent after `shot`, never the video. */
+  frames?: string[];
   at: number;
 }
 
@@ -84,7 +91,9 @@ export function notesText(notes: readonly LiveNote[], dirOf: (componentId: strin
     ? `A note from the live view of ${pages[0]}:`
     : `${notes.length} notes from the live view of ${pages.length === 1 ? pages[0] : `${pages.length} pages`}:`];
   notes.forEach((n, i) => {
-    lines.push('', `${i + 1}. ${n.text.trim() || (n.words ? 'Change these words.' : n.style.length ? 'Change this style.' : 'Look at this part.')}`);
+    // A snap's or a recording's words run to several lines (its context, its step log): each is indented under its number.
+    const said = n.text.trim().split('\n').map((line, k) => (k && line ? `   ${line}` : line)).join('\n');
+    lines.push('', `${i + 1}. ${said || (n.words ? 'Change these words.' : n.style.length ? 'Change this style.' : n.kind === 'snap' ? 'Look at this snap.' : n.kind === 'recording' ? 'Look at this recording.' : 'Look at this part.')}`);
     if (pages.length > 1) lines.push(`   Page: ${n.url}`);
     if (n.pick) lines.push(`   Pointed at: \`${n.pick.selector}\`${n.pick.text ? ` (“${n.pick.text.slice(0, 120)}”)` : ''}`);
     const made = n.regions.slice(0, 4).map((r) => regionLine(r, r.component ? dirOf(r.component) : null));
@@ -96,7 +105,16 @@ export function notesText(notes: readonly LiveNote[], dirOf: (componentId: strin
       lines.push('   Make it in the site’s own styles, the way this theme already styles things (its classes or CSS), not as an inline style.');
     }
   });
-  if (notes.some((n) => n.shot)) {
+  if (notes.some((n) => n.kind)) {
+    // Snaps and recordings: what is attached for each, in order, said plainly (and that no video is).
+    const what = notes.map((n, i) => {
+      const pictures = [n.shot ? (n.kind === 'snap' ? 'the marked-up picture' : 'a picture of the part') : null, n.after ? 'the order wanted' : null,
+        n.frames?.length ? `${n.frames.length} key ${n.frames.length === 1 ? 'frame' : 'frames'} from the recording` : null].filter(Boolean);
+      return pictures.length ? `note ${i + 1}: ${pictures.join(', ')}` : null;
+    }).filter(Boolean);
+    if (what.length) lines.push('', `Attached, in this order: ${what.join('; ')}.`);
+    if (notes.some((n) => n.kind === 'recording')) lines.push('A recording’s video stays with the owner: its key frames and step log are what you get.');
+  } else if (notes.some((n) => n.shot)) {
     const each = notes.every((n) => n.shot) ? 'A picture of each part' : 'A picture of each part that has one';
     lines.push('', notes.some((n) => n.after)
       ? `${each}, as it looked, is attached in the same order; where a note asks for a new order, a second picture after it shows the order wanted.`

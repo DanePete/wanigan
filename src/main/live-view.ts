@@ -148,6 +148,17 @@ export interface LiveViewHooks {
   session?(ses: Session, projectId: string): void;
   /** A view was made for a project, or went away (null). */
   view?(webContents: WebContents | null, projectId: string | null): void;
+  /**
+   * A request a project's session made began, finished or failed (a recording's step log keeps the failed and slow ones):
+   * its method, address and status, never its body, headers or cookies.
+   */
+  request?(seen: LiveRequestSeen): void;
+}
+
+/** One request as the view's session saw it; `at` is when, in milliseconds since 1970. */
+export interface LiveRequestSeen {
+  webContentsId: number | undefined; id: number; phase: 'start' | 'done' | 'failed';
+  method: string; url: string; status: number | null; error: string | null; at: number;
 }
 
 export interface LiveShotTaken { data: string; width: number; height: number }
@@ -316,9 +327,17 @@ export function wireLiveView(options: {
     ses.setPermissionRequestHandler((_wc, _permission, callback) => callback(false));
     ses.setPermissionCheckHandler(() => false);
     ses.on('will-download', (event) => event.preventDefault());
+    const seen = (phase: LiveRequestSeen['phase'], d: { webContentsId?: number; id: number; method: string; url: string; timestamp: number }, status: number | null = null, error: string | null = null): void => {
+      options.hooks?.request?.({ webContentsId: d.webContentsId, id: d.id, phase, method: d.method, url: d.url, status, error, at: d.timestamp });
+    };
     if (hosted) {
       // Read-only: a form cannot be sent and nothing can be saved from here; what a page loads by POST stays empty.
-      ses.webRequest.onBeforeRequest((details, callback) => callback({ cancel: !['GET', 'HEAD', 'OPTIONS'].includes(details.method) }));
+      ses.webRequest.onBeforeRequest((details, callback) => {
+        seen('start', details);
+        callback({ cancel: !['GET', 'HEAD', 'OPTIONS'].includes(details.method) });
+      });
+      ses.webRequest.onCompleted((details) => seen('done', details, details.statusCode));
+      ses.webRequest.onErrorOccurred((details) => seen('failed', details, null, details.error));
       // Chromium's certificate verdict stands, with one exception: a copy of the site on this Mac (Live's database
       // under another name) has a certificate from the owner's own mkcert authority, as the Local tab does. It is
       // trusted only where that authority issued it for this name and the name resolves to this Mac alone. A verdict
@@ -338,6 +357,7 @@ export function wireLiveView(options: {
     // The helper's token goes with the pages the view itself loads (and its frames), never with the page's own
     // fetches: a script on the page cannot borrow it to call the helper.
     ses.webRequest.onBeforeSendHeaders((details, callback) => {
+      seen('start', details);
       const token = tokens.get(id);
       const host = hosts.get(id);
       if (token && host && (details.resourceType === 'mainFrame' || details.resourceType === 'subFrame')) {
@@ -352,9 +372,11 @@ export function wireLiveView(options: {
     };
     const path = (url: string): string => { try { const u = new URL(url); return `${u.host === hosts.get(id) ? '' : u.host}${u.pathname}`; } catch { return url.slice(0, 200); } };
     ses.webRequest.onCompleted((details) => {
+      seen('done', details, details.statusCode);
       if (details.statusCode >= 400) failed(details.webContentsId, `${details.statusCode} ${details.method} ${path(details.url)}`);
     });
     ses.webRequest.onErrorOccurred((details) => {
+      seen('failed', details, null, details.error);
       if (details.error !== 'net::ERR_ABORTED') failed(details.webContentsId, `${details.error} ${details.method} ${path(details.url)}`);
     });
     ses.setCertificateVerifyProc((request, callback) => {

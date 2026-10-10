@@ -313,7 +313,9 @@ try {
         if (!pageGroup?.controls.some((c) => want.test(c))) fail(t(`layout: the page group has nothing like ${want} (${pageGroup?.controls.join(' | ')})`));
       }
       if (!/^Pick/.test(toolGroup?.controls[0] ?? '') || !/^Library/.test(toolGroup?.controls[1] ?? '') || !/^Edits: the design layer \(⇧E\)$/.test(toolGroup?.controls[2] ?? '')
-        || toolGroup?.controls[3] !== 'DevTools (⌥⌘I)' || !/^More/.test(toolGroup?.controls[4] ?? '') || toolGroup?.controls.length !== 5) fail(t(`layout: the tools are ${JSON.stringify(toolGroup?.controls)}`));
+        || !/^Snap \(⇧S\)$/.test(toolGroup?.controls[3] ?? '') || !/^Record \(⇧R\)$/.test(toolGroup?.controls[4] ?? '')
+        || toolGroup?.controls[5] !== 'DevTools (⌥⌘I)'
+        || !/^More/.test(toolGroup?.controls[6] ?? '') || toolGroup?.controls.length !== 7) fail(t(`layout: the tools are ${JSON.stringify(toolGroup?.controls)}`));
       for (const gone of ['Site settings', 'Open in the default browser', 'Go to a page of the site (Shift+Space)']) {
         if (await page.$(`.live-bar button[aria-label="${gone}"]`)) fail(t(`layout: "${gone}" is still a button of its own in the bar`));
       }
