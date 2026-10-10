@@ -30,6 +30,7 @@ import { changeLines, placesOf, sendsTyped, thisReach, type ChangeLine } from '.
 import { liveBridge } from '../../lib/live';
 import { Button, Disclosure, useSingleFlight, useToast } from '../ui';
 import type { LayerApi } from './use-layer';
+import { LIVE_TIP } from './keys';
 
 /** What was just added to the layer, said in the Inspector until the next edit. */
 export interface LayerAdded { label: string; lines: ChangeLine[]; reach: string }
@@ -131,7 +132,7 @@ export function RetypeWords({ pick, layer, page, trace, onAdded, onCancel }: {
         <Button size="s" tone="primary" icon="check" type="submit" disabled={!changed}>Show it on the page</Button>
         <Button size="s" tone="quiet" onClick={onCancel}>Cancel</Button>
       </div>
-      <p className="faint small">For {reach}. {shownWords(layer.on)}; the site has it only once you make it real from Edits (⇧E).</p>
+      <p className="faint small">For {reach}. {shownWords(layer.on)}; the site has it only once you make it real from Edits.</p>
     </form>
   );
 }
@@ -333,7 +334,7 @@ export function LayerAddedNote({ added, onTray }: { added: LayerAdded; onTray: (
         ))}
       </ul>
       <div className="live-actions">
-        <Button size="s" tone="quiet" icon="brush" onClick={onTray} aria-keyshortcuts="Shift+E">Open Edits<kbd className="live-key" aria-hidden="true">⇧E</kbd></Button>
+        <Button size="s" tone="quiet" icon="brush" onClick={onTray} keys={LIVE_TIP.edits}>Open Edits</Button>
       </div>
     </div>
   );

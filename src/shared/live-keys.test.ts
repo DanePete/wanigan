@@ -28,7 +28,7 @@ test('the shortcut sheet lists exactly the live view’s keys, and each does wha
     return `${s.label}: ${app && 'id' in app ? app.id : liveKey(e) ?? (isSendKey(e, true) ? 'send' : isAddKey(e, true) ? 'add' : 'nothing')}`;
   }));
   assert.deepEqual(said, [
-    'Pick a part on the page, or stop picking: pick',
+    'Select a part on the page, or stop selecting: pick',
     'Colour the page by a lens: lens',
     'Phone, tablet or full width: width-phone', 'Phone, tablet or full width: width-tablet', 'Phone, tablet or full width: width-full',
     'Previous or next tab of the side panel: tab-previous', 'Previous or next tab of the side panel: tab-next',

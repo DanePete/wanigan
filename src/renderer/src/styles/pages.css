@@ -257,15 +257,6 @@
   font-weight: 600;
 }
 
-.badge {
-  padding: 1px var(--space-2);
-  border-radius: var(--radius-round);
-  background: var(--water-soft);
-  color: var(--water-text);
-  font-size: var(--text-xs);
-  font-weight: 600;
-}
-
 .account-status {
   font-size: var(--text-sm);
 }

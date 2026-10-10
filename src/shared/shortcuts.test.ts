@@ -83,13 +83,21 @@ test('every command the keys can produce is listed on the sheet', () => {
 });
 
 test('the sheet’s board keys are the keys the board handles', () => {
-  // The board keeps its own handler (views/Board.tsx); this keeps the sheet honest about it.
-  const board = readFileSync(resolve(import.meta.dirname, '../renderer/src/views/Board.tsx'), 'utf8');
+  // The board and its List keep their own handlers (views/Board.tsx, views/ListView.tsx); this keeps the sheet honest about them.
+  const read = (file: string): string => readFileSync(resolve(import.meta.dirname, '../renderer/src/views', file), 'utf8');
+  const board = read('Board.tsx') + read('ListView.tsx');
+  const named: Record<string, string> = {
+    '↓': "'ArrowDown'", '↑': "'ArrowUp'", '←': "'ArrowLeft'", '→': "'ArrowRight'", Enter: "'Enter'", '1–9': '/^[1-9]$/.test(e.key)',
+    Home: "'Home'", End: "'End'", PageUp: "'PageUp'", PageDown: "'PageDown'",
+  };
   for (const s of SHORTCUTS.filter((x) => x.group === 'On the board')) {
     for (const keys of [s.keys, ...(s.alt ?? [])]) {
-      const k = keys[0] as string;
-      const code = { '↓': "'ArrowDown'", '↑': "'ArrowUp'", '←': "'ArrowLeft'", '→': "'ArrowRight'", Enter: "'Enter'", '1–9': '/^[1-9]$/.test(e.key)' }[k] ?? `'${k.toLowerCase()}'`;
-      assert.ok(board.includes(code), `the board does not handle ${k}`);
+      // A Mod chord: the key after Mod, with the board checking ⌘ on a Mac and Ctrl elsewhere.
+      const mod = keys[0] === 'Mod';
+      const k = (mod ? keys[1] : keys[0]) as string;
+      const code = named[k] ?? `'${k.toLowerCase()}'`;
+      assert.ok(board.includes(code), `the board does not handle ${keys.join('+')}`);
+      if (mod) assert.ok(board.includes('mac ? e.metaKey && !e.ctrlKey : e.ctrlKey && !e.metaKey'), `the board does not take ${keys.join('+')} as Mod on each platform`);
     }
   }
   // The saved views' numbers are the board's: the window's own keys leave a bare digit alone.

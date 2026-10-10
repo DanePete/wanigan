@@ -119,7 +119,8 @@ try {
     const nsHref = await page.$eval('.rail-projects a[aria-label^="Northstar"]', (a) => a.getAttribute('href'));
     const ns = nsHref.match(/#\/p\/([^/]+)/)[1];
     const places = [['board', `#/p/${ns}/board`], ['sessions', `#/p/${ns}/sessions`], ['changes', `#/p/${ns}/changes`], ['history', `#/p/${ns}/history`],
-      ['decisions', `#/p/${ns}/decisions`], ['activity', `#/p/${ns}/activity`], ['list', `#/p/${ns}/list`], ['running', '#/running'], ['needs', '#/needs'], ['settings', '#/settings']];
+      ['decisions', `#/p/${ns}/decisions`], ['activity', `#/p/${ns}/activity`], ['list', `#/p/${ns}/list`], ['running', '#/running'], ['needs', '#/needs'], ['settings', '#/settings'],
+      ['live', `#/p/${ns}/live`]];
     // A session is a place of its own: one of the demo's live Claude Code sessions.
     const sessionHash = await page.evaluate(async () => {
       const s = (await window.wanigan.call('sessions.list', { live: true })).find((x) => x.provider === 'claude');
@@ -158,6 +159,44 @@ try {
         if (await page.$('.tour-offer')) fail(`${place}: Not now did not put the offer away for good`);
         if (!(await page.$('.status-tour'))) fail(`${place}: after Not now the compass is gone too`);
       }
+    }
+
+    // ── the board's and the List's tours: each stop lights what it names, its card in the window and beside it ──
+    for (const [place, hash, want] of [
+      ['board', `#/p/${ns}/board`, ['The lanes', 'A card', 'Move a card', 'Narrow the board', 'Saved views', 'New card', 'How this works']],
+      ['list', `#/p/${ns}/list`, ['Every card', 'Sort', 'Walk the rows', 'Open a card', 'Board or List']],
+    ]) {
+      await page.goto(`${base}${hash}`);
+      if (!(await page.waitForSelector('.status-tour', { timeout: 8000 }).catch(() => null))) { fail(`${place} tour: no compass`); continue; }
+      await page.click('.status-tour');
+      await page.waitForSelector('.tour-card', { timeout: 4000 }).catch(() => fail(`${place} tour: the compass did not play it`));
+      const stops = [];
+      for (let i = 0; i < 10; i++) {
+        await page.waitForFunction(() => {
+          const card = document.querySelector('.tour-card');
+          if (!card || card.style.opacity === '0') return !card;
+          const spot = document.querySelector('.tour-spot');
+          if (!spot) return true;
+          const el = document.querySelector(`[data-tour~="${spot.getAttribute('data-tour-target')}"]`);
+          if (!el) return false;
+          const a = spot.getBoundingClientRect(); const b = el.getBoundingClientRect();
+          return a.left <= b.left + 0.5 && a.top <= b.top + 0.5 && a.right >= b.right - 0.5 && a.bottom >= b.bottom - 0.5;
+        }, null, { timeout: 3000 }).catch(() => {});
+        const s = await readStep(page);
+        if (!s) break;
+        stops.push(s.title);
+        if (s.card.l < 0 || s.card.t < 0 || s.card.r > s.view.w || s.card.b > s.view.h) fail(`${place} tour "${s.title}": the card is outside the window`);
+        if (!s.name) fail(`${place} tour "${s.title}": it points at nothing`);
+        else if (!s.target) fail(`${place} tour "${s.title}": "${s.name}" is not on the screen`);
+        else if (s.spot && overlaps(s.card, s.spot) && (s.spot.r - s.spot.l) * (s.spot.b - s.spot.t) < s.view.w * s.view.h * 0.5) fail(`${place} tour "${s.title}": the card covers what it describes`);
+        if (s.name === 'board-card' || s.name === 'list-row') await page.screenshot({ path: join(out, `${theme}-tour-${place}.png`) });
+        if (s.primary === 'Done') { await page.keyboard.press('Enter'); break; }
+        await page.keyboard.press('ArrowRight');
+        await page.waitForFunction((was) => document.querySelector('.tour-title')?.textContent !== was || !document.querySelector('.tour-card'), s.title, { timeout: 4000 }).catch(() => {});
+      }
+      if (JSON.stringify(stops) !== JSON.stringify(want)) fail(`${place} tour: the stops were ${JSON.stringify(stops)}`);
+      await page.waitForTimeout(200);
+      if (await page.$('.tour-card')) fail(`${place} tour: Done did not end it`);
     }
 
     // ── the palette replays; Settings turns offers off and resets them ─────

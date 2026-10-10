@@ -6,22 +6,23 @@ import { branchHref, gitHref, href } from '../lib/router';
 import { plural } from '../lib/format';
 import { Icon } from '../components/icons';
 import { Confirm } from './git/common';
-import { Button, useToast } from '../components/ui';
+import { Button, tipProps, useToast } from '../components/ui';
+import { Section } from '../components/Panel';
 
 /** A pointer to the folder's uncommitted changes while a card is being worked or reviewed. */
 export function ProjectChanges({ projectId, projectKey }: { projectId: string; projectKey: string }) {
   const changes = useQuery('projects.changes', { id: projectId }, ['sessions'], (_e, d) => (d as { projectId?: string })?.projectId === projectId);
   if (changes.error) return (
-    <section className="drawer-section">
-      <h3>Changes in the project</h3>
-      <p className="error-text" role="alert">{changes.error.message}</p>
-      <Button size="s" tone="quiet" onClick={changes.reload}>Retry</Button>
-    </section>
+    <Section title="Changes in the project">
+      <div className="drawer-problem" role="alert">
+        <p className="error-text">{changes.error.message}</p>
+        <Button size="s" icon="refresh" onClick={changes.reload}>Retry</Button>
+      </div>
+    </Section>
   );
   if (!changes.data?.git || !changes.data.files.length) return null;
   return (
-    <section className="drawer-section">
-      <h3>Changes in the project</h3>
+    <Section title="Changes in the project">
       <p className="changes-pointer">
         <a href={href({ name: 'project', projectKey, view: 'changes' })}>
           {changes.data.files.length === 1 ? '1 file' : `${changes.data.files.length} files`} changed
@@ -30,7 +31,7 @@ export function ProjectChanges({ projectId, projectKey }: { projectId: string; p
         <span className="del">−{changes.data.deletions}</span>
         <span className="faint small">uncommitted, in the whole folder, not only this card’s</span>
       </p>
-    </section>
+    </Section>
   );
 }
 
@@ -70,17 +71,19 @@ export function Branch({ card, projectKey, folderAgents }: { card: CardDetail; p
       : await attempt(() => call('cards.comment', { id: card.id, body: text }), fail).then((x) => x && 'No session is running on it: the request is on the card, for the next one.');
     if (r) { toast(r); setConflict(null); }
   };
+  const held = card.live ? 'Stop the session first' : folderAgents.length
+    ? `${folderAgents.map((s) => s.title).join(' and ')} ${folderAgents.length === 1 ? 'is' : 'are'} working in the project folder, and merging would change the files under ${folderAgents.length === 1 ? 'it' : 'them'}. Merge when ${folderAgents.length === 1 ? 'it stops' : 'they stop'}.`
+    : null;
   return (
-    <section className="drawer-section">
-      <h3>Branch</h3>
+    <Section title="Branch" className="drawer-branch">
       <p className="branch-line">
         <span className="mono">{wt.branch}</span>
         <span className="faint small">from {wt.base}</span>
       </p>
       {changes.error ? (
-        <div role="alert">
+        <div className="drawer-problem" role="alert">
           <p className="error-text">{changes.error.message}</p>
-          <Button size="s" tone="quiet" onClick={changes.reload}>Retry</Button>
+          <Button size="s" icon="refresh" onClick={changes.reload}>Retry</Button>
         </div>
       ) : !changes.data ? <p className="faint small">Reading changes…</p> : (
         <p className="changes-pointer">
@@ -98,17 +101,17 @@ export function Branch({ card, projectKey, folderAgents }: { card: CardDetail; p
           </>
         ) : (
           <>
-            <Button size="s" onClick={() => setConfirming(true)} disabled={!!card.live || folderAgents.length > 0}
-              title={card.live ? 'Stop the session first' : folderAgents.length ? `${folderAgents.map((s) => s.title).join(' and ')} ${folderAgents.length === 1 ? 'is' : 'are'} working in the project folder, and merging would change the files under ${folderAgents.length === 1 ? 'it' : 'them'}. Merge when ${folderAgents.length === 1 ? 'it stops' : 'they stop'}.` : undefined}>
+            <Button size="s" icon="merge" onClick={() => setConfirming(true)} disabled={!!held} {...(held ? tipProps(held) : {})}>
               Merge into {wt.base}
             </Button>
-            <Button size="s" tone="quiet" disabled={!!card.live} title={card.live ? 'Stop the session first' : undefined}
+            <Button size="s" tone="quiet" disabled={!!card.live} {...(card.live ? tipProps('Stop the session first') : {})}
               onClick={() => setRemoving(true)}>
               Remove branch
             </Button>
           </>
         )}
       </div>
+      {held && !confirming ? <p className="faint small branch-held">{held}</p> : null}
       {removing ? (
         <Confirm title="Remove branch and worktree?" act="Remove branch and worktree" danger onClose={() => setRemoving(false)}
           onAct={() => attempt(() => call('cards.removeWorktree', { id: card.id }), fail).then((r) => {
@@ -125,15 +128,15 @@ export function Branch({ card, projectKey, folderAgents }: { card: CardDetail; p
             {' '}Git undid it, so nothing changed. Resolve it in the project folder, ask the agent to bring {wt.base} into its branch, or leave the branch as it is.
           </p>
           <div className="row-gap merge-conflict-actions">
-            <Button size="s" tone="primary" onClick={() => merge(true)} title="Merge again, and leave the conflicts in the project folder to resolve in Changes">Resolve the conflicts</Button>
-            <Button size="s" tone="quiet" icon="send" onClick={ask} title={agent ? 'Queue a message to its session: bring the base in, resolve on its branch, commit' : 'No session is running on it: the request goes on the card'}>Ask the agent</Button>
+            <Button size="s" tone="primary" onClick={() => merge(true)} {...tipProps('Merge again, and leave the conflicts in the project folder to resolve in Changes')}>Resolve the conflicts</Button>
+            <Button size="s" tone="quiet" icon="send" onClick={ask} {...tipProps(agent ? 'Queue a message to its session: bring the base in, resolve on its branch, commit' : 'No session is running on it: the request goes on the card')}>Ask the agent</Button>
             <Button size="s" tone="quiet" onClick={() => setConflict(null)}>Leave the branch alone</Button>
           </div>
         </div>
       ) : null}
       {card.status === 'done' ? <PullRequest card={card} /> : null}
       <p className="faint small mono branch-path">{wt.path}</p>
-    </section>
+    </Section>
   );
 }
 
@@ -151,7 +154,7 @@ function PullRequest({ card }: { card: CardDetail }) {
   if (card.pullRequest) {
     return (
       <p className="branch-pr">
-        <Icon name="link" size={14} />
+        <Icon name="pr" size={14} />
         <span>Pull request</span>
         <a href={card.pullRequest} target="_blank" rel="noreferrer" className="mono">{card.pullRequest}</a>
       </p>
@@ -160,7 +163,7 @@ function PullRequest({ card }: { card: CardDetail }) {
   if (!plan) {
     return (
       <div className="row-gap branch-actions">
-        <Button size="s" icon="send" disabled={busy} onClick={() => {
+        <Button size="s" icon="pr" disabled={busy} onClick={() => {
           setBusy(true);
           void attempt(() => call('cards.pullRequestPlan', { id: card.id }), fail).then((p) => { setBusy(false); if (p) setPlan(p); });
         }}>Open a pull request…</Button>

@@ -59,11 +59,14 @@ export const LIVE_KEYS: readonly LiveKeySpec[] = [
 
 /**
  * What the page answers the window besides a key: a double-click on the chosen part's own words, which types on them
- * as Retype the words (E) does (live-page-goto.ts).
+ * as Retype the words (E) does (live-page-goto.ts); and the chosen part's action bar, drawn in the page, whose Style
+ * and Ask an agent have no key of their own (its Move and Take out answer their keys' ids, M and ⇧X).
  */
-export type LiveGesture = 'retype';
+export type LiveGesture = 'retype' | 'style' | 'ask';
 
-export const isLiveGesture = (v: unknown): v is LiveGesture => v === 'retype';
+const GESTURES: ReadonlySet<string> = new Set<LiveGesture>(['retype', 'style', 'ask']);
+
+export const isLiveGesture = (v: unknown): v is LiveGesture => typeof v === 'string' && GESTURES.has(v);
 
 /** What the page script is given to wait for: the keys it may take from the page. */
 export const LIVE_PAGE_KEYS: readonly { id: LiveKeyId; key: string; shift: boolean }[] = LIVE_KEYS

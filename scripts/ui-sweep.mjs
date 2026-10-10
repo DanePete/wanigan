@@ -95,6 +95,12 @@ const tileFits = (page) => page.evaluate(() => [...document.querySelectorAll('.w
   }];
 }));
 const sameSizes = (a, b) => Object.keys(a).every((id) => b[id] === a[id]);
+/** The card drawer's underline tab by name (Overview, Review, Branch, Looks), chosen and showing. */
+async function drawerTab(page, name) {
+  const tab = page.locator('.drawer [role="tab"]', { hasText: name });
+  await tab.click({ timeout: 8000 });
+  await page.waitForFunction((n) => [...document.querySelectorAll('.drawer [role="tab"]')].some((t) => t.textContent.startsWith(n) && t.getAttribute('aria-selected') === 'true'), name, { timeout: 3000 });
+}
 
 const failures = [];
 const browser = await chromium.launch();
@@ -182,9 +188,10 @@ try {
       ['needs', '#/needs', '.needs-headline'],
       ['running', '#/running', '.srow'],
       ['board', `#/p/${ns}/board`, '.card'],
-      ['board-drawer-review', `#/p/${ns}/board?card=${ns}-7`, '.drawer .ai-result'],
+      // The drawer opens on Overview; a fourth entry is the tab to choose first (Review, Branch, Looks).
+      ['board-drawer-review', `#/p/${ns}/board?card=${ns}-7`, '.drawer .ai-result', 'Review'],
       ['board-drawer-working', `#/p/${ns}/board?card=${ns}-6`, '.drawer .stages'],
-      ['list', `#/p/${ns}/list`, '.table tbody tr'],
+      ['list', `#/p/${ns}/list`, '.list-table tbody tr[data-key]'],
       ['sessions', `#/p/${ns}/sessions`, '.srow'],
       ['history', `#/p/${ns}/history`, '.hrow'],
       ['changes', `#/p/${ns}/changes`, '.dl-add'],
@@ -196,7 +203,7 @@ try {
       ['git-stashes', `#/p/${ns}/changes/stashes`, '.stash-diffs .dl-add'],
       ['git-card-pr', `#/p/${ns}/changes?branch=${ns}-3`, '.pr-chip .pr-number'],
       ['git-card-turns', `#/p/${ns}/changes?branch=${ns}-12`, '.who-line'],
-      ['board-drawer-branch', `#/p/${ns}/board?card=${ns}-3`, '.drawer .branch-line'],
+      ['board-drawer-branch', `#/p/${ns}/board?card=${ns}-3`, '.drawer .branch-line', 'Branch'],
       ['decisions', `#/p/${ns}/decisions`, '.decision'],
       ['activity', `#/p/${ns}/activity`, '.activity-item'],
       ['accounts', '#/accounts', '.account'],
@@ -209,9 +216,10 @@ try {
       ['session-limited-codex', codexLimitedHref, '.banner-limit button'],
       ['session-attached', attachedHref, '.composer .attach-chip img'],
     ];
-    for (const [name, hash, ready] of routes) {
+    for (const [name, hash, ready, tab] of routes) {
       await page.goto(`${base}${hash.startsWith('#') ? hash : `#${hash.replace(/^.*#/, '')}`}`);
       try {
+        if (tab) await drawerTab(page, tab);
         await page.waitForSelector(ready, { timeout: 8000 });
       } catch {
         failures.push(`${theme}/${name}: never showed ${ready}`);
@@ -268,6 +276,7 @@ try {
     {
       await page.evaluate(async (body) => { await fetch('/test/looks', { method: 'POST', body: JSON.stringify(body) }); }, { sessionId: shipping?.id });
       await page.goto(`${base}#/p/${ns}/board?card=${ns}-7`);
+      await drawerTab(page, 'Looks').catch(() => failures.push(`${theme}/looks: the drawer has no Looks tab`));
       await page.waitForSelector('.drawer .live-looks li', { timeout: 8000 }).catch(() => failures.push(`${theme}/looks: the review card lists no looks`));
       const rows = await page.$$eval('.drawer .live-looks li', (items) => items.map((li) => li.textContent.replace(/\s+/g, ' ').trim()));
       const expected = [
@@ -596,16 +605,18 @@ try {
       // A card's merge, from its drawer. With agents at work in the project folder it is not
       // offered, and says why.
       await page.goto(`${base}#/p/${ns}/board?card=${ns}-3`);
+      await drawerTab(page, 'Branch');
       await page.waitForSelector('.drawer .branch-line');
       const mergeIt = page.locator('.drawer button:has-text("Merge into main")');
       if (status.agents.length) {
         // The branch comes from cards.get; its refusal waits on a separate sessions.list.
         // Read the final disabled state and explanation together, not across two renders.
         await page.waitForFunction(() => [...document.querySelectorAll('.drawer button')].some((button) =>
-          button.textContent.includes('Merge into main') && button.disabled && /working in the project folder, and merging would change the files under/.test(button.title)), null, { timeout: 8000 }).catch(() => {});
-        const held = await mergeIt.evaluate((button) => ({ disabled: button.disabled, title: button.title }));
-        if (!held.disabled || !/working in the project folder, and merging would change the files under/.test(held.title)) {
-          failures.push(`${theme}/card-merge: with agents in the folder, Merge into main is ${held.disabled ? 'disabled' : 'offered'} and says "${held.title}"`);
+          button.textContent.includes('Merge into main') && button.disabled && /working in the project folder, and merging would change the files under/.test(button.dataset.tip ?? '')), null, { timeout: 8000 }).catch(() => {});
+        // Said twice: in the button's tooltip, and in words under it (a disabled button takes no keyboard focus).
+        const held = await mergeIt.evaluate((button) => ({ disabled: button.disabled, title: button.dataset.tip ?? '', said: document.querySelector('.drawer .branch-held')?.textContent ?? '' }));
+        if (!held.disabled || !/working in the project folder, and merging would change the files under/.test(held.title) || held.said !== held.title) {
+          failures.push(`${theme}/card-merge: with agents in the folder, Merge into main is ${held.disabled ? 'disabled' : 'offered'} and says "${held.title}" ("${held.said}" under it)`);
         }
       }
       // A merge that conflicts, as the drawer takes the core's answer: the files named, then resolve,
@@ -628,6 +639,7 @@ try {
       // fixture's replacement sessions.list applies only after a fresh query.
       await page.waitForSelector('.drawer', { state: 'detached', timeout: 5000 });
       await page.goto(`${base}#/p/${ns}/board?card=${ns}-3`);
+      await drawerTab(page, 'Branch');
       await page.waitForSelector('.drawer .branch-line');
       try {
         await page.click('.drawer button:has-text("Merge into main"):not([disabled])', { timeout: 5000 });
@@ -636,7 +648,7 @@ try {
       } catch (error) {
         const state = await page.evaluate(() => ({
           hash: location.hash,
-          buttons: [...document.querySelectorAll('.drawer .branch-actions button')].map((button) => ({ text: button.textContent, disabled: button.disabled, title: button.title })),
+          buttons: [...document.querySelectorAll('.drawer .branch-actions button')].map((button) => ({ text: button.textContent, disabled: button.disabled, title: button.dataset.tip ?? '' })),
           merges: window.__wgMerges,
         }));
         console.error(`${theme}/card-merge prerequisites failed: ${JSON.stringify({ failures, state })}`);
@@ -848,6 +860,7 @@ try {
 
     // An approved card's pull request: the confirm step says what is pushed where.
     await page.goto(`${base}#/p/${ns}/board?card=${ns}-10`);
+    await drawerTab(page, 'Branch');
     await page.waitForSelector('.drawer .branch-line');
     await page.click('.drawer button:has-text("Open a pull request")');
     await page.waitForSelector('.drawer .pr-confirm', { timeout: 8000 }).catch(() => failures.push(`${theme}: the pull request plan never showed`));
@@ -954,13 +967,117 @@ try {
       if (!glided) failures.push(`dark: ${moving}, accepted from the Inbox, did not glide into Ready`);
     }
     await page.keyboard.press('Escape');
-    await page.click('.how-btn');
+    await page.click('.board-how button');
     await page.waitForSelector('.how-flow .how-box');
     await page.waitForTimeout(250);
     await page.screenshot({ path: join(out, `${theme}-how.png`) });
     await page.click('.how-box[aria-label^="Review"]');
     await page.waitForSelector('.column-review.flash', { timeout: 3000 }).catch(() => failures.push(`${theme}: the explainer's Review box did not show its column`));
     if (await page.$('.how-flow')) failures.push(`${theme}: the explainer did not close on a box click`);
+
+    // Drag and drop's keyboard equivalent: ⌘ and an arrow moves the focused card by the board's rules, read back from
+    // the core. Down and back up in Ready (your order), then left into the Inbox and back, so the board ends as it began.
+    {
+      const fail = (what) => failures.push(`${theme}/board-move: ${what}`);
+      const ready = () => page.evaluate(async (key) => {
+        const id = (await window.wanigan.call('projects.list', {})).find((p) => p.key === key).id;
+        const cards = await window.wanigan.call('cards.list', { projectId: id });
+        return { ready: cards.filter((c) => c.status === 'ready').sort((a, b) => a.rank - b.rank).map((c) => c.key), status: Object.fromEntries(cards.map((c) => [c.key, c.status])) };
+      }, ns);
+      /** The board as drawn: the keys in Ready, top to bottom, and the Inbox's. */
+      const drawn = () => page.evaluate(() => ({
+        ready: [...document.querySelectorAll('.column-ready .card[data-key]')].map((c) => c.dataset.key),
+        inbox: [...document.querySelectorAll('.column-inbox .card[data-key]')].map((c) => c.dataset.key),
+      }));
+      /** Read the core until what it says passes, or four seconds pass. */
+      const until = async (check) => { for (let i = 0; i < 40; i++) { if (check(await ready())) return true; await page.waitForTimeout(100); } return false; };
+      try {
+        const start = await ready();
+        const [first, second] = start.ready;
+        await page.waitForSelector(`.column-ready .card[data-key="${first}"]`);
+        await page.focus(`.column-ready .card[data-key="${first}"]`);
+        await page.keyboard.press('Meta+ArrowDown');
+        if (!(await until((b) => b.ready[0] === second && b.ready[1] === first))) fail(`⌘↓ did not move ${first} below ${second}`);
+        const shownAfter = (await drawn()).ready.slice(0, 2).join();
+        if (shownAfter !== `${second},${first}`) fail(`after ⌘↓ the board draws Ready as ${shownAfter}…`);
+        await page.waitForFunction((k) => document.activeElement?.getAttribute('data-key') === k, first, { timeout: 2000 }).catch(() => fail('the moved card lost the keys'));
+        await page.keyboard.press('Meta+ArrowUp');
+        if (!(await until((b) => b.ready[0] === first))) fail(`⌘↑ did not put ${first} back on top`);
+        await page.waitForFunction((k) => document.activeElement?.closest('.column-ready') && document.activeElement.getAttribute('data-key') === k, first, { timeout: 2000 }).catch(() => {});
+        await page.keyboard.press('Meta+ArrowLeft');
+        if (!(await until((b) => b.status[first] === 'inbox'))) fail(`⌘← did not move ${first} into the Inbox`);
+        await page.waitForFunction((k) => document.activeElement?.closest('.column-inbox') && document.activeElement.getAttribute('data-key') === k, first, { timeout: 3000 }).catch(() => fail('the card moved to the Inbox lost the keys'));
+        await page.keyboard.press('Meta+ArrowRight');
+        if (!(await until((b) => b.status[first] === 'ready' && b.ready[0] === first))) fail(`⌘→ did not bring ${first} back to the top of Ready`);
+        if ((await ready()).ready.join() !== start.ready.join()) fail(`Ready ended as ${(await ready()).ready.join(', ')}, began as ${start.ready.join(', ')}`);
+      } catch (error) { fail(error.message.split('\n')[0]); }
+    }
+
+    // The card drawer: Enter on a card opens it with the keys inside, its tabs are named, and Escape closes it with the
+    // keys back on the card.
+    {
+      const fail = (what) => failures.push(`${theme}/drawer-keys: ${what}`);
+      const key = await page.$eval('.column-ready .card', (c) => c.dataset.key);
+      await page.focus(`.column-ready .card[data-key="${key}"]`);
+      await page.keyboard.press('Enter');
+      await page.waitForSelector('.drawer [role="tablist"]', { timeout: 5000 }).catch(() => fail('Enter did not open the drawer'));
+      const opened = await page.evaluate(() => ({
+        inside: !!document.activeElement?.closest('.drawer'),
+        tabs: [...document.querySelectorAll('.drawer [role="tab"]')].map((t) => t.textContent.replace(/\d+$/, '')),
+        selected: document.querySelector('.drawer [role="tab"][aria-selected="true"]')?.textContent,
+        beside: (() => { const d = document.querySelector('.drawer')?.getBoundingClientRect(); const m = document.querySelector('.main')?.getBoundingClientRect(); return !!d && !!m && m.right <= d.left + 1; })(),
+      }));
+      if (!opened.inside) fail('the keys did not move into the drawer');
+      if (opened.tabs.join() !== 'Overview,Review,Branch,Looks') fail(`the tabs are ${opened.tabs.join(', ')}`);
+      if (opened.selected !== 'Overview') fail(`it opened on ${opened.selected}`);
+      if (!opened.beside) fail('the drawer is drawn over the view, not beside it');
+      await page.keyboard.press('Escape');
+      await page.waitForSelector('.drawer', { state: 'detached', timeout: 3000 }).catch(() => fail('Escape did not close the drawer'));
+      await page.waitForFunction((k) => document.activeElement?.getAttribute('data-key') === k, key, { timeout: 2000 }).catch(() => fail('closing the drawer did not give the keys back to its card'));
+    }
+
+    // The List, the board's other mode: chosen from the board's own toolbar, with the board's filters; one row takes
+    // Tab, and J/K, Home and End walk the rows; Enter opens the card, the row marked open; its head holds to the top.
+    {
+      const fail = (what) => failures.push(`${theme}/list: ${what}`);
+      await page.click('.board-types button:has-text("Bug")');
+      await page.click('.board-modes a:has-text("List")');
+      await page.waitForSelector('.list-table tbody tr[data-key]', { timeout: 5000 }).catch(() => fail('choosing List showed no rows'));
+      const shown = await page.evaluate(() => ({
+        hash: location.hash,
+        focus: document.activeElement?.getAttribute('aria-current') === 'page' ? document.activeElement.textContent : null,
+        types: [...new Set([...document.querySelectorAll('.list-table tbody tr .type')].map((t) => [...t.classList].find((c) => c.startsWith('type-'))))],
+        keys: [...document.querySelectorAll('.list-table tbody tr[data-key]')].map((r) => r.dataset.key),
+        stops: document.querySelectorAll('.list-table tbody tr[tabindex="0"]').length,
+        sticky: getComputedStyle(document.querySelector('.list-table th')).position,
+        bugOn: document.querySelector('.board-types button[aria-pressed="true"]')?.textContent,
+      }));
+      if (!/\/list$/.test(shown.hash)) fail(`List went to ${shown.hash}`);
+      if (shown.focus !== 'List') fail(`the keys are not on List after choosing it (${shown.focus})`);
+      if (shown.types.join() !== 'type-bug' || shown.bugOn !== 'Bug') fail(`the board's Bug filter did not carry to the List (${shown.types.join(', ')})`);
+      if (shown.stops !== 1) fail(`${shown.stops} rows take Tab`);
+      if (shown.sticky !== 'sticky') fail(`the List's head is ${shown.sticky}, not held to the top`);
+      const at = () => page.evaluate(() => document.activeElement?.getAttribute('data-key'));
+      await page.focus('.list-table tbody tr[tabindex="0"]');
+      await page.keyboard.press('j');
+      if (await at() !== shown.keys[1]) fail(`J went to ${await at()}, not ${shown.keys[1]}`);
+      await page.keyboard.press('End');
+      if (await at() !== shown.keys.at(-1)) fail(`End went to ${await at()}`);
+      await page.keyboard.press('Home');
+      if (await at() !== shown.keys[0]) fail(`Home went to ${await at()}`);
+      await page.keyboard.press('Enter');
+      await page.waitForSelector('.drawer [role="tablist"]', { timeout: 5000 }).catch(() => fail('Enter did not open the card'));
+      if ((await page.getAttribute(`.list-table tr[data-key="${shown.keys[0]}"]`, 'aria-current')) !== 'true') fail('the open card\'s row is not marked');
+      await page.waitForTimeout(300);
+      await page.screenshot({ path: join(out, `${theme}-list-open.png`) });
+      await page.keyboard.press('Escape');
+      await page.waitForSelector('.drawer', { state: 'detached', timeout: 3000 }).catch(() => fail('Escape did not close the card'));
+      await page.waitForFunction((k) => document.activeElement?.getAttribute('data-key') === k, shown.keys[0], { timeout: 2000 }).catch(() => fail('closing the card did not give the keys back to its row'));
+      // Back to the board as it was: no filter.
+      await page.click('.board-toolbar button:has-text("Clear")');
+      await page.click('.board-modes a:has-text("Board")');
+      await page.waitForSelector('.board .card');
+    }
     // ⌘K: results in groups, key caps read from the shortcut table, the G-chords listed, and what agents said.
     await page.keyboard.press('Meta+k');
     await page.waitForSelector('.palette .palette-group-head');
@@ -1520,7 +1637,7 @@ try {
         await views.waitForSelector('.views-trigger.on:has-text("Bugs by priority")', { timeout: 3000 }).catch(() => fail('1 did not apply the first saved view'));
         const types = await views.$$eval('.board .card .type', (ts) => [...new Set(ts.map((t) => [...t.classList].find((c) => c.startsWith('type-'))))]);
         if (types.join() !== 'type-bug') fail(`after 1 the board shows ${types.join(', ')}`);
-        if (!/Priority/.test(await views.textContent('.toolbar-end .select:not(.views-trigger)'))) fail('after 1 the order is not Priority');
+        if (!/Priority/.test(await views.textContent('.board-toolbar .board-order'))) fail('after 1 the order is not Priority');
 
         // The panel: the views in order, their keys, the applied one marked and focused.
         await views.click('.views-trigger');
@@ -1635,16 +1752,16 @@ try {
         await siteMenu('Local');
         if ((await cmp.evaluate(() => window.__wgLive.shows.at(-1)))?.env !== null) failures.push(`${theme}/live: Local was not shown again as the local site`);
 
-        // Compare: both sides taken at the view's width, the hosted one never with a token. It is drawn in the stage,
-        // where the page is (no dialog over the window): the bar, the side panel and the status line stay, and the
-        // site's own view steps aside under it without loading anything.
+        // Compare: both sides taken at the view's width, the hosted one never with a token. It is drawn on the canvas,
+        // where the page is (no dialog over the window): the toolbar, the Structure panel and the status line's mode stay,
+        // and the site's own view steps aside under it without loading anything.
         const page0 = await cmp.evaluate(() => ({ shows: window.__wgLive.shows.length, reloads: window.__wgLive.reloads, hides: window.__wgLive.hides }));
         await siteMenu('Compare Local with Live');
         await cmp.waitForSelector('.cmp-frame canvas', { timeout: 10000 }).catch(() => failures.push(`${theme}/compare: the pictures never showed`));
         const drawn = await cmp.evaluate(() => {
           const panel = document.querySelector('.live-stage-compare')?.getBoundingClientRect();
           const stage = document.querySelector('.live-stage')?.getBoundingClientRect();
-          const side = document.querySelector('.live-side')?.getBoundingClientRect();
+          const side = document.querySelector('.live-structure')?.getBoundingClientRect();
           return {
             inStage: !!document.querySelector('.live-stage > .live-stage-compare'), dialog: !!document.querySelector('.dialog, .scrim'),
             fills: !!panel && !!stage && Math.abs(panel.left - stage.left) < 1 && Math.abs(panel.right - stage.right) < 1 && Math.abs(panel.top - stage.top) < 1 && Math.abs(panel.bottom - stage.bottom) < 1,
@@ -1653,7 +1770,7 @@ try {
           };
         });
         if (!drawn.inStage || drawn.dialog || !drawn.fills) failures.push(`${theme}/compare: it is not drawn in the stage where the page is (${JSON.stringify(drawn)})`);
-        if (!drawn.side) failures.push(`${theme}/compare: the bar, the side panel or the status line did not stay beside Compare`);
+        if (!drawn.side) failures.push(`${theme}/compare: the toolbar, Structure or the status line did not stay beside Compare`);
         if (drawn.covered !== true) failures.push(`${theme}/compare: the site's view did not step aside under Compare`);
         await cmp.waitForSelector('.cmp-summary', { timeout: 5000 }).catch(() => {});
         const asked = await cmp.evaluate(() => window.__wgLive.shots.slice(-2));
@@ -1704,7 +1821,7 @@ try {
         // 2: both taken again at a tablet's width. Compare's 2, not the page's: the live view keeps its own width.
         await cmp.keyboard.press('2');
         await cmp.waitForFunction(() => window.__wgLive.shots.filter((r) => r.width === 768).length === 2, null, { timeout: 5000 }).catch(() => failures.push(`${theme}/compare: 2 did not take both at 768 px`));
-        if ((await cmp.getAttribute('.live-widths button[aria-label^="Full width"]', 'aria-pressed')) !== 'true') failures.push(`${theme}/compare: 2 in Compare narrowed the live page too`);
+        if ((await cmp.getAttribute('.live-widths button[aria-label^="Full width"]', 'aria-checked')) !== 'true') failures.push(`${theme}/compare: 2 in Compare narrowed the live page too`);
         await cmp.waitForSelector('.cmp-change', { timeout: 8000 }).catch(() => {});
         await cmp.waitForTimeout(250);
         await cmp.screenshot({ path: join(out, `${theme}-live-compare-tablet.png`) });

@@ -118,7 +118,7 @@ export function ComparePanel({ project, site, envs, masks, page, shownEnv, width
           <Segmented<string> size="s" label="Compare Local with" value={env?.id ?? ''} options={envs.map((e) => ({ value: e.id, label: e.name, hint: e.url }))} onChange={setOther} />
         ) : null}
         <Segmented<CompareWidth> size="s" label="Width" value={width} options={COMPARE_WIDTHS.map((w) => ({ value: w, label: WIDTH_LABEL[w], hint: `${w} CSS pixels wide (${COMPARE_WIDTHS.indexOf(w) + 1})` }))} onChange={setWidth} />
-        <span className="small cmp-path" title={localUrl}>Page <span className="mono">{path}</span></span>
+        <span className="small cmp-path" data-tip={localUrl}>Page <span className="mono">{path}</span></span>
         <Button size="s" tone="quiet" icon="refresh" disabled={!taken} onClick={() => setAgain((n) => n + 1)}>Take again</Button>
         <IconButton icon="close" label="Back to the page (Escape)" onClick={onClose} />
       </div>

@@ -130,16 +130,12 @@
   /* A popover beside the rail: the notification tray. */
   --tray-w: 360px;
   /* The live view's side panel, wider for the library and the design layer's tray, and wider still with the tree beside a chosen part. */
-  --live-side-w: 340px;
-  --live-side-wide: 440px;
-  --live-side-split: 640px;
   /* The live bar's address field at its narrowest: past that, the tools give up their names, then their row. */
   --live-address-min: 140px;
   /* What a view keeps beside the code editor's drawer (its bar and tabs), and the drawer's own least. */
   --view-min-beside: 640px;
   --dock-min: 160px;
   /* The tree beside a chosen part's details, and its height above them: a share of the side panel (its container). */
-  --live-split-tree: 260px;
   --live-tree-above: 40cqh;
   /* The Code tab's files, beside the editor. */
   --code-tree-w: 264px;
