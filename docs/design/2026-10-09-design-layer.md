@@ -353,7 +353,9 @@ helper can name carries `identity`:
   `Section::toRenderArray()` gives it in its region, so a reorder or a move
   to another section or region keeps it, on the stored entity it is rendered
   for (`<entity type>:<entity UUID>/<component UUID>`), with its block plugin
-  so `kind` reaches every component of that plugin in a layout. The entity is
+  so `kind` reaches every component of that plugin in a layout. A paragraph
+  (a composite) is named as itself, and its identity and its fields' add the
+  `revision` the page showed, which neither the key nor `kind` counts. The entity is
   part of it because one UUID can name two stored things: a display's
   default layout is shared by every entity without its own, and an entity's
   own layout starts as a copy of the default, UUIDs and all. A placement and
@@ -425,7 +427,22 @@ or the project.
      storage is saved (an entity's own layout as a new revision); a default
      layout every entity of a bundle shares answers first with how far it
      reaches and a token, and is saved when made real again, the layer
-     sending that token back.
+     sending that token back. Words in a paragraph (any composite its host
+     pins by revision, known by its type naming its parent fields) are never
+     saved in the paragraph: the Paragraphs site adapter walks up to the root
+     content, refuses on its state (any newer revision, whose draft keeps its
+     own copy of the paragraph; access; the workflow and every violation),
+     goes down its default revision to the item pinning the revision the page
+     showed (else the page is stale), changes that paragraph, marks it and
+     every paragraph above it as needing a save, and saves the root as a new
+     revision with its log, user and changed time. A Paragraphs Library item
+     asks first with its reach and a token, as a default layout does; an open
+     Layout Paragraphs builder holding a copy, an orphan, a composite it
+     cannot walk, a translatable paragraphs field, and a paragraph with no
+     translation in the page's language are refused. Every answer carries the
+     saved content's address after the save and before it, and a save that
+     moved the page shown (a new alias) takes the view to the new address
+     instead of reloading the old one.
    - Otherwise (WordPress's helper marks no field; it saves fields through
      schema targets, as both helpers save configuration): the one
      `via: 'schema'` edit target of the page's trace whose value, or a string

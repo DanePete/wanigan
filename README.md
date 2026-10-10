@@ -193,8 +193,14 @@ WordPress and other sites can each be on or off.
   view's header, footer or empty text, a menu link's text, or the words of a
   Layout Builder inline block, through its layout (a default layout that every
   page of a kind shares is saved only when you make it real again, after it
-  says how many pages that reaches); configuration says the next config import
-  puts back what is exported. On WordPress a title, an excerpt, a string meta,
+  says how many pages that reaches), or the words of a paragraph, through the
+  page that holds it (Paragraphs keeps each page's paragraphs as versions of
+  that page, so the page is saved as a new version with its workflow, log and
+  checks; a newer draft, an open Layout Paragraphs builder or a paragraph not
+  translated into the page's language is refused, and a Paragraphs Library
+  item says how many pages use it first); configuration says the next config
+  import puts back what is exported. A save that gives a page a new address (a
+  new title, with Pathauto) takes the view there. On WordPress a title, an excerpt, a string meta,
   the site's title or tagline, a menu link's text, or a block's words (a
   paragraph, a heading, a navigation label), each through core's REST API with
   a revision where WordPress keeps one. A block's words are sent as the HTML
@@ -219,8 +225,9 @@ WordPress and other sites can each be on or off.
   layer to compare; nothing runs twice, and undo waits while words are being
   saved. The window has been checked against the UI sweep's stand-in; on the
   Northstar demo, a script driving the real app made words in a plain field
-  real and verified them. Drupal's formatted text, configuration and Layout
-  Builder saves, and WordPress, have been tested with stand-ins only.
+  real and verified them. Drupal's formatted text, configuration, Layout
+  Builder and paragraph saves, and WordPress, have been tested with stand-ins
+  only.
 - **Go to**, in the address field (click it, or Shift+Space in the live view,
   ⌘⇧Space anywhere in a project): an address, or any page of the site by
   typing a few letters of its title, an admin or structure page, a path or an id, ranked as you type and by what you choose
@@ -745,8 +752,9 @@ verification results and the behavior that remains unverified.
   tested with stand-in pages, traces and a stand-in site, not yet seen against
   a running WordPress. On Drupal, words saved inside formatted text, to
   configuration (block titles, the site's name and slogan, a view's words, a
-  field's label), to a menu link and through a Layout Builder layout are
-  tested with a stand-in Drupal, not yet seen against a running one (nor what
+  field's label), to a menu link, through a Layout Builder layout and through
+  the page holding a paragraph are tested with a stand-in Drupal, not yet seen
+  against a running one (nor what
   CKEditor 5 does to a stored text the next time it opens it). Agents' looks at it
   (`wanigan mcp`): tested with a real core and a stand-in app; each CLI seen
   connecting and listing the tools, as above, not yet seen calling one in a
