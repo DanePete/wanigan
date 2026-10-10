@@ -16,7 +16,7 @@ import type { EditTarget, LiveTrace, PartIdentity, TracePart } from '../shared/l
 import { folderOf } from './live-capture.ts';
 import { saveSchemaEdit } from './live-edit-save.ts';
 import {
-  areasOf, beforeCheck, beforeKept, lateOf, madeBy, madeOn, masksOf, pageOf, pathOf, steadyOf, traceProblem, wireLiveLayer,
+  areasOf, beforeCheck, beforeKept, lateOf, madeBy, madeOn, masksOf, pageOf, pathOf, resolveLayer, steadyOf, traceProblem, wireLiveLayer,
   type BeforeKept, type LayerBeforeRender, type LayerRender, type LayerRenderRequest,
 } from './live-layer.ts';
 import type { HelperSaved, SaveAt } from './live-view.ts';
@@ -233,6 +233,46 @@ function wire(over: {
     done: () => rmSync(dataDir, { recursive: true, force: true }),
   };
 }
+
+test('a style asked about alone is still found where the words of a text edit in the log were saved: its Verify looked nowhere before', async () => {
+  // Seen on the Northstar demo, 10 October 2026: the title retyped and saved, then its style verified on its own; both
+  // renders said "Title (field): not found on the page", as the words the style was keyed to had been saved since.
+  const saved = edit({ label: 'Heading', state: 'verified', change: { type: 'text', value: 'Paddling 102' }, before: { text: 'Paddling 101' } });
+  const style = edit();
+  const { page, run } = modelPage();
+  page.parts = { p1: { 'h2:nth-of-type(1)': [words('Paddling 102')] } };
+  const asked = await resolveLayer(run, trace(), [style], '/paddling', [saved, style]);
+  assert.deepEqual([asked.resolved, asked.orphaned], [[style.id], []], 'found: the log says the layer itself saved those words');
+  const alone = await resolveLayer(run, trace(), [style], '/paddling');
+  assert.deepEqual(alone.orphaned.map((o) => [o.id, o.why]), [[style.id, 'Its element shows other words now.']], 'without the log, the old answer');
+});
+
+test('one element, one verification: its saved words and a style handed to an agent are verified together, and each card is told', async () => {
+  const words = edit({ label: 'Heading', state: 'implemented', change: { type: 'text', value: 'Paddling 102' }, before: { text: 'Paddling 101' } });
+  const style = edit();
+  const box = { x: 20, y: 40, width: 40, height: 24 };
+  // The site already renders both as designed (the words saved, the agent's CSS in the theme): both elements found.
+  const both: LayerRender = async (r) => ({ png: Buffer.from(`${r.design ? 'design' : 'result'}-${r.width}`), bitmap: painted(blank(64, 200), box, 18),
+    elements: [heading(words.id, 'rgb(18, 52, 86)'), heading(style.id, 'rgb(18, 52, 86)')], found: [words.id, style.id] });
+  const w = wire({ edits: [words, style], render: both });
+  try {
+    // The style was handed to an agent: Make it real kept the page as it was, for step 3.
+    assert.deepEqual(await w.implement(style.id), { ok: false, id: style.id, route: 'agent', why: 'A style goes into the theme’s CSS: in phase 1 an agent makes it from a brief, on your click.' });
+    const v = await w.verify(words.id);
+    assert.equal(v.ok, true);
+    assert.deepEqual(w.marks.map((m) => [m.id, m.state]), [[words.id, 'verified'], [style.id, 'implemented'], [style.id, 'verified']], 'both cards finished by one Verify');
+    assert.equal(w.renders.filter((r) => !r.design).length, 4, 'one set of renders for both: two of the site at each width');
+    assert.ok(w.renders.every((r) => r.edits.map((e) => e.id).join() === [words.id, style.id].join()), 'both edits in every render');
+  } finally { w.done(); }
+  // A style nobody has been handed yet does not hold up the words' verification.
+  const words2 = edit({ label: 'Heading', state: 'implemented', change: { type: 'text', value: 'Paddling 102' }, before: { text: 'Paddling 101' } });
+  const style2 = edit();
+  const x = wire({ edits: [words2, style2], render: renders(words2, { design: (b) => b, result: (b) => b }) });
+  try {
+    await x.verify(words2.id);
+    assert.deepEqual(x.marks.map((m) => [m.id, m.state]), [[words2.id, 'verified']]);
+  } finally { x.done(); }
+});
 
 test('a page and an edit’s page: path and query, or the path when the edit names none', () => {
   assert.equal(pathOf('https://acme.example.test/news?page=2#top'), '/news?page=2');

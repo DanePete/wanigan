@@ -254,7 +254,7 @@ function TrayEdit({ edit: e, here, ctx }: { edit: LayerEdit; here: boolean; ctx:
           <Button size="s" tone="quiet" icon="trash" onClick={discard} disabled={layer.writing} aria-label={`Discard: ${name}`}>Discard</Button>
         ) : null}
       </div>
-      {busy === 'real' ? <p className="faint small" role="status">Saving the words in the site…</p> : null}
+      {busy === 'real' ? <p className="faint small" role="status">{e.change.type === 'text' ? 'Saving the words in the site…' : 'Keeping the page as it is now, for Verify, and writing the brief…'}</p> : null}
       {busy === 'template' ? <p className="faint small" role="status">Saving the words to the template…</p> : null}
       {verifying ? <p className="faint small" role="status">Rendering the page with and without the layer, twice for the noise floor, at each width…</p> : null}
     </li>

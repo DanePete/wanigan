@@ -173,7 +173,7 @@ const sound = (t: LayerTarget): boolean => !layerEdit({ id: 'check', target: t, 
  * Resolve each edit in effect (draft, implemented, or orphaned and maybe back) on the page at `path`, through the page
  * script's layerFind, and decide which elements each may touch. Kept by the page script for layerSet.
  */
-export async function resolveLayer(run: Run, trace: LiveTrace | null, edits: readonly LayerEdit[], path: string): Promise<Resolution> {
+export async function resolveLayer(run: Run, trace: LiveTrace | null, edits: readonly LayerEdit[], path: string, log: readonly LayerEdit[] = edits): Promise<Resolution> {
   const out: Resolution = { tags: {}, texts: [], shown: [], orphaned: [], elsewhere: [], resolved: [] };
   const specs: { id: string; parts: string[] | null; inner: string | null; selector: string | null; text: boolean }[] = [];
   const asked: LayerEdit[] = [];
@@ -205,7 +205,10 @@ export async function resolveLayer(run: Run, trace: LiveTrace | null, edits: rea
   // words were then saved, a card around that heading). A draft never saved is left out: its words are not the
   // site's, so they cannot vouch for an element.
   const fold = (t: string): string => t.replace(/\s+/g, ' ').trim();
-  const saved = edits.flatMap((x) => (x.change.type === 'text' && typeof x.before.text === 'string'
+  // From the whole log, not only the edits asked about: a verification asks about a style alone, and the words a text
+  // edit on its element saved are still what the page shows (a style made while those words were a draft was found
+  // nowhere once they were saved, in either render, and its Verify said so).
+  const saved = log.flatMap((x) => (x.change.type === 'text' && typeof x.before.text === 'string'
     && (x.state === 'implemented' || x.state === 'verified' || x.state === 'retired' || (x.state === 'draft' && x.verdict !== null))
     ? [{ now: fold(x.change.value), was: fold(x.before.text) }] : [])).filter((w) => w.now && w.now !== w.was);
   const asItWas = (t: string): string => saved.reduce((acc, w) => acc.split(w.now).join(w.was), fold(t));
@@ -587,6 +590,8 @@ export interface LayerRenderRequest {
   path: string;
   /** The edits verified: tagged in both renders, shown (their stylesheet and words) only in the design. */
   edits: LayerEdit[];
+  /** Every edit in the layer's log: whose saved words the page shows now, so an element they changed is still found. */
+  log?: readonly LayerEdit[];
   design: boolean;
   /** Read the whole page element by element too (layerPage): what step 3 compares with a page from before. */
   whole?: boolean;
@@ -804,7 +809,7 @@ function onPage<T>(deps: RenderDeps, r: LayerRenderRequest, take: (page: HiddenP
       const steady = steadyOf(page.headers()?.['x-wanigan-steady'], r.hold);
       await page.read(script, null, PAGE_WORLD);
       const run: Run = (code, fallback) => page.read(code, fallback, PAGE_WORLD);
-      const res = await resolveLayer(run, trace, r.edits, r.path);
+      const res = await resolveLayer(run, trace, r.edits, r.path, r.log ?? r.edits);
       const picture = async (whole: boolean): Promise<LayerRendered | { error: string }> => {
         const { height, cut, full } = await page.measure(VERIFY_MAX_HEIGHT);
         // What a script added after the page arrived: not in the HTML the server sent, so the page decides it, not the
@@ -989,6 +994,8 @@ export function beforeKept(raw: unknown): BeforeKept | null {
 const reaches = (e: LayerEdit, path: string): boolean => e.scope !== 'this' || madeOn(e, path);
 /** In the site: what a page from before shows, or does not, of an edit. */
 const inSite = (e: LayerEdit): boolean => e.state === 'implemented' || e.state === 'verified';
+/** Which element an edit is on: its part's identity, the element inside it, or its selector. */
+const elementOf = (e: LayerEdit): string => `${e.target.part ? identityKey(e.target.part) : ''}|${e.target.inner ?? ''}|${e.target.selector ?? ''}`;
 /** A style or a token: made in the theme by an agent from its brief, or by hand, never saved by Wanigan itself. */
 const madeOutside = (e: LayerEdit): boolean => e.change.type === 'style' || e.change.type === 'token';
 /** One difference, in a sentence, for a draft whose verdict is said rather than kept. */
@@ -1367,7 +1374,7 @@ export function wireLiveLayer(options: LiveLayerOptions): { hooks: LiveViewHooks
     mkdirSync(dir, { recursive: true, mode: 0o700 });
     for (const width of VERIFY_WIDTHS) {
       const got = await deadline<LayerBeforeRendered | { error: string }>(
-        renderBefore({ projectId, partition, url, base: site.url, token: site.token, width, path: edit.page, edits: [{ ...edit, state: 'draft' }], design: true, hold, whole: true }), limit,
+        renderBefore({ projectId, partition, url, base: site.url, token: site.token, width, path: edit.page, edits: [{ ...edit, state: 'draft' }], log: all, design: true, hold, whole: true }), limit,
         () => ({ error: `The page did not render at ${width} px in time.` }),
       ).catch((error: unknown) => ({ error: error instanceof Error ? error.message : String(error) }));
       if ('error' in got) { kept.failed[String(width)] = got.error.slice(0, 500); continue; }
@@ -1607,7 +1614,8 @@ export function wireLiveLayer(options: LiveLayerOptions): { hooks: LiveViewHooks
       const here = shown();
       if (!here) throw new Error('The live view shows no page of the local site.');
       page = here.path;
-      edits = snap.edits.filter((e) => e.state === 'implemented' && madeOn(e, page));
+      // Every edit in the site, and every style handed to an agent: Verify finds whether it is in the site yet.
+      edits = snap.edits.filter((e) => madeOn(e, page) && (e.state === 'implemented' || (e.state === 'draft' && madeOutside(e) && readKept(projectId, e.id) !== null)));
       if (!edits.length) throw new Error('No edit made on this page is implemented: there is nothing to verify here yet.');
     } else {
       const edit = typeof raw === 'string' && EDIT_ID.test(raw) ? snap.edits.find((e) => e.id === raw) : undefined;
@@ -1617,7 +1625,12 @@ export function wireLiveLayer(options: LiveLayerOptions): { hooks: LiveViewHooks
       if (edit.state !== 'implemented' && !(edit.state === 'draft' && madeOutside(edit))) {
         throw new Error(`Only an implemented edit is verified; this one is ${edit.state}. Make it real first.`);
       }
-      edits = [edit];
+      // One element, one verification: its words saved through the site and a style handed to an agent are checked
+      // together, in the same renders, and each card is told the verdict. A style not handed to anyone yet is left
+      // out unless it is the one asked about, so making words real and verifying them never waits on a style.
+      const here = elementOf(edit);
+      edits = snap.edits.filter((e) => e.id === edit.id || (e.page === edit.page && elementOf(e) === here
+        && (e.state === 'implemented' || (e.state === 'draft' && madeOutside(e) && readKept(projectId, e.id) !== null))));
       page = edit.page;
     }
     const site = await core<LiveSite>('live.site', { projectId });
@@ -1636,7 +1649,7 @@ export function wireLiveLayer(options: LiveLayerOptions): { hooks: LiveViewHooks
     // hidden window has deadlines of its own, and closes itself).
     const limit = options.renderMs ?? RENDER_MS + 60_000;
     const ask = (width: number, design: boolean, whole = false) => deadline<LayerRendered | { error: string }>(
-      render({ projectId, partition, url, base: site.url as string, token: site.token as string, width, path: page, edits, design, hold, ...(whole ? { whole } : {}) }), limit,
+      render({ projectId, partition, url, base: site.url as string, token: site.token as string, width, path: page, edits, log: snap.edits, design, hold, ...(whole ? { whole } : {}) }), limit,
       () => ({ error: `The page did not render at ${width} px within ${limit >= 1_000 ? `${Math.round(limit / 1_000)} seconds` : `${limit} ms`}, so the verification stopped there.` }),
     );
 
@@ -1803,8 +1816,10 @@ export function wireLiveLayer(options: LiveLayerOptions): { hooks: LiveViewHooks
     }
     // A verdict the layer did not keep is said, never passed off as recorded.
     if (refusals.length) throw new Error(`The verification ran (its pictures are kept), but the layer did not record it: ${refusals.join(' ')}`);
-    if (notYet) throw new Error(`Not in the site yet: ${notYet}`);
-    return verdicts.get(edits[0]!.id) as LayerVerdict;
+    // Said on the card asked about: a style not in the site yet throws there; the words beside it are told the verdict.
+    const asked = typeof raw === 'string' ? raw : edits[0]!.id;
+    if (notYet && edits.find((e) => e.id === asked)?.state === 'draft') throw new Error(`Not in the site yet: ${notYet}`);
+    return verdicts.get(asked) as LayerVerdict;
   };
   const verify = (raw: unknown, rawOptions: unknown): Promise<LayerVerdict> => inTurn(() => verifyNow(raw, rawOptions));
 
