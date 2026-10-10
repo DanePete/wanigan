@@ -1737,6 +1737,7 @@ try {
     const updateCopy = await page.textContent('section[aria-labelledby="set-updates"]') ?? '';
     if (!/install.*manually|manual.*install/i.test(updateCopy)) failures.push(`${theme}/updates: Settings does not explain manual installation`);
     if (/working with Apple|coming soon|macOS requires/i.test(updateCopy)) failures.push(`${theme}/updates: Settings promises an unimplemented installer`);
+    await page.waitForTimeout(250); // the tray has risen into place
     await page.screenshot({ path: join(out, `${theme}-updates-ask.png`) });
     if ((await page.evaluate(() => window.__wgUpdateLog)).length) failures.push(`${theme}/updates: checked before the owner answered`);
     await page.click('.tray-update-ask button:has-text("Check daily")');
