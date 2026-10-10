@@ -121,6 +121,11 @@ export interface HelperSaved {
    * every entity of a bundle shares: its error says how far the change reaches).
    */
   confirm?: string | null;
+  /**
+   * What a save wants said beside it (the Drupal helper's: words saved to a field's own words where the site adds more
+   * around them on the page, or a problem the content already had in a field the change does not touch).
+   */
+  note?: string | null;
 }
 
 /**
@@ -585,11 +590,12 @@ export function wireLiveView(options: {
           ...(at ? { uuid: at.uuid, langcode: at.langcode, ...(at.item ? { item: at.item } : {}), ...(at.confirm ? { confirm: at.confirm } : {}) } : {}),
         }),
       });
-      const data = await res.json().catch(() => null) as { ok?: boolean; error?: string; label?: string; revision?: unknown; confirm?: unknown } | null;
+      const data = await res.json().catch(() => null) as { ok?: boolean; error?: string; label?: string; revision?: unknown; confirm?: unknown; note?: unknown } | null;
       return data && typeof data === 'object' ? {
         ok: data.ok === true, error: typeof data.error === 'string' ? data.error : null, label: typeof data.label === 'string' ? data.label : null,
         revision: typeof data.revision === 'string' || typeof data.revision === 'number' ? String(data.revision).slice(0, 100) : null,
         ...(typeof data.confirm === 'string' && /^[a-f0-9]{32}$/.test(data.confirm) ? { confirm: data.confirm } : {}),
+        ...(data.ok === true && typeof data.note === 'string' && data.note ? { note: data.note.slice(0, 1_000) } : {}),
       } : { ok: false, error: `The site answered ${res.status}.`, label: null };
     } catch (error) {
       // Why the site did not answer is said in the view's own words (the window asks the core whether it runs);

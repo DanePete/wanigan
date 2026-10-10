@@ -344,6 +344,8 @@ export interface LayerApplied {
 export type LayerImplemented =
   | {
     ok: true; id: string; state: 'implemented'; revision: string | null;
+    /** What the site said beside the save, when it said something (src/main/live-view.ts HelperSaved). */
+    note?: string;
     /**
      * Words saved where the content keeps them, found by the helper's stored-words search (src/shared/live-stored-words.ts):
      * what happened in the owner's words (where they are kept, whether the site keeps a revision, what a plugin's own

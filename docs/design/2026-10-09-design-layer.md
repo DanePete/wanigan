@@ -412,8 +412,21 @@ or the project.
      translation and item the target's identity names (its UUID, langcode and
      item, never the default language or the first item holding the same
      words; a target that names no field is refused), only over the version
-     the page showed (content saved since, a newer draft and any validation
-     violation, the workflow's included, are refused, saying why). A plain
+     the page showed (content saved since and a newer draft are refused,
+     saying why). Validation refuses it as Drupal's own form for that one
+     field would (a violation of the field or of the content as a whole),
+     and besides on any of the workflow's and any the change brings,
+     validated before and after the change and compared; a problem the
+     content already had in a field the edit does not touch is no reason to
+     refuse, and the answer's note says it. Where the page shows the
+     item's words with more around them that the field does not hold (a
+     template or a preprocess adds it), and the field's mark shows the
+     content is as the page rendered it (its revision, and its changed time
+     where it carries one), the edit is made on the field's own words: kept
+     when what is added stays unchanged around the new words, refused as
+     code when the change touches it; without that proof the refusal says
+     Wanigan cannot tell, and nothing is said to have changed since unless
+     it might have. The site's note on a save is in the answer. A plain
      value is the words; in formatted text one run of words inside one stored
      text node is spliced byte for byte and kept only when rendering the old
      and new text through the item's format differs in those words alone
