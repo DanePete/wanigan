@@ -170,17 +170,21 @@ WordPress and other sites can each be on or off.
   shows them at once, through the layer. A style is for one element or every
   instance of its kind (how many, said before you choose it); a custom
   property can change for the whole site. Edits lists every edit by page, with
-  before → after, what it reaches, its state, and why when it no longer finds
-  its element. Make it real saves words through the site itself to the one
-  thing that holds exactly those words: a plain text field on Drupal; on
-  WordPress a title, an excerpt, a string meta, the site's title or tagline, or
-  a menu link's text, each through core's REST API with a revision where
-  WordPress keeps one; or to your own template when they are written there
-  exactly once (with a revert). Formatted text (a block's, a post's content)
-  goes to an agent, as does a style: never written into the stylesheets by
-  hand. Then Verify renders the page with and without the layer and says what
-  differs, with pictures. Undo, redo, discard, and the page shown without the
-  layer to compare. The window has been checked against the UI sweep's
+  before → after, what it reaches (including "this item, shown twice on this
+  page"), its state and what that means, and why when it no longer finds its
+  element. Make it real saves words through the site itself to the one thing
+  that holds exactly those words: a plain text field on Drupal; on WordPress a
+  title, an excerpt, a string meta, the site's title or tagline, or a menu
+  link's text, each through core's REST API with a revision where WordPress
+  keeps one. Only when nothing the site stores holds them can you look in the
+  template that rendered the element itself, picked on the page: Wanigan says
+  first that every page using that template changes, and writes it only when
+  the words are there exactly once (Put back waits while the layer holds the
+  edit as in the site). Formatted text (a block's, a post's content) goes to an
+  agent, as does a style: never written into the stylesheets by hand. Then
+  Verify renders the page with and without the layer and says what differs,
+  with pictures. Undo, redo, discard, and the page shown without the layer to
+  compare; nothing runs twice, and undo waits while words are being saved. The window has been checked against the UI sweep's
   stand-in; on the Northstar demo, a script driving the real app made words
   real and verified them. On WordPress that has been tested with stand-ins only.
 - **Go to**, in the address field (click it, or Shift+Space in the live view,
