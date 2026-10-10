@@ -48,16 +48,16 @@ export function Rail({ projects, needs, location, onAddProject, onPalette }: {
         </span>
       </a>
 
-      <RailLink to={href({ name: 'needs' })} icon="needs" label="Needs you" active={route.name === 'needs'} keys="go-needs"
+      <RailLink to={href({ name: 'needs' })} icon="needs" label="Needs you" active={route.name === 'needs'} keys="go-needs" tour="rail-needs"
         count={needCount ? <Count n={needCount} tone="amber" className="rail-badge bump" key={needCount} /> : null}
         name={needCount ? `Needs you, ${needCount}` : 'Needs you'} />
-      <RailLink to={href({ name: 'running' })} icon="sessions" label="Sessions" active={route.name === 'running'} keys="go-running"
+      <RailLink to={href({ name: 'running' })} icon="sessions" label="Sessions" active={route.name === 'running'} keys="go-running" tour="rail-sessions"
         count={running ? <Count n={running} tone="water" className="rail-badge" key={running} /> : null}
         name={running ? `Sessions, ${running} running` : 'Sessions, none running'} />
 
       <hr className="rail-rule" />
 
-      <ul className="rail-projects" aria-label="Projects">
+      <ul className="rail-projects" aria-label="Projects" data-tour="rail-projects">
         {projects?.map((p, i) => (
           <li key={p.id}>
             <ProjectTile project={p} active={activeKey === p.key} href={href({ name: 'project', projectKey: p.key, view: 'board' })}
@@ -73,7 +73,7 @@ export function Rail({ projects, needs, location, onAddProject, onPalette }: {
       </ul>
 
       <div className="rail-foot">
-        <button type="button" className="rail-item rail-search" onClick={onPalette} aria-label="Search and commands" {...tipProps('Search and commands', 'palette', 'right')}>
+        <button type="button" className="rail-item rail-search" onClick={onPalette} data-tour="rail-search" aria-label="Search and commands" {...tipProps('Search and commands', 'palette', 'right')}>
           <Icon name="search" size={20} />
         </button>
         <NotificationBell />
@@ -83,11 +83,11 @@ export function Rail({ projects, needs, location, onAddProject, onPalette }: {
   );
 }
 
-function RailLink({ to, icon, label, name, active, keys, count }: {
-  to: string; icon: IconName; label: string; name: string; active: boolean; keys: CommandId; count?: ReactNode;
+function RailLink({ to, icon, label, name, active, keys, count, tour }: {
+  to: string; icon: IconName; label: string; name: string; active: boolean; keys: CommandId; count?: ReactNode; tour?: string;
 }) {
   return (
-    <a href={to} className={`rail-item${active ? ' active' : ''}`} aria-current={active ? 'page' : undefined} aria-label={name}
+    <a href={to} className={`rail-item${active ? ' active' : ''}`} aria-current={active ? 'page' : undefined} aria-label={name} data-tour={tour}
       {...tipProps(label, keys, 'right')}>
       <Icon name={icon} size={20} />
       {count}

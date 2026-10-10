@@ -432,4 +432,6 @@ export interface WaniganBridge {
   /** The live view; absent where nothing can show a site. */
   live?: LiveBridge;
   platform: string;
+  /** Tours never start on their own (WANIGAN_TOURS=off): automation that drives the window. Replaying one still works. */
+  toursOff?: boolean;
 }

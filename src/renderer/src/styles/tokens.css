@@ -115,6 +115,9 @@
   --gap-hair: 2px;
   --track-pad: 3px;
   --tip-max: 320px;
+  /* A guided tour's card, and how far its dimming reaches past the lit target (all the window). */
+  --tour-card: 344px;
+  --spot-spread: 100vmax;
   --toggle-w: 36px;
   --toggle-h: 20px;
   --dot: 7px;

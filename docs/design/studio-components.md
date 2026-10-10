@@ -243,6 +243,66 @@ the live view's message through `toast()` and its keys and dock tabs through `St
 The rail's bell and the tray it opens. `openNotifications()` opens it from elsewhere (the palette does). The app's
 own news lives here too (whether to check for updates, a new version).
 
+## Helping the owner: How this works and tours
+
+Every view that is more than a simple form explains itself two ways (Dane, 10 October: "every page that has more
+than a simple form needs the how this works so the user understands what they are doing"; "each one should have a
+tour … first visit and then a replay").
+
+### How this works (`components/How.tsx`, `lib/how.ts`)
+
+The view's rules as a picture with live numbers, as the board's (`views/HowItWorks.tsx`) has always been: lanes of
+steps, who does each (`HowActor`: you, agents, jev, board, wanigan, site, needs, done), arrows for the usual path,
+side notes. Every sentence is a rule the code enforces; a number whose source has not answered is left out.
+
+```tsx
+const how = useHow('changes');                     // registers the view, so the palette offers "How this view works"
+<HowButton onClick={how.show} />                   // in the view's toolbar, at its end
+{how.open ? (
+  <HowDialog place="changes" title="How Changes works" intro={…} side={<HowNote title="…">…</HowNote>} onClose={how.hide}>
+    <HowLane n={1} title="An agent changes files" actor="agents">
+      <HowBox actor="agents" title="…" num={howNum(count, 'file changed', 'files changed')} onClick={…} hint="Show …">…</HowBox>
+      <HowArrow label="you review" />
+      …
+    </HowLane>
+  </HowDialog>
+) : null}
+```
+
+`HowDialog` offers the view's tour in its footer when it has one.
+
+### Tours (`components/Tour.tsx`, `lib/tours.ts`, `tours/`)
+
+- **The welcome tour** (`tours/welcome.ts`) plays once on the first launch.
+- **A view's tour** offers itself in the status line on the view's first visit (Take the tour, or Not now: either
+  way it is not offered again), and replays from the status line's compass and the palette ("Tour of Board").
+- Settings › Appearance turns first-visit offers off and offers every tour again.
+
+A tour is a few stops. Each points at one thing by its `data-tour` name and says what it is for and what you can do
+there. A stop whose target is not on the screen is passed over, never pointed at nothing. Write a view's tour in its
+scope's file (`tours/live.ts`, `board.ts`, `sessions.ts`, `changes.ts`, `settings.ts`), with the place as its id
+(`placeOf(route)`: a project's view by name, else the route's name):
+
+```ts
+export const CHANGES_TOURS: Tour[] = [{
+  id: 'changes', name: 'Changes', intro: 'Where an agent’s work becomes a commit.',
+  steps: [
+    { target: 'changes-files', side: 'right', title: 'What changed', body: 'Every file …' },
+    { target: 'changes-commit', title: 'Commit', body: (c) => `${keys(c, 'Mod', 'Enter')} commits …` },
+  ],
+}];
+```
+
+and put `data-tour="changes-files"` on the element (`NavTabs` takes `tour` for the strip and each item). Rules:
+
+- Four to seven stops.
+- Each body is one or two plain sentences: what it is, and what you can do there, with its key through `keys()`.
+- Every stop is something the view really does.
+- The live page is a native view: a tour steps it aside like every overlay, so stops can point at the canvas.
+- The sweeps never see tours (the stub bridge's `toursOff`); `scripts/tour-sweep.mjs` checks them, and checks that
+  every view with a compass offers its tour on the first visit. `WANIGAN_TOURS=off` turns them off for automation
+  that drives the real window (the smoke sets it).
+
 ## Tooltips
 
 `TooltipHost` (Tooltip.tsx, mounted once in App.tsx) draws the tooltip of anything carrying `data-tip` (and

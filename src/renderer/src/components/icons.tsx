@@ -109,6 +109,8 @@ const paths = {
   clock: 'M10 16.5a6.5 6.5 0 1 0 0-13 6.5 6.5 0 0 0 0 13ZM10 6.5V10l2.5 1.5',
   // The notification tray, in the rail.
   bell: 'M5 8.2a5 5 0 0 1 10 0c0 5.3 2.3 6.3 2.3 6.3H2.7S5 13.5 5 8.2ZM8.3 16.8a1.8 1.8 0 0 0 3.4 0',
+  // A compass: a guided tour of a view.
+  tour: 'M10 17a7 7 0 1 0 0-14 7 7 0 0 0 0 14ZM12.8 7.2l-1.5 4.1-4.1 1.5 1.5-4.1z',
 } as const;
 
 export type IconName = keyof typeof paths;

@@ -1,19 +1,14 @@
 // "How this works": the board as a picture, with live numbers. Every sentence
 // here is a rule the core enforces; if a rule changes, this changes with it.
 // A number whose source has not answered is left out, never guessed.
-import type { KeyboardEvent, ReactNode } from 'react';
 import type { CardSummary, ProjectSummary } from '@shared/model';
 import { useQuery } from '../lib/api';
 import { navigate } from '../lib/router';
 import { plural } from '../lib/format';
 import { Dialog } from '../components/ui';
+import { HowArrow as Arrow, HowBox as Box, HowLane as Lane, howNum as numOf } from '../components/How';
 
-type Actor = 'you' | 'agents' | 'jev' | 'board' | 'needs' | 'done';
 type Column = 'inbox' | 'ready' | 'working' | 'review' | 'done';
-
-const ACTOR_TAG: Record<Actor, string> = {
-  you: 'You', agents: 'Agents', jev: 'Jev', board: 'The board', needs: 'Needs you', done: 'The board',
-};
 
 const DAY = 86_400_000;
 
@@ -83,7 +78,7 @@ export function HowItWorks({ project, cards, onClose, showColumn }: {
               Only with evidence: a file, a link or a note. Ask Claude to check it against each criterion if you like; that is advice.
             </Box>
             <Arrow label="you approve" />
-            <Box actor="done" title="Done" num={numOf(column('done'), 'done')} onClick={go('done')} hint="Show Done">
+            <Box actor="done" tag="The board" title="Done" num={numOf(column('done'), 'done')} onClick={go('done')} hint="Show Done">
               Only you approve. An agent can never mark its own work done.
             </Box>
           </Lane>
@@ -137,46 +132,5 @@ export function HowItWorks({ project, cards, onClose, showColumn }: {
         </aside>
       </div>
     </Dialog>
-  );
-}
-
-function numOf(n: number | null, one: string, many = one): string | null {
-  if (n === null) return null;
-  return `${n} ${n === 1 ? one : many}`;
-}
-
-function Lane({ n, title, actor, children }: { n: number; title: string; actor: Actor; children: ReactNode }) {
-  return (
-    <section className={`how-lane how-${actor}`} aria-label={`${n}. ${title}`}>
-      <h3 className="how-lane-title"><span className="how-lane-n">{n}</span>{title}</h3>
-      <div className="how-lane-row">{children}</div>
-    </section>
-  );
-}
-
-function Box({ actor, title, num, children, onClick, hint }: {
-  actor: Actor; title: string; num: string | null; children: ReactNode; onClick?: () => void; hint?: string;
-}) {
-  const onKey = (e: KeyboardEvent): void => {
-    if (onClick && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); onClick(); }
-  };
-  return (
-    <div
-      className={`how-box how-${actor}${onClick ? ' linked' : ''}`}
-      {...(onClick ? { role: 'link', tabIndex: 0, onClick, onKeyDown: onKey, 'aria-label': `${title}. ${hint ?? ''}`, title: hint } : {})}
-    >
-      <span className="how-tag">{ACTOR_TAG[actor]}</span>
-      <strong className="how-title">{title}</strong>
-      <p className="how-text">{children}</p>
-      {num ? <span className="how-num">{num}</span> : null}
-    </div>
-  );
-}
-
-function Arrow({ label }: { label?: string }) {
-  return (
-    <span className={`how-arrow${label ? ' labelled' : ''}`} aria-hidden="true">
-      {label ? <span className="how-arrow-label">{label}</span> : null}
-    </span>
   );
 }
