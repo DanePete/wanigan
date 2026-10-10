@@ -18,6 +18,8 @@
 // docs/research/2026-10-09-wordpress-core-live-trace.md.
 // Design: docs/design/2026-10-08-live-view.md.
 
+import { WORDPRESS_USAGE_SOURCE } from './live-helper-wordpress-usage.ts';
+
 export const WORDPRESS_HELPER_VERSION = 4;
 export const WORDPRESS_HELPER_FILE = 'wanigan-live.php';
 /** A line of the file: how Wanigan knows a file of that name is its own. */
@@ -32,7 +34,7 @@ export function wordpressHelper(token: string, siteDir = ''): string {
   if (!/^[0-9a-f]{16,128}$/.test(token)) throw new Error('A helper token is hex.');
   const dir = siteDir.replace(/^\/+|\/+$/g, '');
   if (!/^[A-Za-z0-9._/-]*$/.test(dir) || dir.split('/').some((s) => s === '..' || s === '.')) throw new Error('WordPress’s folder must be a plain relative path.');
-  return SOURCE.split('__WANIGAN_TOKEN__').join(token)
+  return (SOURCE + WORDPRESS_USAGE_SOURCE).split('__WANIGAN_TOKEN__').join(token)
     .split('__WANIGAN_SITE_DIR__').join(dir)
     .split('__WANIGAN_VERSION__').join(String(WORDPRESS_HELPER_VERSION))
     .split('__WANIGAN_MARK__').join(WORDPRESS_HELPER_MARK);
@@ -220,7 +222,7 @@ final class Wanigan_Live {
 	public static function boot(): void {
 		self::$self = wp_normalize_path(__FILE__);
 		$path = self::request_path();
-		if (preg_match('#/_wanigan/(changed|save|trace|edit|move|insert|remove|undo|find|ai|components)(/|$)#', $path, $m)) {
+		if (preg_match('#/_wanigan/(changed|save|trace|edit|move|insert|remove|undo|find|ai|components|usage)(/|$)#', $path, $m)) {
 			// The Go to index lists the wp-admin menu as core builds it for this user. Plugins register their admin
 			// pages only in an admin request (many check is_admin() when they load), so this request is one:
 			// wp-admin/admin.php defines WP_ADMIN before WordPress loads, and must-use plugins load before plugins.
@@ -4012,7 +4014,7 @@ final class Wanigan_Live {
 	/** Runs at wp_loaded: post types, meta, blocks and settings are registered, and the user is known. */
 	public static function route(): void {
 		$path = self::request_path();
-		if (!preg_match('#/_wanigan/(trace|edit|move|insert|remove|undo|find|ai|components)(?:/([A-Za-z0-9._-]+))?/?$#', $path, $m)) return;
+		if (!preg_match('#/_wanigan/(trace|edit|move|insert|remove|undo|find|ai|components|usage)(?:/([A-Za-z0-9._-]+))?/?$#', $path, $m)) return;
 		nocache_headers();
 		$post = isset($_SERVER['REQUEST_METHOD']) && $_SERVER['REQUEST_METHOD'] === 'POST';
 		$route = $m[1];
@@ -4022,6 +4024,11 @@ final class Wanigan_Live {
 			if ($route === 'find' && !$post) self::find();
 			if ($route === 'ai' && !$post) self::site_ai();
 			if ($route === 'components' && !$post) self::components();
+			if ($route === 'usage' && !$post) {
+				// Where a library entry is used across the site (Wanigan_Live_Usage, below): read-only.
+				$usage = Wanigan_Live_Usage::request(isset($_GET['entry']) && is_string($_GET['entry']) ? (string) wp_unslash($_GET['entry']) : '');
+				self::answer($usage[0], $usage[1]);
+			}
 			if ($route === 'edit' && !$post && $arg === 'done') self::edit_done();
 			if ($route === 'edit' && !$post) self::edit_form($arg);
 			if (!$post) self::answer(array('ok' => false, 'error' => 'That route takes a POST.'), 405);
