@@ -7,28 +7,30 @@
 //   state (and the last verification's verdict), and plainly when it is
 //   fragile or orphaned, with why.
 // - Per edit: Discard (a draft or an orphaned one), Make it real (words through
-//   the site helper, or the owner's own template when the helper cannot; a style
-//   or token goes to an agent as intent, through the note the Inspector writes,
-//   never by starting a session), Verify (the site against the design, with
-//   the step that failed, each difference and the pictures), Retire (verified).
+//   the site; when nothing the site stores holds them, the template that rendered
+//   the element, as its own action that says its reach first: TemplateSave.tsx; a
+//   style or token goes to an agent as intent, through the note the Inspector
+//   writes, never by starting a session), Verify (the site against the design,
+//   with the step that failed, each difference and the pictures), Retire (verified).
 // - Undo and redo say what they would do; the page can be shown without the
 //   layer, to compare. After every change the log is read again and the layer
 //   applied to the page again (use-layer.ts).
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import type { LayerEdit, LayerImplemented, LayerVerdict } from '@shared/design-layer';
-import type { LiveComponent, LiveFound, LiveRegion } from '@shared/live';
+import type { LiveComponent, LiveEdit, LiveRegion } from '@shared/live';
 import type { PartIndex } from '@shared/live-lens';
 import { identityKey, type LiveTrace } from '@shared/live-trace';
 import { ancestors } from '@shared/live-tree';
 import type { ProjectSummary } from '@shared/model';
-import { call } from '../../lib/api';
+import { call, useQuery } from '../../lib/api';
 import {
   STATE_DETAIL, STATE_WORDS, byPage, changeLines, differenceWords, failedWords, isFragile, noiseWords, orphanWhy, reachWords, redoLabel,
-  undoLabel, verdictHeadline,
+  templateOf, templateOffered, undoLabel, verdictHeadline,
 } from '../../lib/live-layer';
 import { liveBridge } from '../../lib/live';
 import { Button, Dialog, IconButton, useToast } from '../ui';
 import { NoteComposer } from './Notes';
+import { TemplateSave, TemplateWrittenNote, type TemplateWritten } from './TemplateSave';
 import type { LayerApi } from './use-layer';
 import '../../styles/live-layer.css';
 
@@ -48,12 +50,15 @@ interface TrayContext {
   readOnly: boolean;
   /** Load the page again (after words were saved to a template). */
   onReload: () => void;
+  /** Words saved by hand to the project's templates (Notes › Saved by hand): an edit whose words one wrote reaches every page that uses it. */
+  saved?: LiveEdit[] | null;
 }
 
 export function LayerTray({ onClose, ...ctx }: TrayContext & { onClose: () => void }) {
   const { layer, page, readOnly } = ctx;
   const live = liveBridge();
   const title = useRef<HTMLHeadingElement>(null);
+  const savedByHand = useQuery('live.edits', { projectId: ctx.project.id }, ['liveEdits'], (_e, d) => (d as { projectId?: string }).projectId === ctx.project.id);
   const snap = layer.snapshot;
   const edits = snap?.edits ?? [];
   const groups = useMemo(() => byPage(edits, page), [edits, page]);
@@ -106,16 +111,13 @@ export function LayerTray({ onClose, ...ctx }: TrayContext & { onClose: () => vo
         <section key={g.page} className="live-tray-page" aria-label={`Edits made on ${g.page}`}>
           <h3 className="live-section-title">{g.page === '/' ? 'The front page, /' : g.page}{g.here ? <span className="live-tray-here"> · this page</span> : null}</h3>
           <ul className="live-tray-edits">
-            {g.edits.map((e) => <TrayEdit key={e.id} edit={e} here={g.here} ctx={ctx} />)}
+            {g.edits.map((e) => <TrayEdit key={e.id} edit={e} here={g.here} ctx={{ ...ctx, saved: savedByHand.data }} />)}
           </ul>
         </section>
       ))}
     </div>
   );
 }
-
-/** Words of a text edit: where the owner's own template writes them once, when the helper cannot save them. */
-type Template = { state: 'looking' } | { state: 'none' } | { state: 'found'; file: string; at: LiveFound };
 
 function TrayEdit({ edit: e, here, ctx }: { edit: LayerEdit; here: boolean; ctx: TrayContext }) {
   const { project, layer, readOnly } = ctx;
@@ -125,12 +127,14 @@ function TrayEdit({ edit: e, here, ctx }: { edit: LayerEdit; here: boolean; ctx:
   const [noting, setNoting] = useState(false);
   const [verifying, setVerifying] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
-  const [template, setTemplate] = useState<Template | null>(null);
+  const [written, setWritten] = useState<TemplateWritten | null>(null);
   const lines = changeLines(e);
   const reach = reachWords(e, ctx.trace, layer.applied);
+  // Words a template save wrote: the edit reaches every page that uses that template, not only this element.
+  const inTemplate = templateOf(e, ctx.saved);
   const fragile = isFragile(e);
   const name = `“${e.label}”`;
-  // The regions on the page shown that are this edit's part: what a note points at, and where its words are written.
+  // The regions on the page shown that are this edit's part, and what they sit in: what a note to an agent points at.
   const regions = useMemo(() => {
     const part = e.target.part;
     if (!here || !part) return [];
@@ -149,34 +153,6 @@ function TrayEdit({ edit: e, here, ctx }: { edit: LayerEdit; here: boolean; ctx:
     setAnswer(a);
     if (a.ok) { toast(`Saved ${name} in the site${a.revision ? `, as revision ${a.revision}` : ''}. Verify compares the site with the design.`); return; }
     if (a.route === 'agent') setNoting(true);
-    if (e.change.type === 'text' && a.route === 'none') void findTemplate();
-  };
-  // The helper could not save the words: the owner's own template may write them, once.
-  const findTemplate = async (): Promise<void> => {
-    const before = e.before.text;
-    const files = [...new Set(regions.map((r) => r.file).filter((f): f is string => !!f))].slice(0, 6);
-    if (!before || !files.length) { setTemplate({ state: 'none' }); return; }
-    setTemplate({ state: 'looking' });
-    for (const file of files) {
-      const at = await call('live.findText', { projectId: project.id, file, text: before }).catch(() => null);
-      if (at && at.count > 0) { setTemplate({ state: 'found', file, at }); return; }
-    }
-    setTemplate({ state: 'none' });
-  };
-  const saveTemplate = async (file: string): Promise<void> => {
-    if (e.change.type !== 'text' || !e.before.text) return;
-    const value = e.change.value;
-    const before = e.before.text;
-    const saved = await layer.change(async () => {
-      const done = await call('live.saveText', { projectId: project.id, file, before, after: value });
-      await call('live.layerMark', { projectId: project.id, id: e.id, state: 'implemented' });
-      return done;
-    });
-    if (!saved) return;
-    setAnswer(null);
-    setTemplate(null);
-    toast(`Saved to ${file.split('/').pop()} (line ${saved.line}); Notes › Saved by hand puts it back. Verify compares the site with the design.`);
-    ctx.onReload();
   };
   const verify = async (): Promise<void> => {
     if (!live) return;
@@ -199,7 +175,7 @@ function TrayEdit({ edit: e, here, ctx }: { edit: LayerEdit; here: boolean; ctx:
   const noteDraft = {
     url: (() => { try { return new URL(e.page, ctx.siteUrl).toString(); } catch { return e.page; } })(),
     regions, pick: null,
-    words: e.change.type === 'text' ? { before: e.before.text ?? '', after: e.change.value, file: template?.state === 'found' ? template.file : null } : null,
+    words: e.change.type === 'text' ? { before: e.before.text ?? '', after: e.change.value, file: null } : null,
     style: e.change.type === 'text' ? [] : lines.map((l) => ({ property: l.what, from: l.before, to: l.after })),
     layer: { label: e.label, reach },
   };
@@ -217,24 +193,25 @@ function TrayEdit({ edit: e, here, ctx }: { edit: LayerEdit; here: boolean; ctx:
           </li>
         ))}
       </ul>
-      <p className="small live-tray-reach">For {reach}.{e.by === 'agent' ? <span className="faint"> Made by an agent.</span> : null}</p>
+      {inTemplate ? (
+        <p className="small live-tray-reach">
+          For every page that uses <span className="mono">{inTemplate.path.split('/').pop()}</span>: its words were saved to that template, line {inTemplate.line}, not only
+          to this element. Verify compares this page only.
+        </p>
+      ) : <p className="small live-tray-reach">For {reach}.{e.by === 'agent' ? <span className="faint"> Made by an agent.</span> : null}</p>}
       {fragile ? (
         <p className="small live-layer-fragile">Fragile: no part of the site names its element, so it is kept by where it sits in the page.</p>
       ) : null}
       {e.state === 'orphaned' ? <p className="small live-tray-why">Orphaned: {orphanWhy(e, layer.applied)} It is not shown, and never put on whatever is there now.</p> : null}
+      {written ? <TemplateWrittenNote written={written} /> : null}
       {e.verdict ? <Verdict verdict={e.verdict} /> : null}
       {failure ? <p className="small live-tray-why" role="alert">Not verified: {failure}</p> : null}
       {answer && !answer.ok ? (
         <div className="live-tray-answer" role="status">
           <p className="small">{answer.why}</p>
-          {template?.state === 'looking' ? <p className="faint small">Looking for where your templates write those words…</p> : null}
-          {template?.state === 'found' && !template.at.refused ? (
-            <div className="live-actions">
-              <Button size="s" tone="primary" icon="check" onClick={() => saveTemplate(template.file)} aria-label={`Save ${name} to ${template.file}`}>
-                Save to {template.file.split('/').pop()}, line {template.at.line}
-              </Button>
-            </div>
-          ) : template?.state === 'found' && template.at.refused ? <p className="faint small">{template.at.refused}</p> : null}
+          {templateOffered(e, answer) ? (
+            <TemplateSave edit={e} project={project} layer={layer} onReload={ctx.onReload} onWritten={(w) => { setAnswer(null); setWritten(w); }} />
+          ) : null}
           {!noting ? (
             <div className="live-actions"><Button size="s" tone="quiet" icon="note" onClick={() => setNoting(true)}>Tell an agent…</Button></div>
           ) : (

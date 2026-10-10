@@ -51,7 +51,7 @@ import { PaletteTab, useArrange } from './live/Arrange';
 import { LibraryPanel } from './live/Library';
 import { LayerTray } from './live/Tray';
 import { useLayer } from './live/use-layer';
-import { pagePath } from '../lib/live-layer';
+import { heldInLayer, pagePath } from '../lib/live-layer';
 import { EditSheet, type EditRequest } from './live/EditSheet';
 import { LensPicker, LensStrip, usePaintLens } from './live/Lenses';
 import { RequestTab } from './live/Request';
@@ -871,7 +871,7 @@ function LiveShown({ site, url, project, follow, card, compact, following, shots
             ) : shownTab === 'notes' ? (
               <>
                 <NotesTab project={project} components={components} sender={sender} onShow={showNote} />
-                <EditsList project={project} />
+                <EditsList project={project} layer={layer.snapshot} />
               </>
             ) : (
               <ProblemsTab problems={problems} project={project} url={view?.url ?? url} onRefresh={() => void refreshProblems()} />
@@ -1011,7 +1011,7 @@ function NothingMarked({ platform, loading, hosted = false }: { platform: LivePl
 }
 
 /** Words saved by hand to templates, newest first, each put back with one click while the file is as it left it. */
-function EditsList({ project }: { project: ProjectSummary }) {
+function EditsList({ project, layer }: { project: ProjectSummary; layer: ReturnType<typeof useLayer>['snapshot'] }) {
   const toast = useToast();
   const edits = useQuery('live.edits', { projectId: project.id }, ['liveEdits'], (_e, d) => (d as { projectId?: string }).projectId === project.id);
   const list = (edits.data ?? []).slice(0, 8);
@@ -1029,6 +1029,8 @@ function EditsList({ project }: { project: ProjectSummary }) {
             <span className="small">“{e.before}” → “{e.after}”</span>
             <span className="mono small faint" title={e.path}>{fileName(e.path)}:{e.line}</span>
             {e.revertedAt ? <span className="faint small">Put back</span>
+              // The core never takes an edit in the site back out of the layer: put back, the layer would say the site has these words.
+              : heldInLayer(e, layer) ? <span className="faint small">In the design layer as in the site, which it never takes back: put back by hand</span>
               : e.revertable ? <Button size="s" tone="quiet" icon="undo" onClick={() => revert(e)}>Put back</Button>
                 : <span className="faint small">Changed since: put back by hand</span>}
           </li>

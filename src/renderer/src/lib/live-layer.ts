@@ -14,9 +14,10 @@
 // - What undo and redo would do, and what a verification said: the step that
 //   failed, each difference, the noise floor, all in words.
 import type {
-  LayerApplied, LayerDifference, LayerEdit, LayerRect, LayerSnapshot, LayerState, LayerVerdict, VerifyStep,
+  LayerApplied, LayerDifference, LayerEdit, LayerImplemented, LayerRect, LayerSnapshot, LayerState, LayerTarget, LayerVerdict, VerifyStep,
 } from '../../../shared/design-layer.ts';
-import { kindKey, type LiveTrace, type PartIdentity, type TracePart } from '../../../shared/live-trace.ts';
+import type { LiveEdit, LiveRegion } from '../../../shared/live.ts';
+import { identityKey, kindKey, type LiveTrace, type PartIdentity, type TracePart } from '../../../shared/live-trace.ts';
 
 /** A page of the site as edits name it: its path and query ("/about?page=2"). Empty when the address is not one. */
 export function pagePath(url: string | null | undefined): string {
@@ -177,4 +178,74 @@ export function differenceWords(d: LayerDifference): string {
     case 'pixels': return `At ${d.width} px, ${many(d.pixels, 'pixel')} differ around it, by up to ${d.maxDiff} of 255, in ${boxWords(d.rect)}.`;
     case 'leak': return `At ${d.width} px, ${many(d.pixels, 'pixel')} differ away from every edited element, by up to ${d.maxDiff} of 255, in ${boxWords(d.rect)}: the change reached further than it should.`;
   }
+}
+
+/* ── words written to the owner's own template, when nothing the site stores holds them ── */
+
+/**
+ * What the main process answers when nothing the site stores holds an element's words (src/main/live-layer.ts
+ * wordsTarget: the test keeps the two equal). It is the one refusal after which the template that rendered the element
+ * may be offered: every other refusal (a field that no longer holds the words, several things holding them, an
+ * element shown more than once, an edit in the site already, no trace) means the words are stored, or that Wanigan
+ * cannot tell, and a template is never written for them.
+ */
+export const NOTHING_HOLDS = 'Nothing this page offers to edit holds exactly these words, so there is nothing here to save them to: they come from a template, from formatted text, or from something the site helper does not offer on this page.';
+
+/** Whether a refusal to make an edit real lets the owner look in the template that rendered its element: a draft of words, keyed to a part, that nothing the site stores holds. */
+export function templateOffered(edit: Pick<LayerEdit, 'change' | 'target' | 'state' | 'before'>, answer: LayerImplemented | null): boolean {
+  return !!answer && !answer.ok && answer.route === 'none' && answer.why === NOTHING_HOLDS
+    && edit.change.type === 'text' && edit.state === 'draft' && !!edit.target.part && !!edit.before.text;
+}
+
+/** Whether the element picked now (LiveBridge.layerTarget) is the edit's: the same part identity and path inside it, or the same document path. */
+export function sameTarget(picked: LayerTarget, edit: LayerTarget): boolean {
+  if (picked.part && edit.part) return identityKey(picked.part) === identityKey(edit.part) && picked.inner === edit.inner;
+  return !picked.part && !edit.part && !!edit.selector && picked.selector === edit.selector;
+}
+
+/**
+ * The template that rendered the picked element itself: the file of its own innermost region (LivePick.regions, every
+ * region the element sits in), never one around it, so a page or region template that happens to hold the same words
+ * elsewhere is never written. Or why there is none.
+ */
+export function ownTemplate(regions: readonly Pick<LiveRegion, 'index' | 'parent' | 'file'>[]): { file: string } | { why: string } {
+  if (!regions.length) return { why: 'The page does not say which template rendered this element, so Wanigan writes to none.' };
+  const inner = regions.filter((r) => !regions.some((o) => o.parent === r.index));
+  if (inner.length !== 1) return { why: 'Wanigan cannot tell which template rendered this element itself, so it writes to none.' };
+  const file = inner[0]?.file;
+  return file ? { file } : { why: 'The template nearest this element does not say which file it is, and Wanigan never writes to one around it instead.' };
+}
+
+/** Why a template save must not go ahead now, or null: read just before writing, the edit is still a draft of the layer, and still shown on the page. */
+export function templateSaveRefused(edit: LayerEdit | undefined, applied: LayerApplied | null): string | null {
+  if (!edit) return 'It is not in the layer now (undone or discarded), so nothing was written.';
+  if (edit.state === 'orphaned') return 'It is orphaned now: its element is not where it was, so nothing was written.';
+  if (edit.state !== 'draft') return 'It is in the site already, so nothing was written.';
+  if (!applied || applied.off) return 'The page is shown without the layer, so Wanigan cannot see the edit on it: show the layer, then save. Nothing was written.';
+  if (!applied.shown.some((s) => s.id === edit.id)) return 'It is not shown on the page now (another page, or it no longer finds its element), so nothing was written.';
+  return null;
+}
+
+const folded = (s: string): string => s.replace(/\s+/g, ' ').trim();
+
+/** Whether words saved to a template (Notes › Saved by hand) are a text edit's: its words before, and its new ones, saved after it was made. */
+export function sameWords(edit: Pick<LayerEdit, 'change' | 'before' | 'at'>, saved: Pick<LiveEdit, 'before' | 'after' | 'createdAt'>): boolean {
+  return edit.change.type === 'text' && typeof edit.before.text === 'string' && saved.createdAt >= edit.at
+    && folded(edit.before.text) === folded(saved.before) && folded(edit.change.value) === folded(saved.after);
+}
+
+/**
+ * The edit the layer holds as in the site (implemented or verified) whose words a template save wrote, if any. The core
+ * never takes an edit in the site back out of the layer, so putting such words back would leave the layer saying the
+ * site has them: the window offers no Put back for it while the layer holds it.
+ */
+export function heldInLayer(saved: Pick<LiveEdit, 'before' | 'after' | 'createdAt' | 'revertedAt'>, snapshot: LayerSnapshot | null | undefined): LayerEdit | null {
+  if (saved.revertedAt) return null;
+  return (snapshot?.edits ?? []).find((e) => (e.state === 'implemented' || e.state === 'verified') && sameWords(e, saved)) ?? null;
+}
+
+/** The template save that wrote an edit's words, still in the file as it left them: the edit then reaches every page that uses that template. */
+export function templateOf(edit: LayerEdit, saved: readonly LiveEdit[] | null | undefined): LiveEdit | null {
+  if (edit.state !== 'implemented' && edit.state !== 'verified') return null;
+  return (saved ?? []).find((s) => !s.revertedAt && s.revertable && sameWords(edit, s)) ?? null;
 }

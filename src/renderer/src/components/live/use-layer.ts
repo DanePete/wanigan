@@ -28,6 +28,8 @@ export interface LayerApi {
   add: (edit: LayerEditInput) => Promise<LayerSnapshot | undefined>;
   /** Read the log and show it on the page again. */
   refresh: () => Promise<void>;
+  /** Read the log and what the page shows now, and answer them: a check made just before a write. */
+  fresh: () => Promise<{ snapshot: LayerSnapshot | null; applied: LayerApplied | null }>;
   /** Show the page with the layer, or without it. */
   show: (on: boolean) => Promise<void>;
   /** The view finished loading a page: read the log and hear what the layer found on the page, when there is anything to find. */
@@ -44,17 +46,21 @@ export function useLayer(projectId: string, local: boolean): LayerApi {
   const snapRef = useRef(snapshot);
   snapRef.current = snapshot;
 
-  const read = useCallback(async (): Promise<void> => {
+  const read = useCallback(async (): Promise<LayerSnapshot | null> => {
     const snap = await call('live.layer', { projectId }).catch(() => null);
-    if (snap && snap.projectId === projectId) setSnapshot(snap);
+    if (!snap || snap.projectId !== projectId) return null;
+    setSnapshot(snap);
+    return snap;
   }, [projectId]);
-  const apply = useCallback(async (): Promise<void> => {
+  const apply = useCallback(async (): Promise<LayerApplied | null> => {
     // A hosted environment is shown read-only: the layer is the local site's.
-    if (!live || !localRef.current) return;
+    if (!live || !localRef.current) return null;
     const a = await live.layerApply().catch(() => null);
     if (a) setApplied(a);
+    return a;
   }, [live]);
   const refresh = useCallback(async (): Promise<void> => { await read(); await apply(); }, [read, apply]);
+  const fresh = useCallback(async () => ({ snapshot: await read(), applied: await apply() }), [read, apply]);
 
   useEffect(() => { setSnapshot(null); setApplied(null); void read(); }, [read]);
   // The main process marks edits too (orphaned on a load, implemented, verified): the core says the layer changed.
@@ -86,5 +92,5 @@ export function useLayer(projectId: string, local: boolean): LayerApi {
     if (snapRef.current?.edits.length || applied?.off) void refresh();
   }, [refresh, applied?.off]);
 
-  return { snapshot, applied, on: !applied?.off, drafts: draftsOf(snapshot), change, add, refresh, show, loaded };
+  return { snapshot, applied, on: !applied?.off, drafts: draftsOf(snapshot), change, add, refresh, fresh, show, loaded };
 }

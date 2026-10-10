@@ -2,12 +2,13 @@
 // redo would do, and a verification in words. Made-up site (acme); nothing real.
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { kindWords } from '../../../main/live-layer.ts';
-import type { LayerApplied, LayerEdit, LayerSnapshot, LayerVerdict } from '../../../shared/design-layer.ts';
-import { kindKey, type LiveTrace, type PartIdentity, type TracePart } from '../../../shared/live-trace.ts';
+import { kindWords, saveTarget, wordsTarget } from '../../../main/live-layer.ts';
+import type { LayerApplied, LayerEdit, LayerImplemented, LayerSnapshot, LayerVerdict } from '../../../shared/design-layer.ts';
+import type { LiveEdit } from '../../../shared/live.ts';
+import { kindKey, type EditTarget, type LiveTrace, type PartIdentity, type TracePart } from '../../../shared/live-trace.ts';
 import {
-  byPage, changeLines, differenceWords, draftsOf, failedWords, isFragile, kindName, madeOn, noiseWords, orphanWhy, pagePath, reachWords, redoLabel,
-  undoLabel, verdictHeadline,
+  NOTHING_HOLDS, byPage, changeLines, differenceWords, draftsOf, failedWords, heldInLayer, isFragile, kindName, madeOn, noiseWords, orphanWhy, ownTemplate,
+  pagePath, reachWords, redoLabel, sameTarget, templateOf, templateOffered, templateSaveRefused, undoLabel, verdictHeadline,
 } from './live-layer.ts';
 
 const card = (nth: number): PartIdentity => ({ kind: 'component', name: 'acme:card', within: null, nth });
@@ -107,4 +108,76 @@ test('a verification is said in words: the step that failed, each difference, an
   assert.equal(verdictHeadline(passed), 'Verified at 1440 px: the site renders it as designed.');
   assert.equal(failedWords(passed), null);
   assert.equal(failedWords({ ...failed, failed: 'rest' }), 'Step 3 of 3, the rest of the page failed.');
+});
+
+test('the template that rendered an element is offered only when nothing the site stores holds its words, and only for a draft keyed to a part', () => {
+  // The main process's own answer when nothing holds the words: the one the window offers the template after.
+  const teaser: LiveTrace = { ...trace, parts: [{ id: 'p1', kind: 'component', label: 'Card', identity: card(0) }], edits: [] };
+  const nothing = wordsTarget(teaser, card(0), 'Read more');
+  assert.ok(!nothing.ok && nothing.route === 'none' && nothing.why === NOTHING_HOLDS, 'the sentence is the main process’s, word for word');
+  const words = edit({ change: { type: 'text', value: 'Read on' }, before: { text: 'Read more' } });
+  const none = (why: string): LayerImplemented => ({ ok: false, id: words.id, route: 'none', why });
+  assert.ok(templateOffered(words, none(NOTHING_HOLDS)));
+  // Every other refusal means the words are stored, or that Wanigan cannot tell: never a template.
+  const two: EditTarget = { id: 'title', kind: 'field', label: 'Title', via: 'schema', schema: { type: 'string' }, value: 'Read more' };
+  const twice = wordsTarget({ ...teaser, parts: [{ ...teaser.parts[0]!, edits: ['title', 'other'] }], edits: [two, { ...two, id: 'other', label: 'Other title' }] }, card(0), 'Read more');
+  const field = saveTarget(card(0), 'node:12:title:string');
+  for (const why of [
+    !twice.ok ? twice.why : '', typeof field === 'string' ? field : '', 'The field no longer holds those words: it was changed since the page was shown.',
+    'It reaches 2 elements here; words are saved one element at a time.', 'It is in the site already.',
+    'Its element is in markup no part of the page’s trace names, so Wanigan cannot tell what holds these words.',
+  ]) {
+    assert.ok(why && !templateOffered(words, none(why)), `not after: ${why}`);
+  }
+  assert.ok(!templateOffered(words, { ok: false, id: words.id, route: 'agent', why: NOTHING_HOLDS }), 'formatted text goes to an agent');
+  assert.ok(!templateOffered(words, { ok: true, id: words.id, state: 'implemented', revision: null }));
+  assert.ok(!templateOffered(words, null));
+  assert.ok(!templateOffered({ ...words, state: 'orphaned' }, none(NOTHING_HOLDS)), 'only a draft');
+  assert.ok(!templateOffered({ ...words, target: { part: null, inner: null, selector: 'html > body > p', textHash: null } }, none(NOTHING_HOLDS)), 'never for markup no part names');
+  assert.ok(!templateOffered(edit(), none(NOTHING_HOLDS)), 'never for a style');
+});
+
+test('a template is written only for the edit’s own element, and only the template of that element’s innermost region', () => {
+  const at = edit().target;
+  assert.ok(sameTarget({ ...at, textHash: 'ffffffffffffffff' }, at), 'its words may differ: the layer shows its new ones');
+  assert.ok(!sameTarget({ ...at, part: card(1) }, at), 'another card');
+  assert.ok(!sameTarget({ ...at, inner: 'p:nth-of-type(1)' }, at), 'another element in the card');
+  assert.ok(!sameTarget({ part: null, inner: null, selector: 'html > body > h3', textHash: null }, at));
+  // The footer region holds the copyright block: the block's own template, never the footer's around it.
+  const footer = { index: 4, parent: null, file: 'themes/custom/acme/templates/region--footer.html.twig' };
+  const block = { index: 9, parent: 4, file: 'themes/custom/acme/templates/block--copyright.html.twig' };
+  assert.deepEqual(ownTemplate([block, footer]), { file: block.file });
+  assert.deepEqual(ownTemplate([footer, block]), { file: block.file }, 'by nesting, not by order');
+  const unnamed = ownTemplate([{ ...block, file: null }, footer]);
+  assert.ok('why' in unnamed && /never writes to one around it/.test(unnamed.why), 'a nearest template with no file: none, not the footer');
+  assert.ok('why' in ownTemplate([]));
+  assert.ok('why' in ownTemplate([block, { ...footer, index: 5 }]), 'two innermost: cannot tell');
+});
+
+test('just before a template save the edit is read again: still a draft, and still shown on the page', () => {
+  const words = edit({ id: 'w', change: { type: 'text', value: 'Read on' }, before: { text: 'Read more' } });
+  const shown = applied({ shown: [{ id: 'w', elements: 1 }] });
+  assert.equal(templateSaveRefused(words, shown), null);
+  assert.match(templateSaveRefused(undefined, shown) ?? '', /not in the layer now/);
+  assert.match(templateSaveRefused({ ...words, state: 'orphaned' }, shown) ?? '', /orphaned now/);
+  assert.match(templateSaveRefused({ ...words, state: 'implemented' }, shown) ?? '', /in the site already/);
+  assert.match(templateSaveRefused(words, applied()) ?? '', /not shown on the page now/);
+  assert.match(templateSaveRefused(words, { ...shown, off: true }) ?? '', /without the layer/);
+  assert.match(templateSaveRefused(words, null) ?? '', /without the layer/);
+});
+
+test('words a template save wrote are the layer’s while it holds their edit as in the site: no Put back, and the edit says its reach', () => {
+  const words = edit({ id: 'w', at: 10, change: { type: 'text', value: 'Read on' }, before: { text: 'Read  more ' }, state: 'implemented' });
+  const saved: LiveEdit = { id: 's', projectId: 'p', path: '/acme/web/themes/custom/acme/templates/card.html.twig', line: 12, before: 'Read more', after: 'Read on', createdAt: 11, revertedAt: null, revertable: true };
+  const snap = (e: LayerEdit): LayerSnapshot => ({ projectId: 'p', edits: [e], undo: null, redo: null });
+  assert.equal(heldInLayer(saved, snap(words))?.id, 'w');
+  assert.equal(heldInLayer(saved, snap({ ...words, state: 'verified' }))?.id, 'w');
+  assert.equal(heldInLayer(saved, snap({ ...words, state: 'draft' })), null, 'a draft: the layer says nothing of the site');
+  assert.equal(heldInLayer(saved, snap({ ...words, change: { type: 'text', value: 'Read again' } })), null, 'other words');
+  assert.equal(heldInLayer({ ...saved, createdAt: 9 }, snap(words)), null, 'saved before the edit was made');
+  assert.equal(heldInLayer({ ...saved, revertedAt: 20 }, snap(words)), null, 'already put back');
+  assert.equal(heldInLayer(saved, null), null);
+  assert.equal(templateOf(words, [saved])?.line, 12);
+  assert.equal(templateOf(words, [{ ...saved, revertable: false }]), null, 'the file changed since: not said to hold them');
+  assert.equal(templateOf({ ...words, state: 'draft' }, [saved]), null);
 });
