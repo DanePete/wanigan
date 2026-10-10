@@ -382,6 +382,15 @@ const SCENARIOS = String.raw`
   World::reset();
   World::$config['webform.webform.contact']['settings']['confirmation_message'] = '';
   $out['confirmationDefault'] = confirmation(['#markup' => 'New submission added to Contact Acme.'])[0]['edits'];
+  // A site default with markup and no token: saved on this form, its tags kept.
+  World::reset();
+  World::$config['webform.webform.contact']['settings']['confirmation_message'] = '';
+  World::$config['webform.settings']['settings']['default_confirmation_message'] = '<p>Thanks for writing.</p>';
+  [$fromDefault, $keptDefault] = confirmation(['#markup' => '<p>Thanks for writing.</p>']);
+  $out['confirmationOwn'] = [
+    $fromDefault['edits'], Webform::save($keptDefault['edits']['words.webform.contact.setting.confirmation_message'], '<p>Thanks for writing to us.</p>', NULL),
+    World::$config['webform.webform.contact']['settings']['confirmation_message'], World::$config['webform.settings']['settings']['default_confirmation_message'],
+  ];
 
   // A French page: the translated title is the override's, saved there alone; untranslated words are not saved to French.
   World::reset();
@@ -581,6 +590,11 @@ test('the confirmation message is offered where the confirmation shows it, and t
   assert.deepEqual([answer[0], settings.confirmation_message], [200, 'Thanks! We will write soon.'], 'through setSetting()');
   const fallback = (out.confirmationDefault as EditTarget[])[0]!;
   assert.match(fallback.why ?? '', /^A token makes these words \(\[webform:title\]\)/);
+  // A default with markup: offered as HTML, saved on this form with its tags, the site's default as it was.
+  const [[own], saved, mine, site] = out.confirmationOwn as [EditTarget[], Answer, string, string];
+  assert.deepEqual([own!.value, (own!.schema as { contentMediaType?: string }).contentMediaType, own!.why], ['<p>Thanks for writing.</p>', 'text/html', undefined]);
+  assert.match((own!.schema as { description: string }).description, /This changes only this form/);
+  assert.deepEqual([saved[0], mine, site], [200, '<p>Thanks for writing to us.</p>', '<p>Thanks for writing.</p>']);
 });
 
 test('a translation is saved to the language override of the form’s elements, the language named', (t) => {

@@ -656,7 +656,10 @@ final class Webform implements AdapterInterface {
     }
     return self::inSource($webform, function () use ($info, $webform, $key, $path, $new): array {
       $elements = $webform->getElementsDecoded();
-      $raw = is_array($elements) ? self::find($elements, $key) : NULL;
+      if (!is_array($elements)) {
+        return [409, self::refusal('Webform cannot read this form’s elements, so nothing is changed. Open it in Webform’s form.')];
+      }
+      $raw = self::find($elements, $key);
       if (!empty($info['create'])) {
         // The form shows its own actions: it has no webform_actions element,
         // so one is made, as Webform's "Customize" button makes it (key
@@ -895,7 +898,9 @@ final class Webform implements AdapterInterface {
    */
   private static function shape(array $info, string $new): ?string {
     if (!empty($info['html'])) {
-      return self::tags($new) === self::tags((string) $info['stored']) ? NULL : 'Wanigan changes the words here, never the markup around them: every tag must stay as it was.';
+      // The words the page showed: the site's default, where this form keeps none of its own.
+      $was = isset($info['default']) ? (string) ($info['shownDefault'] ?? '') : (string) $info['stored'];
+      return self::tags($new) === self::tags($was) ? NULL : 'Wanigan changes the words here, never the markup around them: every tag must stay as it was.';
     }
     return self::containsHtml($new) ? 'These words are kept as plain text: Wanigan saves words here, never markup.' : NULL;
   }
