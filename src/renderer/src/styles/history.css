@@ -14,7 +14,8 @@
 }
 
 .history-bar .search-field {
-  width: calc(var(--space-12) * 7);
+  flex: 0 1 calc(var(--space-12) * 7);
+  min-width: calc(var(--space-12) * 4);
 }
 
 .history-list {

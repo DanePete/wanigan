@@ -825,8 +825,9 @@
   font-size: var(--text-sm);
 }
 
-.toolbar-row .search-field {
-  width: calc(var(--space-12) * 6);
+.sessions-view .search-field {
+  flex: 0 1 calc(var(--space-12) * 6);
+  min-width: calc(var(--space-12) * 4);
 }
 
 .toolbar-gap {
