@@ -575,15 +575,19 @@ export function wireLiveView(options: {
 
   const isCovered = (value: boolean): void => { covered = value; };
   // A dialog over the view: a native view draws above the page, so it steps aside and leaves its last frame.
+  // Two steps: the frame first ('frame'), which the renderer paints where the page is, then the view steps aside (true).
+  // Stepped aside in the same call, the stage showed nothing (one dark frame) until the renderer had painted the image.
   ipcMain.handle('live:cover', async (event, covered: unknown) => {
     if (!options.trusted(event) || !view) return null;
-    if (covered === true) {
+    if (covered === 'frame') {
       let frame: string | null = null;
       try { const img = await view.webContents.capturePage(); frame = img.isEmpty() ? null : img.toDataURL(); } catch { frame = null; }
-      frame ??= lastFrame;
+      return frame ?? lastFrame;
+    }
+    if (covered === true) {
       view.setVisible(false);
       isCovered(true);
-      return frame;
+      return null;
     }
     view.setVisible(true);
     isCovered(false);

@@ -803,7 +803,14 @@ export function liveStub(f) {
       if (wider) { regions = toRegions(b.width); draw(); clearTimeout(reflow); reflow = setTimeout(tell, 60); }
     },
     async hide() { host?.remove(); host = null; },
-    async cover(covered) { if (host) host.style.visibility = covered ? 'hidden' : 'visible'; return covered && bounds ? wireAt(bounds.width, bounds.height) : null; },
+    async cover(covered) {
+      // Stepping aside says whether the page's frame was already painted in its place (live-sweep checks the order).
+      const img = document.querySelector('.live-frame');
+      window.__wgLive.calls.push(covered === true ? `cover true ${img && img.complete && img.naturalWidth > 0 ? 'over-frame' : 'no-frame'}` : `cover ${covered}`);
+      if (covered === 'frame') return bounds ? wireAt(bounds.width, bounds.height) : null;
+      if (host) host.style.visibility = covered ? 'hidden' : 'visible';
+      return null;
+    },
     async reload() { window.__wgLive.calls.push('reload'); setTimeout(tell, 30); },
     async css() { return 0; },
     async restyled() { return []; },

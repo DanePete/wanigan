@@ -186,8 +186,11 @@ export interface LiveBridge {
   /** The placeholder moved or changed size. */
   bounds(bounds: LiveBounds): void;
   hide(): Promise<void>;
-  /** Something covers the view (a dialog): it steps aside, and the last frame comes back as an image. */
-  cover(covered: boolean): Promise<string | null>;
+  /**
+   * Something covers the view (a dialog, a held reload). 'frame': the page's last frame as an image, the view still
+   * showing; true: the view steps aside (once that frame is painted in its place); false: it shows again.
+   */
+  cover(covered: boolean | 'frame'): Promise<string | null>;
   reload(hard?: boolean): Promise<void>;
   /** Fetch the page's stylesheets again in place; reloads instead when they are aggregated. */
   css(): Promise<number>;

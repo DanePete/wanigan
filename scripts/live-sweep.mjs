@@ -718,9 +718,15 @@ try {
       await tabTo(page, 'Layers');
       await shot('layout');
 
-      // How this works: the editor's flow as a picture, with this project's numbers, from the toolbar.
+      // How this works: the editor's flow as a picture, with this project's numbers, from the toolbar. The view steps
+      // aside for it only once the page's frame is painted where the page was (asked first, painted, then aside): in
+      // the other order the stage showed one dark, empty frame (take editor-e10, 40.2 s).
+      const beforeHow = await page.evaluate(() => window.__wgLive.calls.length);
       await page.getByRole('button', { name: 'How this works' }).click();
       await page.waitForSelector('.dialog .how-flow', { timeout: 3000 }).catch(() => fail(t('how: How this works did not open the editor’s flow')));
+      await page.waitForFunction((k) => window.__wgLive.calls.slice(k).some((c) => c.startsWith('cover true')), beforeHow, { timeout: 3000 }).catch(() => {});
+      const covers = await page.evaluate((k) => window.__wgLive.calls.slice(k).filter((c) => c.startsWith('cover ')), beforeHow);
+      if (covers[0] !== 'cover frame' || covers[1] !== 'cover true over-frame') fail(t(`cover: the view stepped aside before the page's frame was painted in its place (${covers.join(', ')})`));
       const how = await page.locator('.dialog').innerText().catch(() => '');
       for (const want of ['How the live editor works', 'Select a part', 'Kept, keyed to the part', 'Make it real', 'Verify', 'Undo', 'edits in the layer']) {
         if (!how.includes(want)) fail(t(`how: How the live editor works does not say "${want}"`));

@@ -1508,10 +1508,26 @@ function LiveStage({ project, url, token, env, view, width, hold = false, onRelo
     };
   }, [live, project.id, url, token, env]);
 
+  // The page's last frame painted where the page is, then the view steps aside: stepped aside first, the stage showed
+  // nothing (a dark frame) between the two. A frame that never shows still lets the view step aside, after a second.
+  const frameImg = useRef<HTMLImageElement>(null);
   useEffect(() => {
     let current = true;
-    if (hidden) void live.cover(true).then((f) => { if (current && (covered || hold)) setFrame(f); });
-    else { setFrame(null); void live.cover(false); }
+    const twoFrames = (): Promise<void> => new Promise((done) => { requestAnimationFrame(() => requestAnimationFrame(() => done())); });
+    const painted = async (src: string): Promise<void> => {
+      for (let i = 0; i < 30 && current; i++) {
+        const img = frameImg.current;
+        if (img && img.getAttribute('src') === src && img.complete) { await img.decode().catch(() => {}); await twoFrames(); return; }
+        await twoFrames();
+      }
+    };
+    if (hidden) {
+      void live.cover('frame').then(async (f) => {
+        if (!current) return;
+        if (f && (covered || hold)) { setFrame(f); await painted(f); }
+        if (current) await live.cover(true);
+      }).catch(() => { if (current) void live.cover(true); });
+    } else { setFrame(null); void live.cover(false); }
     return () => { current = false; };
   }, [hidden, covered, hold, live]);
 
@@ -1519,7 +1535,7 @@ function LiveStage({ project, url, token, env, view, width, hold = false, onRelo
     <div className={`live-stage${width ? ' narrow' : ''}${compact ? ' compact' : ''}`} ref={stageRef} aria-label="The page" role="region" data-tour="live-canvas">
       {width ? <span className="live-device-size" aria-hidden="true">{width} px</span> : null}
       <div className={`live-device${view?.loading && !frame ? ' loading' : ''}`} ref={device} style={width ? { width } : undefined}>
-        {frame && !trouble ? <img className="live-frame" src={frame} alt="" /> : null}
+        {frame && !trouble ? <img className="live-frame" ref={frameImg} src={frame} alt="" /> : null}
       </div>
       {/* A hosted environment's failure is its own: never diagnosed with the local site's ddev status. */}
       {env && error ? <HostedProblem error={error} url={url} onReload={onReload} onEdit={onEdit} /> : null}
