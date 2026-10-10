@@ -351,6 +351,8 @@ export type LayerImplemented =
      * what the reloaded page shows: the new words, still the old ones, or not known.
      */
     said?: string; undo?: boolean; shows?: 'new' | 'old' | 'unknown';
+    /** The site adapter that saved them, when one did: which, its plugin's version, and whether that version is verified (docs/design/2026-10-10-site-adapters.md). */
+    adapter?: { id: string; name: string; version: string | null; status: 'ready' | 'unverified' };
   }
   | { ok: false; id: string; route: 'agent' | 'none'; why: string };
 

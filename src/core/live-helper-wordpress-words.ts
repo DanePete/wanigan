@@ -162,6 +162,13 @@ final class Wanigan_Live_Stored {
 		$cache = isset($place['cache']) ? $place['cache'] : self::CACHE;
 		$ask = !empty($place['site']) ? 'These words are kept in ' . $where . ', which every page that prints it shows, not this page alone.' : null;
 		$answer = array('ok' => true, 'step' => $step, 'place' => $id, 'hash' => $place['hash'], 'where' => $where, 'revisions' => (bool) $place['revisions'], 'writer' => $writer, 'cache' => $cache, 'ask' => $ask, 'revision' => null, 'undo' => null);
+		// A site adapter (Wanigan_Live_Adapter) saves only while everything it calls is there; which one, its plugin's
+		// version and whether that version is verified go with the answer.
+		if ($place['writer'] !== 'core' && class_exists('Wanigan_Live_Adapters') && is_subclass_of($place['writer'], 'Wanigan_Live_Adapter')) {
+			$state = Wanigan_Live_Adapters::status($place['writer']);
+			if ($state['status'] === 'broken') return self::refuse(409, 'refused', Wanigan_Live_Adapters::refusal($state));
+			$answer['adapter'] = array('id' => $state['id'], 'name' => $state['name'], 'version' => $state['version'], 'status' => $state['status']);
+		}
 		if ($step === 'find') return array($answer, 200);
 		// Saving: only the place found, only over the value as it was found, and a site-wide one only once asked.
 		$given = isset($body['place']) && is_string($body['place']) ? $body['place'] : '';

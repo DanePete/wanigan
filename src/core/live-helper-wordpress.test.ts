@@ -52,8 +52,12 @@ test('it hooks core, and names no plugin or theme outside the stored-words adapt
   const full = wordpressHelper(TOKEN);
   for (const a of adapters) assert.ok(full.includes(a));
   const src = adapters.reduce((s, a) => s.replace(a, ''), full);
-  for (const [a, name] of [[WORDPRESS_ELEMENTOR_SOURCE, 'Wanigan_Live_Elementor'], [WORDPRESS_ACF_SOURCE, 'Wanigan_Live_Acf'], [WORDPRESS_COPIES_SOURCE, 'Wanigan_Live_Copies']] as const) {
-    assert.match(a, new RegExp(`final class ${name} implements Wanigan_Live_Words_Adapter`));
+  for (const [a, name, shape] of [
+    [WORDPRESS_ELEMENTOR_SOURCE, 'Wanigan_Live_Adapter_Elementor', 'extends Wanigan_Live_Adapter implements Wanigan_Live_Words_Adapter'],
+    [WORDPRESS_ACF_SOURCE, 'Wanigan_Live_Acf', 'implements Wanigan_Live_Words_Adapter'],
+    [WORDPRESS_COPIES_SOURCE, 'Wanigan_Live_Copies', 'implements Wanigan_Live_Words_Adapter'],
+  ] as const) {
+    assert.match(a, new RegExp(`final class ${name} ${shape}`));
     assert.ok(!src.includes(name), `${name} is named only in its own file`);
   }
   // The seams the trace and the edits are built on, each from WordPress core.
@@ -64,6 +68,15 @@ test('it hooks core, and names no plugin or theme outside the stored-words adapt
   for (const name of ['elementor', 'acf', 'woocommerce', 'yoast', 'gravity', 'divi', 'astra', 'twentytwenty', 'rank-math', 'jetpack', 'akismet', 'mwai', 'alttext', 'openai', 'anthropic']) {
     assert.ok(!new RegExp(`\\b${name}`, 'i').test(src), name);
   }
+});
+
+test('each adapter calls its plugin only inside its own source', () => {
+  // Elementor's API is called only by its adapter, ACF's only by its: the known-copies list may name their data (it is
+  // the exclusion list, kept whether or not an adapter exists), never call them.
+  const others = (mine: string): string => [WORDPRESS_ELEMENTOR_SOURCE, WORDPRESS_ACF_SOURCE, WORDPRESS_COPIES_SOURCE].filter((a) => a !== mine).join('\n');
+  assert.ok(/\\Elementor\\Plugin::\$instance/.test(WORDPRESS_ELEMENTOR_SOURCE) && !/\\?Elementor\\/.test(others(WORDPRESS_ELEMENTOR_SOURCE)), 'Elementor’s classes');
+  assert.ok(/\bacf_update_value\(/.test(WORDPRESS_ACF_SOURCE) && !/\bacf_[a-z_]+\(/.test(others(WORDPRESS_ACF_SOURCE)), 'ACF’s functions');
+  assert.ok(!/\bFLBuilder|SiteOrigin_Panels|\\Bricks\\|aioseo\(/.test(others(WORDPRESS_COPIES_SOURCE)), 'the copies’ plugins are named only by the copies');
 });
 
 test('the site’s AI is read through core alone, and no key is ever read', () => {

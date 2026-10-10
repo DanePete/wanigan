@@ -11,13 +11,17 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { runWords, WORDPRESS_STAND_IN } from './live-helper-wordpress-words-harness.ts';
 
-const ELEMENTOR = String.raw`
+/**
+ * Elementor as its adapter reaches it, at a version: its Plugin, Documents_Manager, DB and Document classes under their
+ * own names (class_alias), ELEMENTOR_VERSION defined. With `broken`, its Document class has no save().
+ */
+const elementor = (version: string, broken = false): string => String.raw`
+define('ELEMENTOR_VERSION', '${version}');
 final class Wl_Elementor_Plugin { public static $instance; public $documents; public $db; }
 class_alias('Wl_Elementor_Plugin', 'Elementor\Plugin');
 final class Wl_Elementor_Css { public static $deleted = array(); private $id; public static function create($id) { $c = new self(); $c->id = $id; return $c; } public function delete() { self::$deleted[] = $this->id; } }
-class_alias('Wl_Elementor_Css', 'Elementor\Core\Files\CSS\Post');
 /** A document as Elementor's Core\Base\Document behaves for what the adapter calls. */
-final class Wl_Elementor_Document {
+class Wl_Elementor_Document {
   public $id;
   public static $autosave = array();
   public static $unloadable = array();
@@ -29,9 +33,12 @@ final class Wl_Elementor_Document {
   public function get_elements_data() { $m = get_post_meta($this->id, '_elementor_data', true); return is_string($m) && $m !== '' ? json_decode($m, true) : array(); }
   /** Elements it cannot load (a widget whose plugin is off) are dropped, as get_elements_raw_data() drops them. */
   public function get_elements_raw_data($data) { return self::loadable($data); }
-  private static function loadable($els) { $out = array(); foreach ($els as $e) { if (in_array($e['widgetType'] ?? '', self::$unloadable, true)) continue; $e['elements'] = self::loadable($e['elements'] ?? array()); $out[] = $e; } return $out; }
-  private static function plain($els) { $t = array(); foreach ($els as $e) { foreach (($e['settings'] ?? array()) as $v) if (is_string($v)) $t[] = strip_tags($v); $t[] = self::plain($e['elements'] ?? array()); } return trim(implode(' ', array_filter($t))); }
-  /** Document::save(): the data (wp_json_encode, slashed), its plain-text copy (a revision), its CSS file and element cache gone. */
+  public static function loadable($els) { $out = array(); foreach ($els as $e) { if (in_array($e['widgetType'] ?? '', self::$unloadable, true)) continue; $e['elements'] = self::loadable($e['elements'] ?? array()); $out[] = $e; } return $out; }
+  public static function plain($els) { $t = array(); foreach ($els as $e) { foreach (($e['settings'] ?? array()) as $v) if (is_string($v)) $t[] = strip_tags($v); $t[] = self::plain($e['elements'] ?? array()); } return trim(implode(' ', array_filter($t))); }
+  public function delete_meta($key) { foreach ($GLOBALS['wl']['meta'] as $mid => $r) if ($r[0] === $this->id && $r[1] === $key) unset($GLOBALS['wl']['meta'][$mid]); }
+}
+/** Document::save(): the data (wp_json_encode, slashed), its plain-text copy (a revision), its CSS file and element cache gone. */
+final class Wl_Elementor_Document_Saving extends Wl_Elementor_Document {
   public function save($data) {
     self::$saves[] = $this->id;
     $els = self::loadable($data['elements']);
@@ -41,13 +48,21 @@ final class Wl_Elementor_Document {
     $this->delete_meta('_elementor_element_cache');
     return true;
   }
-  public function delete_meta($key) { foreach ($GLOBALS['wl']['meta'] as $mid => $r) if ($r[0] === $this->id && $r[1] === $key) unset($GLOBALS['wl']['meta'][$mid]); }
 }
+class_alias(${broken ? "'Wl_Elementor_Document'" : "'Wl_Elementor_Document_Saving'"}, 'Elementor\Core\Base\Document');
+final class Wl_Elementor_Documents { public $log = array(); public function get($id) { return get_post($id) ? new Wl_Elementor_Document_Saving((int) $id) : false; } public function switch_to_document($d) { $this->log[] = 'document ' . $d->id; } public function restore_document() { $this->log[] = 'document restored'; } }
+class_alias('Wl_Elementor_Documents', 'Elementor\Core\Documents_Manager');
+final class Wl_Elementor_DB { public $log = array(); public function switch_to_post($id) { $this->log[] = 'post ' . $id; } public function restore_current_post() { $this->log[] = 'post restored'; } }
+class_alias('Wl_Elementor_DB', 'Elementor\DB');
 Wl_Elementor_Plugin::$instance = new Wl_Elementor_Plugin();
-Wl_Elementor_Plugin::$instance->documents = new class { public $log = array(); public function get($id) { return get_post($id) ? new Wl_Elementor_Document((int) $id) : false; } public function switch_to_document($d) { $this->log[] = 'document ' . $d->id; } public function restore_document() { $this->log[] = 'document restored'; } };
-Wl_Elementor_Plugin::$instance->db = new class { public $log = array(); public function switch_to_post($id) { $this->log[] = 'post ' . $id; } public function restore_current_post() { $this->log[] = 'post restored'; } };
+Wl_Elementor_Plugin::$instance->documents = new Wl_Elementor_Documents();
+Wl_Elementor_Plugin::$instance->db = new Wl_Elementor_DB();
 
-/** A page Elementor builds: its tree, its plain-text copy as the stored content, its element cache. */
+`;
+
+/** A page Elementor builds: its tree, its plain-text copy as the stored content, its element cache (no Elementor code). */
+const ELEMENTOR_PAGE = String.raw`
+
 function wl_elementor_page(array $elements) {
   wl_page(array('post_content' => 'a plain-text copy: Paddle the north — safely Rent a canoe & go. Book now Book now'));
   add_meta_row(12, '_elementor_edit_mode', 'builder');
@@ -108,12 +123,14 @@ const ELEMENTOR_SCENARIOS = String.raw`
 `;
 
 test('Elementor: words are found in the elements tree it renders, never its copies, and saved through its own Document::save(), caches cleared; undo saves the old tree the same way', (t) => {
-  const out = runWords(t, ELEMENTOR_SCENARIOS, WORDPRESS_STAND_IN, ELEMENTOR);
+  const out = runWords(t, ELEMENTOR_SCENARIOS, WORDPRESS_STAND_IN, elementor('4.3.4') + ELEMENTOR_PAGE);
   if (!out) return;
-  type A = [{ ok: boolean; error?: string; reason?: string; where?: string; writer?: string; revision?: string | null; undo?: string; ask?: string | null; place?: string; hash?: string; cache?: string }, number];
+  type A = [{ ok: boolean; error?: string; reason?: string; where?: string; writer?: string; revision?: string | null; undo?: string; ask?: string | null; place?: string; hash?: string; cache?: string; adapter?: unknown }, number];
   const [find] = out.find as A;
   assert.equal(find.where, 'the Elementor page “Northwind trips” (its heading widget)', 'one place: not the plain-text copy, not the element cache');
   assert.equal(find.writer, 'Elementor');
+  assert.deepEqual(find.adapter, { id: 'elementor', name: 'Elementor', version: '4.3.4', status: 'ready' }, 'the site adapter, its version and that it is verified');
+  assert.deepEqual((out.save as A)[0].adapter, { id: 'elementor', name: 'Elementor', version: '4.3.4', status: 'ready' });
   assert.match(find.cache ?? '', /Elementor’s own save cleared its CSS file and element cache/);
   const [save] = out.save as A;
   assert.deepEqual([save.ok, save.revision], [true, '900'], 'Elementor’s plain-text copy is a revision');
@@ -140,12 +157,34 @@ test('Elementor: words are found in the elements tree it renders, never its copi
 test('without Elementor loaded, the page shows its stored content, and Elementor’s own data and cache are left out', (t) => {
   const out = runWords(t, String.raw`
     $raw = wl_elementor_page($tree);
-    Wl_Elementor_Plugin::$instance = null;
     $out['find'] = wl_ask('find', 'Paddle the north — safely', 'Paddle on');
-  `, WORDPRESS_STAND_IN, ELEMENTOR);
+  `, WORDPRESS_STAND_IN, ELEMENTOR_PAGE);
   if (!out) return;
   const [find, status] = out.find as [{ ok: boolean; where: string }, number];
   assert.deepEqual([status, find.ok, find.where], [200, true, 'this page’s stored content'], 'not _elementor_data, not its element cache');
+});
+
+test('Elementor on the site-adapter base: a newer version saves and says it is not yet verified; a missing call refuses every save by name', (t) => {
+  const page = String.raw`
+    $raw = wl_elementor_page($tree);
+    $out['state'] = Wanigan_Live_Adapters::status('Wanigan_Live_Adapter_Elementor');
+    $out['save'] = wl_save('Paddle the north — safely', 'Paddle on');
+    $out['data'] = wl_data(12) === $raw;
+    $out['content'] = get_post(12)->post_content;
+  `;
+  const newer = runWords(t, page, WORDPRESS_STAND_IN, elementor('4.4.0') + ELEMENTOR_PAGE);
+  if (!newer) return;
+  type A = [{ ok: boolean; error?: string; reason?: string; where?: string; adapter?: unknown }, number];
+  assert.deepEqual((newer.state as { status: string }).status, 'unverified');
+  assert.equal((newer.save as A)[0].ok, true, 'saves run on a version not yet verified');
+  assert.deepEqual((newer.save as A)[0].adapter, { id: 'elementor', name: 'Elementor', version: '4.4.0', status: 'unverified' });
+  const broken = runWords(t, page, WORDPRESS_STAND_IN, elementor('5.0.0', true) + ELEMENTOR_PAGE);
+  if (!broken) return;
+  assert.deepEqual([(broken.state as { status: string; missing: string }).status, (broken.state as { missing: string }).missing], ['broken', 'method:Elementor\\Core\\Base\\Document::save']);
+  const [refused, status] = broken.save as A;
+  assert.equal(status, 409);
+  assert.equal(refused.error, 'Elementor 5.0.0 no longer has Elementor\\Core\\Base\\Document::save, which Wanigan saves Elementor words through. Nothing was saved: update the helper when a Wanigan release supports this version.', 'the base’s refusal, as it says it');
+  assert.deepEqual([broken.data, broken.content], [true, 'a plain-text copy: Paddle the north — safely Rent a canoe & go. Book now Book now'], 'neither its data nor its plain-text copy was touched');
 });
 
 const ACF = String.raw`

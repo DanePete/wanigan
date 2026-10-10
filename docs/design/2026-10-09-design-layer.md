@@ -512,7 +512,10 @@ or the project.
      refused until its save goes through the page that holds it. Adapters for
      plugins that keep words their own way register with the WordPress search,
      each in its own class, used only when the plugin is active, never needed
-     by the core path: Elementor (its elements tree, `Document::save()`, its
+     by the core path: Elementor, a site adapter on the shared base
+     (docs/design/2026-10-10-site-adapters.md: what it calls is declared and
+     checked, a missing call refuses by name, a version past the verified
+     range saves and says so) (its elements tree, `Document::save()`, its
      caches and revisions; a template the page shows found through its
      `data-elementor-id` marks and asked first), ACF (fields, sub-field rows,
      blocks and options through `acf_update_value()` after

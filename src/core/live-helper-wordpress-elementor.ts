@@ -29,14 +29,60 @@
 const SOURCE = String.raw`
 /**
  * Elementor's documents: words searched in the elements tree Elementor renders from, and saved through its own
- * Document::save() (Wanigan's src/core/live-helper-wordpress-elementor.ts says what was read where).
+ * Document::save() (Wanigan's src/core/live-helper-wordpress-elementor.ts says what was read where). A site adapter on
+ * the shared base (Wanigan_Live_Adapter): what it calls is declared in requires(), checked where it runs and by the
+ * compatibility watch against every Elementor release; a missing call refuses every save by name.
  */
-final class Wanigan_Live_Elementor implements Wanigan_Live_Words_Adapter {
+final class Wanigan_Live_Adapter_Elementor extends Wanigan_Live_Adapter implements Wanigan_Live_Words_Adapter {
 	const DATA = '_elementor_data';
-	const CACHE = '_elementor_element_cache';
+	const MODE = '_elementor_edit_mode';
+
+	public static function id(): string {
+		return 'elementor';
+	}
+
+	public static function extension(): array {
+		$version = defined('ELEMENTOR_VERSION') ? (string) constant('ELEMENTOR_VERSION') : null;
+		return array('name' => 'Elementor', 'active' => $version !== null && class_exists('\Elementor\Plugin'), 'version' => $version);
+	}
+
+	/** Everything this adapter calls or relies on, for the check where it runs and the weekly watch. */
+	public static function requires(): array {
+		return array(
+			'constant:ELEMENTOR_VERSION',
+			'class:Elementor\Plugin',
+			'class:Elementor\Core\Documents_Manager',
+			'method:Elementor\Core\Documents_Manager::get',
+			'method:Elementor\Core\Documents_Manager::switch_to_document',
+			'method:Elementor\Core\Documents_Manager::restore_document',
+			'class:Elementor\DB',
+			'method:Elementor\DB::switch_to_post',
+			'method:Elementor\DB::restore_current_post',
+			'class:Elementor\Core\Base\Document',
+			'method:Elementor\Core\Base\Document::is_built_with_elementor',
+			'method:Elementor\Core\Base\Document::is_editable_by_current_user',
+			'method:Elementor\Core\Base\Document::get_newer_autosave',
+			'method:Elementor\Core\Base\Document::get_elements_data',
+			'method:Elementor\Core\Base\Document::get_elements_raw_data',
+			'method:Elementor\Core\Base\Document::save',
+			// Its element cache, switched off for the live view's own requests (Document::print_elements() reads it).
+			'hook:pre_option_elementor_element_cache_ttl',
+			'option:elementor_element_cache_ttl',
+			// Its tree, whether a post is built with it (read directly only to refuse by name when it is broken), and the
+			// rendered-element cache its save clears.
+			'meta:_elementor_data',
+			'meta:_elementor_edit_mode',
+			'meta:_elementor_element_cache',
+		);
+	}
+
+	public static function verified(): array {
+		return array('from' => '4.3.4', 'through' => '4.3.4');
+	}
 
 	public static function active(): bool {
-		return class_exists('\Elementor\Plugin') && isset(\Elementor\Plugin::$instance) && is_object(\Elementor\Plugin::$instance) && isset(\Elementor\Plugin::$instance->documents);
+		$ext = self::extension();
+		return !empty($ext['active']);
 	}
 
 	public static function name(): string {
@@ -85,6 +131,18 @@ final class Wanigan_Live_Elementor implements Wanigan_Live_Words_Adapter {
 	}
 
 	public static function places(WP_Post $post, string $want, array $hints, string $noun): ?array {
+		$state = Wanigan_Live_Adapters::status(self::class);
+		if ($state['status'] === 'broken') {
+			// Elementor is here, but something this adapter saves through is not: its pages are still its own (the stored
+			// content is its plain-text copy), so the words are found in its tree, read only, and the save refuses them by
+			// name (Wanigan_Live_Stored asks the adapter's status before it answers).
+			if (!get_post_meta($post->ID, self::MODE, true)) return null;
+			$raw = (string) get_post_meta($post->ID, self::DATA, true);
+			$tree = json_decode($raw, true);
+			$hits = is_array($tree) ? self::hits($tree, $want, array()) : array();
+			$places = $hits ? array(array('root' => 'elementor:' . $post->ID, 'post' => $post->ID, 'label' => 'the Elementor ' . $noun . ' “' . trim((string) $post->post_title) . '”', 'raw' => $raw, 'hash' => md5($raw), 'hits' => $hits, 'writer' => self::class, 'revisions' => false, 'site' => false)) : array();
+			return array('places' => $places, 'content' => true, 'meta' => array('_elementor_'));
+		}
 		$own = self::document($post->ID);
 		$ids = $own ? array($post->ID) : array();
 		$hint = isset($hints['elementor']) ? $hints['elementor'] : null;
@@ -103,11 +161,11 @@ final class Wanigan_Live_Elementor implements Wanigan_Live_Words_Adapter {
 			$hits = self::hits($elements, $want, array());
 			if (!$hits) continue;
 			$raw = (string) get_post_meta($id, self::DATA, true);
-			$title = $theirs ? trim((string) $theirs->post_title) : '';
-			$kind = $id === $post->ID ? $noun : ($theirs && $theirs->post_type === 'elementor_library' ? 'template' : Wanigan_Live_Stored::noun($theirs));
+			$title = trim((string) $theirs->post_title);
+			$kind = $id === $post->ID ? $noun : ($theirs->post_type === 'elementor_library' ? 'template' : Wanigan_Live_Stored::noun($theirs));
 			$places[] = array(
 				'root' => 'elementor:' . $id, 'post' => $id, 'label' => 'the Elementor ' . $kind . ($title !== '' ? ' “' . $title . '”' : ''), 'raw' => $raw, 'hash' => md5($raw),
-				'hits' => $hits, 'writer' => self::class, 'revisions' => $theirs && function_exists('wp_revisions_enabled') && wp_revisions_enabled($theirs), 'site' => $id !== $post->ID,
+				'hits' => $hits, 'writer' => self::class, 'revisions' => function_exists('wp_revisions_enabled') && wp_revisions_enabled($theirs), 'site' => $id !== $post->ID,
 				'cache' => 'Elementor’s own save cleared its CSS file and element cache for it; a page cache in front of the site can still serve the old page.',
 			);
 		}
@@ -129,6 +187,8 @@ final class Wanigan_Live_Elementor implements Wanigan_Live_Words_Adapter {
 	}
 
 	public static function write(array $place, array $hit, string $after, WP_Post $post) {
+		$state = Wanigan_Live_Adapters::status(self::class);
+		if ($state['status'] === 'broken') return new WP_Error('wanigan', Wanigan_Live_Adapters::refusal($state));
 		$id = (int) $place['post'];
 		$doc = self::document($id);
 		if (!$doc) return new WP_Error('wanigan', 'Elementor no longer builds this, so nothing is saved.');
@@ -166,6 +226,8 @@ final class Wanigan_Live_Elementor implements Wanigan_Live_Words_Adapter {
 	}
 
 	public static function undo(array $u) {
+		$state = Wanigan_Live_Adapters::status(self::class);
+		if ($state['status'] === 'broken') return new WP_Error('wanigan', Wanigan_Live_Adapters::refusal($state));
 		$id = (int) $u['post'];
 		$doc = self::document($id);
 		if (!$doc || !$doc->is_editable_by_current_user()) return new WP_Error('wanigan', 'Elementor says the user you are logged in as may not edit this.');
@@ -190,7 +252,7 @@ final class Wanigan_Live_Elementor implements Wanigan_Live_Words_Adapter {
 		return array('revision' => $after && $after !== $before ? $after : null);
 	}
 }
-Wanigan_Live_Stored::adapt('Wanigan_Live_Elementor');
+Wanigan_Live_Stored::adapt('Wanigan_Live_Adapter_Elementor');
 // For the live view's own requests only, Elementor renders every element afresh rather than from its element cache
 // (Document::print_elements() reads elementor_element_cache_ttl, and "disable" skips the cache): on a cache hit no
 // element is rendered, so the trace would see none of them, and a page read back after a save could show the old ones.

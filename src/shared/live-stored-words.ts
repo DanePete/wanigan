@@ -59,8 +59,13 @@ export type StoredWordsAnswer =
     /** `save`: the revision the site made, when it made one, and the token that puts the old value back. */
     revision: string | null;
     undo: string | null;
+    /** A site adapter that saves it (docs/design/2026-10-10-site-adapters.md): which, its plugin's version, and whether that version is verified. */
+    adapter?: StoredAdapter;
   }
   | { ok: false; error: string; reason: StoredRefusal; status: number };
+
+/** A site adapter as an answer names it. 'broken' never saves, so an answer that saved says 'ready' or 'unverified'. */
+export interface StoredAdapter { id: string; name: string; version: string | null; status: 'ready' | 'unverified' }
 
 export type StoredUndone = { ok: true; revision: string | null } | { ok: false; error: string };
 
@@ -81,9 +86,13 @@ export function parseStoredAnswer(raw: unknown, status: number): StoredWordsAnsw
     if (step && place && PLACE.test(place) && hash && HASH.test(hash) && where) {
       const revision = typeof a.revision === 'string' || typeof a.revision === 'number' ? String(a.revision).slice(0, 100) : null;
       const undo = typeof a.undo === 'string' && TOKEN.test(a.undo) ? a.undo : null;
+      const ad = a.adapter && typeof a.adapter === 'object' && !Array.isArray(a.adapter) ? a.adapter as Record<string, unknown> : null;
+      const adapter: StoredAdapter | null = ad && typeof ad.id === 'string' && /^[a-z][a-z0-9_-]{0,40}$/.test(ad.id) && typeof ad.name === 'string' && ad.name.length <= 80
+        && (ad.status === 'ready' || ad.status === 'unverified') && (ad.version === null || (typeof ad.version === 'string' && ad.version.length <= 40))
+        ? { id: ad.id, name: ad.name, version: ad.version as string | null, status: ad.status } : null;
       return {
         ok: true, step, place, hash, where, revisions: a.revisions === true, writer: text(a.writer, 80) ?? 'core',
-        cache: text(a.cache, 600), ask: text(a.ask, 800), revision: revision && revision !== '' ? revision : null, undo,
+        cache: text(a.cache, 600), ask: text(a.ask, 800), revision: revision && revision !== '' ? revision : null, undo, ...(adapter ? { adapter } : {}),
       };
     }
   }

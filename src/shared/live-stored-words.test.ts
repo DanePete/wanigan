@@ -20,6 +20,10 @@ test('a helper’s answer is read strictly: a place and its hash, or a refusal w
     assert.equal(parseStoredAnswer(bad, 200).ok, false, JSON.stringify(bad));
   }
   assert.equal((parseStoredAnswer({ ok: true, step: 'save', place: 'p', hash: HASH, where: 'x', undo: 'not-a-token' }, 200) as { undo: string | null }).undo, null, 'an undo token is the helpers’ own shape or none');
+  const adapted = parseStoredAnswer({ ok: true, step: 'save', place: 'elementor:12#0123456789abcdef', hash: HASH, where: 'the Elementor page “Northwind trips”', writer: 'Elementor', adapter: { id: 'elementor', name: 'Elementor', version: '4.4.0', status: 'unverified' } }, 200);
+  assert.deepEqual(adapted.ok && adapted.adapter, { id: 'elementor', name: 'Elementor', version: '4.4.0', status: 'unverified' }, 'the site adapter that saved it');
+  const notSaved = parseStoredAnswer({ ok: true, step: 'save', place: 'elementor:12#0123456789abcdef', hash: HASH, where: 'x', adapter: { id: 'elementor', name: 'Elementor', version: '5.0', status: 'broken' } }, 200);
+  assert.equal(notSaved.ok && 'adapter' in notSaved, false, 'a broken adapter never saved, so it is not read as one that did');
   assert.deepEqual(parseStoredUndone({ ok: true, revision: 902 }, 200), { ok: true, revision: '902' });
   assert.deepEqual(parseStoredUndone({ ok: false, error: 'It changed again since.' }, 409), { ok: false, error: 'It changed again since.' });
   assert.deepEqual(parseStoredUndone('?', 500), { ok: false, error: 'The site did not put it back (it answered 500).' });

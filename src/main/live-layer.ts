@@ -1232,7 +1232,7 @@ export function wireLiveLayer(options: LiveLayerOptions): { hooks: LiveViewHooks
       const shows = await readBack(here.cur.webContents, id, value, words);
       const said = storedSaid(saved, shows);
       if (refused) return { done: none(`${inSiteUnmarked(saved.revision, refused)} ${said}`) };
-      return { done: { ok: true, id, state: 'implemented', revision: saved.revision, said, undo: saved.undo !== null, shows } };
+      return { done: { ok: true, id, state: 'implemented', revision: saved.revision, said, undo: saved.undo !== null, shows, ...(saved.adapter ? { adapter: saved.adapter } : {}) } };
     };
     if (typeof at.field === 'string') {
       // A text field the helper marked around the words (Drupal): exactly the field, translation and item the edit's
