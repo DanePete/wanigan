@@ -106,6 +106,7 @@ import {
   widestNoise, zonesOf,
   type Bitmap, type ElementSnap, type PageSnap, type PixelArea, type PixelDiff, type RenderMask, type Steady, type WidthFindings, type Zone,
 } from '../shared/layer-verify.ts';
+import type { LiveCompareShot, LiveKeptPage } from '../shared/bridge.ts';
 import type { LiveEditSaved, LiveTraceAnswer } from '../shared/live-lens.ts';
 import { storedContentOf, type StoredContent, type StoredUndone, type StoredWordsAnswer, type StoredWordsAsk } from '../shared/live-stored-words.ts';
 import { fragileWhy, kindWords } from '../shared/layer-words.ts';
@@ -132,6 +133,8 @@ export const VERIFY_MAX_HEIGHT = 6_000;
 /** Words the helper's save takes, before and after (live-view.ts cuts them there). */
 const SAVE_MAX = 2_000;
 const EDIT_ID = /^[a-z0-9][a-z0-9-]{0,63}$/;
+/** Pages kept by hand for Compare's Before, per page: the oldest is let go past this. */
+const KEPT_PAGES = 6;
 
 /** A call into the page script, its arguments as JSON. */
 const call = (name: string, ...args: unknown[]): string =>
@@ -1346,17 +1349,13 @@ export function wireLiveLayer(options: LiveLayerOptions): { hooks: LiveViewHooks
   };
 
   /**
-   * Render the page an edit is on without the layer, then with the edit as designed on it, at the verification widths,
-   * through the same hidden render a verification uses, held at one time and seed, and keep both pictures with the
-   * edit's touched elements and masks under its folder (before/). Step 3 compares the result with it later. Kept
-   * fresh each time for words (the save follows at once); once only for an edit handed to an agent, whose change
-   * comes later, so asking again never takes a page that already has it. A render that fails is kept as why, and the
-   * edit is made real all the same: its step 3 will say it could not run.
-   */
-  /**
-   * The page as it is now, kept for step 3, once for the edit's card: rendered with every draft of that element as
-   * designed on it (its words and its styles together, as Make it real makes them real together), and kept under each
-   * of them, so the card has one page from before. `fresh` keeps it again even where one was kept.
+   * Render the page an edit is on without the layer, then with its card as designed on it (every draft of that element:
+   * its words and its styles, as Make it real makes them real together), at the verification widths, through the same
+   * hidden render a verification uses, held at one time and seed, and keep both pictures with the touched elements and
+   * masks under each of the card's edits (before/), so the card has one page from before. Step 3 compares the result
+   * with it later. Kept fresh each time for words (the save follows at once; `fresh`); once only for an edit handed to
+   * an agent, whose change comes later, so asking again never takes a page that already has it. A render that fails is
+   * kept as why, and the edit is made real all the same: its step 3 will say it could not run.
    */
   const keepBefore = (projectId: string, edit: LayerEdit, all: readonly LayerEdit[], fresh: boolean): Promise<void> => inTurn(async () => {
     if (!fresh && readKept(projectId, edit.id)) return;
@@ -1848,6 +1847,104 @@ export function wireLiveLayer(options: LiveLayerOptions): { hooks: LiveViewHooks
   };
   const verify = (raw: unknown, rawOptions: unknown): Promise<LayerVerdict> => inTurn(() => verifyNow(raw, rawOptions));
 
+  /**
+   * Compare's Before (Dane, 10 October 2026: a site being built, or one with only a dev copy, has no hosted
+   * environment to compare with; what it wants is the page as it was). The pictures Wanigan keeps of a page on this
+   * site: each card's page from before (kept when it was made real) and the pages kept by hand ("Keep this page as it
+   * is"), newest first. Each is compared with the page as it renders now, through the same hidden render and held at
+   * the same time and seed, so the two differ only where the site does.
+   */
+  const pagesDir = (projectId: string): string => join(root, folderOf(projectId), 'pages');
+  const keptPages = async (): Promise<LiveKeptPage[]> => {
+    const here = shown();
+    if (!here) return [];
+    const out: LiveKeptPage[] = [];
+    const seen = new Set<number>();
+    for (const e of (await snapshotOf(here.cur.projectId)).edits) {
+      if (!madeOn(e, here.path)) continue;
+      const k = readKept(here.cur.projectId, e.id);
+      const widths = k ? VERIFY_WIDTHS.filter((w) => existsSync(join(editDir(here.cur.projectId, e.id), 'before', `${w}-page.png`))) : [];
+      if (!k || !widths.length || seen.has(k.at)) continue;
+      seen.add(k.at);
+      out.push({ id: `edit:${e.id}`, at: k.at, why: 'made-real', label: e.label, widths });
+    }
+    for (const id of existsSync(pagesDir(here.cur.projectId)) ? readdirSync(pagesDir(here.cur.projectId)) : []) {
+      const meta = readKeptPage(here.cur.projectId, id);
+      if (meta && madeOn({ page: meta.page }, here.path)) out.push({ id: `page:${id}`, at: meta.at, why: 'kept', label: null, widths: meta.widths });
+    }
+    return out.sort((a, b) => b.at - a.at).slice(0, 12);
+  };
+  const readKeptPage = (projectId: string, id: string): { at: number; page: string; hold: Hold; widths: number[] } | null => {
+    if (!/^p-\d{1,16}$/.test(id)) return null;
+    try {
+      const m = JSON.parse(readFileSync(join(pagesDir(projectId), id, 'meta.json'), 'utf8')) as { at?: unknown; page?: unknown; hold?: { t?: unknown; s?: unknown }; widths?: unknown };
+      const widths = Array.isArray(m.widths) ? m.widths.filter((w): w is number => (VERIFY_WIDTHS as readonly number[]).includes(w as number)) : [];
+      if (typeof m.at !== 'number' || typeof m.page !== 'string' || typeof m.hold?.t !== 'number' || typeof m.hold?.s !== 'number' || !widths.length) return null;
+      return { at: m.at, page: m.page, hold: { t: m.hold.t, s: m.hold.s }, widths };
+    } catch { return null; }
+  };
+  /** The page shown, as the site renders it without the layer, at a width: what Before is compared with, and what Keep keeps. */
+  const pageNow = async (projectId: string, path: string, width: number, hold: Hold): Promise<{ png: Buffer } | { error: string }> => {
+    const site = await core<LiveSite>('live.site', { projectId });
+    if (!site.url || !site.token) return { error: 'The site helper is not installed: Wanigan renders the page through it.' };
+    const url = new URL(path, new URL(site.url).origin).toString();
+    if (!sameSite(site.url, url)) return { error: 'That page is not on this site.' };
+    const partition = options.partition(projectId, site.url, site.token);
+    const limit = options.renderMs ?? RENDER_MS + 60_000;
+    const got = await deadline<LayerRendered | { error: string }>(
+      render({ projectId, partition, url, base: site.url, token: site.token, width, path, edits: [], log: (await snapshotOf(projectId)).edits, design: false, hold }), limit,
+      () => ({ error: `The page did not render at ${width} px in time.` }),
+    ).catch((error: unknown) => ({ error: error instanceof Error ? error.message : String(error) }));
+    return 'error' in got ? got : { png: got.png };
+  };
+  const shotOf = (png: Buffer, url: string): LiveCompareShot => {
+    // A PNG's size is in its header: width and height, four bytes each, from byte 16. One device pixel per CSS pixel.
+    if (png.length < 24 || png.readUInt32BE(0) !== 0x89504e47) return { error: 'That picture of the page could not be read.' };
+    const width = png.readUInt32BE(16), height = png.readUInt32BE(20);
+    return { data: png.toString('base64'), width, height, cssWidth: width, cssHeight: height, cut: height >= VERIFY_MAX_HEIGHT, url, status: 200, regions: [] };
+  };
+  const keptShot = (raw: unknown, rawWidth: unknown): Promise<{ before: LiveCompareShot; now: LiveCompareShot } | { error: string }> => inTurn(async () => {
+    const here = shown();
+    if (!here) return { error: 'The live view shows no page of the local site.' };
+    const width = VERIFY_WIDTHS.find((w) => w === rawWidth);
+    if (!width) return { error: `Pages are kept at ${VERIFY_WIDTHS.join(' and ')} px.` };
+    const [kind, id] = typeof raw === 'string' ? raw.split(':') : [];
+    let file: string | null = null, hold: Hold | null = null;
+    if (kind === 'edit' && id && EDIT_ID.test(id)) {
+      const k = readKept(here.cur.projectId, id);
+      if (k && madeOn({ page: k.page }, here.path)) { file = join(editDir(here.cur.projectId, id), 'before', `${width}-page.png`); hold = k.hold; }
+    } else if (kind === 'page' && id) {
+      const m = readKeptPage(here.cur.projectId, id);
+      if (m && madeOn({ page: m.page }, here.path)) { file = join(pagesDir(here.cur.projectId), id, `${width}-page.png`); hold = m.hold; }
+    }
+    if (!file || !hold || !existsSync(file)) return { error: 'That picture of the page is not kept any more.' };
+    const now = await pageNow(here.cur.projectId, here.path, width, hold);
+    if ('error' in now) return now;
+    return { before: shotOf(readFileSync(file), here.url), now: shotOf(now.png, here.url) };
+  });
+  /** Keep this page as it is: rendered now at the kept widths, a few kept per page, the oldest let go. */
+  const keepPage = (): Promise<LiveKeptPage | { error: string }> => inTurn(async () => {
+    const here = shown();
+    if (!here) return { error: 'The live view shows no page of the local site.' };
+    const at = clock();
+    const hold: Hold = { t: Math.floor(at / 1_000), s: seed() };
+    const id = `p-${at}`;
+    const dir = join(pagesDir(here.cur.projectId), id);
+    const widths: number[] = [];
+    for (const width of VERIFY_WIDTHS) {
+      const now = await pageNow(here.cur.projectId, here.path, width, hold);
+      if ('error' in now) { rmSync(dir, { recursive: true, force: true }); return now; }
+      mkdirSync(dir, { recursive: true, mode: 0o700 });
+      writeFileSync(join(dir, `${width}-page.png`), now.png, { mode: 0o600 });
+      widths.push(width);
+    }
+    writeFileSync(join(dir, 'meta.json'), JSON.stringify({ at, page: here.path, hold, widths }), { mode: 0o600 });
+    const mine = readdirSync(pagesDir(here.cur.projectId)).map((x) => ({ x, m: readKeptPage(here.cur.projectId, x) }))
+      .filter((k) => k.m && madeOn({ page: k.m.page }, here.path)).sort((a, b) => (b.m as { at: number }).at - (a.m as { at: number }).at);
+    for (const old of mine.slice(KEPT_PAGES)) rmSync(join(pagesDir(here.cur.projectId), old.x), { recursive: true, force: true });
+    return { id: `page:${id}`, at, why: 'kept', label: null, widths };
+  });
+
   /** A kept picture as base64, only from under live-layer/ in the data folder, and only a PNG. */
   const picture = (raw: unknown): string | null => {
     if (typeof raw !== 'string' || !raw.endsWith('.png') || raw.length > 2_000) return null;
@@ -1896,6 +1993,9 @@ export function wireLiveLayer(options: LiveLayerOptions): { hooks: LiveViewHooks
     return verify(raw, rawOptions);
   });
   ipc.handle('live:layerPicture', async (event, raw: unknown) => (options.trusted(event) ? picture(raw) : null));
+  ipc.handle('live:layerKept', async (event): Promise<LiveKeptPage[]> => (ok(event) ? keptPages() : []));
+  ipc.handle('live:layerKeptShot', async (event, raw: unknown, width: unknown) => (ok(event) ? keptShot(raw, width) : { error: 'The live view is off.' }));
+  ipc.handle('live:layerKeep', async (event) => (ok(event) ? keepPage() : { error: 'The live view is off.' }));
   ipc.handle('live:layerUndo', async (event, raw: unknown): Promise<LayerUndone> => (ok(event)
     ? undoStored(raw) : { ok: false, id: typeof raw === 'string' ? raw.slice(0, 64) : '', why: 'The live view is off.' }));
 

@@ -27,7 +27,7 @@
 import { createHash } from 'node:crypto';
 import type { BrowserWindowConstructorOptions, Debugger, WebContents } from 'electron';
 import { sameSite } from '../shared/live.ts';
-import { SITE_MESSAGES_CSS } from '../shared/live-admin.ts';
+import { ADMIN_CSS, SITE_MESSAGES_CSS, adminSwitch } from '../shared/live-admin.ts';
 
 /** Everything moving stopped, so a picture is the same each time it is taken. */
 export const STILL_CSS = '*,*::before,*::after{animation:none!important;transition:none!important;caret-color:transparent!important;scroll-behavior:auto!important}';
@@ -304,6 +304,11 @@ export async function inHiddenWindow<T>(o: HiddenOptions, during: (page: HiddenP
     if (!loaded) return { error: `${o.what} did not load within ${LOAD_MS / 1000} seconds.` };
     // The site's own status messages come and go between renders: never in a picture or a comparison (live-admin.ts).
     await within('its messages were hidden', () => wc.insertCSS(SITE_MESSAGES_CSS, { cssOrigin: 'user' }));
+    // And the admin bars a logged-in render draws (Drupal's Navigation and Toolbar, WordPress's bar), as the view's
+    // switch hides them, in every render alike: the page as a visitor sees it, in Verify's pictures and Compare's
+    // Before too, and never a bar that comes and goes between two renders compared.
+    await within('its admin bars were hidden', () => wc.insertCSS(ADMIN_CSS, { cssOrigin: 'user' }));
+    await read(adminSwitch(true), false, 4_244);
     if (o.network) {
       try {
         const tree = await command('Page.getFrameTree') as { frameTree?: { frame?: { id?: string } } };

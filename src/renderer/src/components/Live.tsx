@@ -287,7 +287,7 @@ const fileName = (path: string): string => path.split('/').pop() ?? path;
 function bannerText(n: Banner): string {
   switch (n.kind) {
     case 'outlined': return `${n.file} changed: ${n.count === 1 ? 'outlined the part' : `outlined the ${n.count} parts`} of this page it makes.`;
-    case 'not-here': return `${n.file} changed, and nothing on this page says it came from it. Reloaded anyway.`;
+    case 'not-here': return `${n.file} changed: reloaded. No part of this page names it as its source, so nothing is outlined.`;
     case 'elsewhere': return `${n.file} changed in another checkout, which this site is not serving. Nothing reloaded.`;
     case 'waiting': return `${n.file} changed. Reload to see it (following the agents’ edits is off in Settings).`;
     case 'reloaded': return 'A turn ended without editing a file: reloaded, in case it changed content.';
@@ -824,13 +824,13 @@ function LiveShown({ site, url, project, follow, card, compact, following, shots
     { id: 'devtools', label: 'DevTools', hint: 'The page’s own DevTools: elements, console, network, sources, application, performance' },
   ];
   const cms = site.platform === 'wordpress' ? 'WordPress' : 'Drupal';
+  // With a hosted environment, Compare is with it; with none (a site being built, or with only a dev copy), with
+  // Before: a picture Wanigan kept of the page on this site, which needs only the site helper.
   const compare = envs.length
     ? { can: !view?.loading, why: 'Wait for the page to load', with: env?.name ?? envs[envs.length - 1]?.name ?? null }
-    : {
-      can: false, with: null,
-      why: envData?.candidates.length ? `${envData.candidates.length} hosted environments are named in the project’s files: keep one in Site settings to compare with it`
-        : 'Add a hosted environment (Dev, Test, Live) in Site settings to compare with it',
-    };
+    : site.helper && site.token
+      ? { can: !view?.loading && !env, why: 'Wait for the page to load', with: 'Before' }
+      : { can: false, with: null, why: 'Compare with how the page was needs the site helper: set it up from the Live tab' };
   const openCompare = (): void => {
     if (compare.can) setComparing(true); else toast(`${compare.why}.`);
   };
@@ -1015,7 +1015,7 @@ function LiveShown({ site, url, project, follow, card, compact, following, shots
   } : picking ? {
     className: 'live-picking', icon: 'pick', text: 'Selecting: point at a part, or walk with the arrows and press Enter',
     action: <Button size="s" tone="quiet" keys={LIVE_TIP.stop} onClick={() => void live.cancelPick()}>Stop</Button>,
-  } : comparing && envs.length ? {
+  } : comparing ? {
     className: 'live-comparing', icon: 'compare', text: 'Comparing: the page waits under it as it was',
     action: <Button size="s" tone="quiet" icon="back" onClick={() => setComparing(false)}>Back to the page</Button>,
   } : alone ? {
@@ -1182,7 +1182,7 @@ function LiveShown({ site, url, project, follow, card, compact, following, shots
             <EditSheet request={editing} stage={stageRef} device={deviceRef} cms={cms} onClose={() => setEditing(null)} trace={traceData} onSaved={editSaved} />
           ) : null}
           {/* Compare, where the page is: the page waits under it, as it was. */}
-          {comparing && envs.length && !compact ? (
+          {comparing && !compact ? (
             <ComparePanel project={project} site={site} envs={envs} masks={envData?.masks ?? []} page={view?.url ?? stageUrl} shownEnv={env?.id ?? null}
               width={WIDTHS[width].compare} components={componentNames} onClose={() => setComparing(false)} />
           ) : null}

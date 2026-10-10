@@ -98,6 +98,12 @@ export type LiveCompareShot =
   }
   | { error: string };
 
+/**
+ * A picture Wanigan kept of a page on this site, for Compare's Before: a card's page from before (`made-real`, kept
+ * when the card was made real; `label` names it) or one kept by hand (`kept`). At the widths it was kept at.
+ */
+export interface LiveKeptPage { id: string; at: number; why: 'made-real' | 'kept'; label: string | null; widths: number[] }
+
 /** A picture of the live view for a snap: what it shows now, or the whole page taken again at its width. */
 export type LiveSnapShot =
   | {
@@ -335,6 +341,12 @@ export interface LiveBridge {
   layerVerify(id: string | null, options?: { widths?: number[] }): Promise<LayerVerdict>;
   /** A verification picture (a path a verdict named) as base64 PNG, for a window that cannot read the data folder. */
   layerPicture(path: string): Promise<string | null>;
+  /** The pictures kept of the page shown, newest first: Compare's Before. */
+  layerKept(): Promise<LiveKeptPage[]>;
+  /** A kept picture of the page shown and the page as it renders now, the same way and held at the same time. */
+  layerKeptShot(id: string, width: number): Promise<{ before: LiveCompareShot; now: LiveCompareShot } | { error: string }>;
+  /** Keep the page shown as it is now, at the kept widths. */
+  layerKeep(): Promise<LiveKeptPage | { error: string }>;
   /**
    * Type on the picked element's own words in the page itself: it becomes editable in place (plain text only, the
    * caret at its end, the keyboard given to the view), and every keystroke shows on the page as it is typed. The

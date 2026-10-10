@@ -3,6 +3,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import vm from 'node:vm';
+import { ADMIN_CSS, SITE_MESSAGES_CSS, adminSwitch } from '../shared/live-admin.ts';
 import { CLOCK, folderOf, inHiddenWindow, type HiddenPage, type HiddenWindow } from './live-capture.ts';
 import { captureInWindow } from './live-library.ts';
 
@@ -175,4 +176,21 @@ test('a page that sizes itself in vh is measured and pictured whole at one scree
     heights.push(measured);
   }
   assert.equal(heights[0], heights[1], 'the same height in both renders');
+});
+
+test('every render shows the page as a visitor sees it: the site’s messages and its admin bars hidden, as the view hides them', async () => {
+  const sheets: { css: string; origin: string | undefined }[] = [], ran: string[] = [];
+  let attached = false;
+  const wc = {
+    on: () => wc, setWindowOpenHandler: () => {}, setAudioMuted: () => {}, setBackgroundThrottling: () => {},
+    getURL: () => 'https://acme.example.test/paddling', loadURL: async () => {},
+    insertCSS: async (css: string, o?: { cssOrigin?: string }) => { sheets.push({ css, origin: o?.cssOrigin }); return 'key'; },
+    executeJavaScript: () => Promise.resolve(0),
+    executeJavaScriptInIsolatedWorld: (_w: number, scripts: { code: string }[]) => { ran.push(scripts[0]?.code ?? ''); return Promise.resolve(null); },
+    debugger: { attach: () => { attached = true; }, isAttached: () => attached, detach: () => { attached = false; }, on: () => {}, sendCommand: () => Promise.resolve({}) },
+  };
+  const answer = await inHiddenWindow({ ...options, open: () => ({ webContents: wc as never, destroy: () => {} }) }, async () => 'rendered');
+  assert.equal(answer, 'rendered');
+  assert.deepEqual(sheets.filter((x) => x.css === SITE_MESSAGES_CSS || x.css === ADMIN_CSS).map((x) => x.origin), ['user', 'user'], 'both sheets, user origin');
+  assert.ok(ran.includes(adminSwitch(true)), 'the admin bars switched off in the page');
 });

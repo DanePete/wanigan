@@ -351,7 +351,7 @@ export function liveStub(f) {
     layer: { edits: [], done: [], undone: [], seq: 0, on: true, why: {}, region: {} }, verdict: 'pass', picked: null,
     // How long making words real and verifying take (to catch what happens meanwhile), a refusal the site answers the
     // next field save with, and a refusal the core answers the next mark with.
-    implementMs: 0, verifyMs: 80, saveRefusal: null, refuseMark: null,
+    implementMs: 0, verifyMs: 80, saveRefusal: null, refuseMark: null, keptPages: [],
     // Typing on the page (layerType): the words shown so far (null when nothing is typed), how the sweep ends it
     // (typed(words) keeps them, typed(null) puts them back), and the style being tried (layerTry).
     typing: null, typed: null, tried: null, scrollY: 0,
@@ -1084,6 +1084,30 @@ export function liveStub(f) {
         throw new Error(`The verification ran (its pictures are kept), but the layer did not record it: “${e.label}”: ${err.message}`);
       }
       return verdict;
+    },
+    // Compare's Before: the pages kept by hand, newest first, each compared with the page now (two plain pictures).
+    async layerKept() {
+      window.__wgLive.calls.push('layerKept');
+      return [...window.__wgLive.keptPages].sort((a, b) => b.at - a.at);
+    },
+    async layerKeep() {
+      window.__wgLive.calls.push('layerKeep');
+      const k = { id: `page:p-${Date.now()}`, at: Date.now(), why: 'kept', label: null, widths: [390, 1440] };
+      window.__wgLive.keptPages.push(k);
+      return k;
+    },
+    async layerKeptShot(id, width) {
+      window.__wgLive.calls.push(`layerKeptShot ${id} ${width}`);
+      if (!window.__wgLive.keptPages.some((k) => k.id === id)) return { error: 'That picture of the page is not kept any more.' };
+      const shot = (tone) => {
+        const c = document.createElement('canvas');
+        c.width = width; c.height = 600;
+        const g = c.getContext('2d');
+        g.fillStyle = '#ffffff'; g.fillRect(0, 0, width, 600);
+        g.fillStyle = tone; g.fillRect(24, 80, Math.min(320, width - 48), 48);
+        return { data: c.toDataURL('image/png').split(',')[1], width, height: 600, cssWidth: width, cssHeight: 600, cut: false, url: 'https://acme.example.test/', status: 200, regions: [] };
+      };
+      return { before: shot('#181c20'), now: shot('#2f5a46') };
     },
     async layerPicture(path) {
       const m = /\/(\d+)-(design|result|diff|page)\.png$/.exec(path);

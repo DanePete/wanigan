@@ -11,6 +11,7 @@ import {
   compileLayer, layerTextHash, trySheet, type LayerApplied, type LayerEdit, type LayerImplemented, type LayerPickTarget, type LayerTyped, type LayerVerdict,
 } from '../shared/design-layer.ts';
 import { parseVerdict, type Bitmap, type ElementSnap, type PageSnap } from '../shared/layer-verify.ts';
+import type { LiveCompareShot, LiveKeptPage } from '../shared/bridge.ts';
 import type { LiveEditSaved } from '../shared/live-lens.ts';
 import type { EditTarget, LiveTrace, PartIdentity, TracePart } from '../shared/live-trace.ts';
 import { folderOf } from './live-capture.ts';
@@ -230,9 +231,45 @@ function wire(over: {
     implement: (id: string) => invoke<LayerImplemented>('live:layerImplement', id),
     verify: (id: string | null, options?: unknown) => invoke<LayerVerdict>('live:layerVerify', id, options ?? null),
     picture: (path: unknown) => invoke<string | null>('live:layerPicture', path),
+    keptPages: () => invoke<LiveKeptPage[]>('live:layerKept'),
+    keptShot: (id: unknown, width: unknown) => invoke<{ before: LiveCompareShot; now: LiveCompareShot } | { error: string }>('live:layerKeptShot', id, width),
+    keep: () => invoke<LiveKeptPage | { error: string }>('live:layerKeep'),
     done: () => rmSync(dataDir, { recursive: true, force: true }),
   };
 }
+
+test('Compare’s Before: the page a card kept as it was made real, and one kept by hand, each laid over the page now rendered the same way, held at the same time', async () => {
+  // A site with no hosted environment (one being built, or with only a dev copy) compares with how the page was.
+  const png = (w: number): Buffer => { const b = Buffer.alloc(33); b.writeUInt32BE(0x89504e47, 0); b.writeUInt32BE(w, 16); b.writeUInt32BE(600, 20); return b; };
+  const style = edit();
+  const nows: LayerRenderRequest[] = [];
+  let clock = 1_700_000_000_000;
+  const w = wire({
+    edits: [style], now: () => (clock += 1_000),
+    renderBefore: async (r) => ({ page: { png: png(r.width), bitmap: blank(64, 100), elements: [], found: [] }, design: { png: png(r.width), bitmap: blank(64, 100), elements: [], found: [style.id] } }),
+    render: async (r) => { nows.push(r); return { png: png(r.width), bitmap: blank(64, 100), elements: [], found: [] }; },
+  });
+  try {
+    assert.deepEqual(await w.keptPages(), [], 'nothing kept of the page yet');
+    await w.implement(style.id);
+    const [card] = await w.keptPages();
+    assert.deepEqual(card && [card.id, card.why, card.label, card.widths], [`edit:${style.id}`, 'made-real', style.label, [390, 1440]], 'the card’s page from before');
+    const pair = await w.keptShot(card!.id, 1440);
+    assert.ok(!('error' in pair) && !('error' in pair.before) && !('error' in pair.now));
+    if ('error' in pair || 'error' in pair.before || 'error' in pair.now) return;
+    assert.deepEqual([pair.before.width, pair.before.height, pair.now.width, pair.now.height], [1440, 600, 1440, 600], 'sized from the pictures themselves');
+    const now = nows.at(-1)!;
+    assert.deepEqual([now.design, now.edits, now.width, now.path], [false, [], 1440, '/paddling'], 'the page now: the site alone, without the layer');
+    const meta = JSON.parse(readFileSync(join(w.dataDir, 'live-layer', folderOf('p1'), style.id, 'before', 'meta.json'), 'utf8'));
+    assert.deepEqual(now.hold, meta.hold, 'held at the time the picture was kept');
+    assert.deepEqual(await w.keptShot(card!.id, 768), { error: 'Pages are kept at 390 and 1440 px.' });
+    assert.deepEqual(await w.keptShot('edit:nope', 1440), { error: 'That picture of the page is not kept any more.' });
+    // Kept by hand: rendered now at both widths, listed first.
+    const mine = await w.keep();
+    assert.ok(!('error' in mine) && mine.why === 'kept' && mine.widths.join() === '390,1440');
+    assert.deepEqual((await w.keptPages()).map((k) => k.why), ['kept', 'made-real']);
+  } finally { w.done(); }
+});
 
 test('a style asked about alone is still found where the words of a text edit in the log were saved: its Verify looked nowhere before', async () => {
   // Seen on the Northstar demo, 10 October 2026: the title retyped and saved, then its style verified on its own; both

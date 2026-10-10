@@ -404,8 +404,9 @@ try {
       const site = await page.$$eval('[role="menu"] [role^="menuitem"]', (els) => els.map((e) => ({ role: e.getAttribute('role'), text: e.textContent, checked: e.getAttribute('aria-checked'), off: e.getAttribute('aria-disabled') })));
       if (site[0]?.role !== 'menuitemradio' || !/^Local/.test(site[0]?.text ?? '') || site[0]?.checked !== 'true') fail(t(`layout: the site menu does not start with Local, shown (${JSON.stringify(site[0])})`));
       if (/Mac/.test(site[0]?.text ?? '')) fail(t('layout: the site menu says Mac, a word for one platform'));
-      const cmpItem = site.find((i) => /^Compare Local/.test(i.text));
-      if (!cmpItem || cmpItem.off !== 'true' || !/Add a hosted environment .* in Site settings/.test(cmpItem.text)) fail(t(`layout: Compare in the site menu is ${JSON.stringify(cmpItem)}`));
+      // No hosted environment: Compare is with how the page was (Before), offered, not refused.
+      const cmpItem = site.find((i) => /^Compare/.test(i.text));
+      if (!cmpItem || cmpItem.off === 'true' || !/^Compare with how this page was…/.test(cmpItem.text)) fail(t(`layout: Compare in the site menu is ${JSON.stringify(cmpItem)}`));
       if (!site.some((i) => /^Site settings…/.test(i.text))) fail(t('layout: no Site settings in the site menu'));
       await shot('layout-site-menu');
       await page.keyboard.press('Escape');
@@ -651,9 +652,21 @@ try {
       await page.waitForSelector('.sel-list [role="option"]:has-text("Owner")', { timeout: 2000 }).catch(() => fail(t('layout: ⇧L did not open the lens list')));
       await page.keyboard.press('Escape');
       await nobody();
-      k0 = await saidCount(page);
+      // ⇧C with no hosted environment: Compare with how the page was (Dane: a site being built, or with only a dev
+      // copy, has no Live to compare with). Nothing kept yet says so; keeping the page lays it over the page now.
       await page.keyboard.press('Shift+C');
-      if (!(await heard(page, 'Add a hosted environment', k0, 2000))) fail(t('layout: ⇧C without an environment did not say why'));
+      await page.waitForSelector('.live-stage-compare:has-text("Before and now")', { timeout: 3000 }).catch(() => fail(t('compare: ⇧C without an environment did not open Before and now')));
+      await page.waitForSelector('.live-stage-compare:has-text("Nothing kept of this page yet")', { timeout: 3000 }).catch(() => fail(t('compare: with nothing kept, Before does not say so')));
+      n = await mark();
+      await page.locator('.live-stage-compare').getByRole('button', { name: 'Keep this page as it is' }).first().click();
+      await page.waitForSelector('.live-stage-compare input.cmp-range[aria-label^="Before"]', { timeout: 4000 }).catch(() => fail(t('compare: a page kept was not laid over the page now')));
+      const asked = await since(n);
+      if (!asked.includes('layerKeep') || !asked.some((c) => /^layerKeptShot page:p-\d+ 1440$/.test(c))) fail(t(`compare: keeping and comparing asked ${JSON.stringify(asked)}`));
+      if (!(await page.locator('.live-stage-compare').innerText()).includes('Now is the page as it renders now')) fail(t('compare: Before does not say what each side is'));
+      if (await page.locator('.live-stage-compare [role="radio"]:has-text("768")').count()) fail(t('compare: Before offers a width no page is kept at'));
+      await shot('compare-before');
+      await page.keyboard.press('Escape');
+      await page.waitForSelector('.live-stage-compare', { state: 'detached', timeout: 2000 }).catch(() => fail(t('compare: Escape did not close Before and now')));
 
       // The same keys pressed in the page: the page script answers, and the window does what the key says.
       await page.waitForFunction(() => typeof window.__wgLive.press === 'function', null, { timeout: 3000 }).catch(() => fail(t('layout: the view is not waiting for its keys from the page')));

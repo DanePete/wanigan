@@ -55,7 +55,7 @@ export function SiteMenu({ envs, shown, onShow, compare, onCompare, onSettings, 
     }
     items.push({
       id: 'compare', group: 'Compare', icon: 'compare', keys: ['Shift', 'C'], disabled: !compare.can,
-      label: compare.with ? `Compare Local with ${compare.with}…` : 'Compare Local with a hosted environment…',
+      label: compare.with === 'Before' ? 'Compare with how this page was…' : compare.with ? `Compare Local with ${compare.with}…` : 'Compare Local with a hosted environment…',
       detail: compare.can ? 'Wipe, onion skin, difference, flip, side by side' : compare.why, run: onCompare,
     });
   }
