@@ -64,10 +64,21 @@ export function LayerTray({ onClose, ...ctx }: TrayContext & { onClose: () => vo
   const snap = layer.snapshot;
   const edits = snap?.edits ?? [];
   const groups = useMemo(() => byPage(edits, page), [edits, page]);
-  // Opened: the log is read and the page asked what the layer shows on it, and the keyboard goes to the tray.
+  // Opened: the log is read and the page asked what the layer shows on it, and the keyboard goes to the tray. Closed,
+  // it goes back to what opened it (the bar's Edits, Open Edits), or to the bar's Edits when that is gone, unless
+  // something else took it meanwhile.
   useEffect(() => {
+    const active = document.activeElement;
+    const opener = active instanceof HTMLElement && active !== document.body ? active : null;
     void layer.refresh();
     window.requestAnimationFrame(() => title.current?.focus());
+    return () => {
+      window.requestAnimationFrame(() => {
+        const now = document.activeElement;
+        if (now && now !== document.body && now.isConnected) return;
+        (opener?.isConnected ? opener : document.querySelector<HTMLElement>('.live-bar button[aria-keyshortcuts="Shift+E"]'))?.focus();
+      });
+    };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
   const keys = (e: KeyboardEvent): void => {
     if (e.defaultPrevented || e.key !== 'Escape' || (e.target as Element).closest('input, textarea, select, [role="menu"], .sel-list')) return;
@@ -184,8 +195,9 @@ function TrayEdit({ edit: e, here, ctx }: { edit: LayerEdit; here: boolean; ctx:
     <li className="live-tray-edit" data-edit={e.id} data-state={e.state}>
       <div className="live-tray-edit-head">
         <span className="live-tray-label">{e.label}</span>
-        <span className={`live-tray-state ${e.state}`} title={stateDetail(e)}>{STATE_WORDS[e.state]}</span>
+        <span className={`live-tray-state ${e.state}`}>{STATE_WORDS[e.state]}</span>
       </div>
+      <p className="faint small live-tray-state-detail">{stateDetail(e)}</p>
       <ul className="live-layer-lines" aria-label="Before and after">
         {lines.map((l) => (
           <li key={l.what} className="small">
@@ -205,8 +217,8 @@ function TrayEdit({ edit: e, here, ctx }: { edit: LayerEdit; here: boolean; ctx:
       {e.verdict ? <Verdict verdict={e.verdict} /> : null}
       {failure ? <p className="small live-tray-why" role="alert">Not verified: {failure}</p> : null}
       {answer && !answer.ok ? (
-        <div className="live-tray-answer" role="status">
-          <p className="small">{answer.why}</p>
+        <div className="live-tray-answer">
+          <p className="small" role="status">{answer.why}</p>
           {templateOffered(e, answer) ? (
             <TemplateSave edit={e} project={project} layer={layer} onReload={ctx.onReload} onWritten={(w) => { setAnswer(null); setWritten(w); }} />
           ) : null}
@@ -219,18 +231,18 @@ function TrayEdit({ edit: e, here, ctx }: { edit: LayerEdit; here: boolean; ctx:
       ) : null}
       <div className="live-actions">
         {e.state === 'draft' ? (
-          <Button size="s" tone="primary" icon="check" disabled={readOnly || !live || !!busy} onClick={real} aria-label={`Make ${name} real`}
+          <Button size="s" tone="primary" icon="check" disabled={readOnly || !live || !!busy} onClick={real} aria-label={`Make it real: ${name}`}
             title={e.change.type === 'text' ? 'Save the words in the site, through the site helper' : 'Goes to an agent as intent, on your click'}>Make it real</Button>
         ) : null}
         {e.state === 'implemented' ? (
-          <Button size="s" tone="primary" icon="compare" disabled={readOnly || !live || verifying} onClick={verify} aria-label={`Verify ${name}`}
+          <Button size="s" tone="primary" icon="compare" disabled={readOnly || !live || verifying} onClick={verify} aria-label={`${verifying ? 'Verifying…' : 'Verify'}: ${name}`}
             title="Render the site without the layer and compare it with the design, at a phone’s and a desktop’s width">
             {verifying ? 'Verifying…' : 'Verify'}
           </Button>
         ) : null}
-        {e.state === 'verified' ? <Button size="s" tone="quiet" icon="check" onClick={retire} aria-label={`Retire ${name}`}>Retire</Button> : null}
+        {e.state === 'verified' ? <Button size="s" tone="quiet" icon="check" onClick={retire} aria-label={`Retire: ${name}`}>Retire</Button> : null}
         {e.state === 'draft' || e.state === 'orphaned' ? (
-          <Button size="s" tone="quiet" icon="trash" onClick={discard} disabled={layer.writing} aria-label={`Discard ${name}`}>Discard</Button>
+          <Button size="s" tone="quiet" icon="trash" onClick={discard} disabled={layer.writing} aria-label={`Discard: ${name}`}>Discard</Button>
         ) : null}
       </div>
       {busy === 'real' ? <p className="faint small" role="status">Saving the words in the site…</p> : null}
