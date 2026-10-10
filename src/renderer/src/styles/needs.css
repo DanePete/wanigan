@@ -30,9 +30,12 @@
   height: var(--space-5);
 }
 
-/* Busy, the heading spans the queue it heads, so How this works sits at the queue's end. */
+/* Busy, the heading spans the queue it heads, so How this works sits at the queue's end; on a wide window both sit in the middle. */
 .needs.busy .needs-head {
+  box-sizing: border-box;
+  width: 100%;
   max-width: 150ch;
+  margin-inline: auto;
 }
 
 .needs-words {
@@ -90,9 +93,12 @@
 }
 
 .needs-groups {
+  box-sizing: border-box;
   display: grid;
   gap: var(--space-6);
+  width: 100%;
   max-width: 150ch;
+  margin-inline: auto;
   padding: 0 var(--space-8) var(--space-10);
 }
 
