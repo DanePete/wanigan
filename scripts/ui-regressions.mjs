@@ -387,7 +387,7 @@ try {
         const confirm = dialog.getByRole('button', { name: `${verb} turn ${before.last.turn}`, exact: true });
         await page.waitForFunction(() => document.querySelector('.undo-files')?.children.length > 0);
         assert.equal(await confirm.isEnabled(), true, 'the cached confirmation really was callable before failure');
-        assert.deepEqual(await dialog.locator('.undo-files .fpath').evaluateAll(nodes => nodes.map(node => node.title)),
+        assert.deepEqual(await dialog.locator('.undo-files .fpath').evaluateAll(nodes => nodes.map(node => node.getAttribute('data-tip'))),
           await page.evaluate(() => window.__cachedCheckpoints.turnFiles), 'the confirmation lists the actual checkpoint files');
         const cachedConfirm = await confirm.elementHandle();
         assert.ok(cachedConfirm);
@@ -428,7 +428,7 @@ try {
           if (await dialog.count()) {
             await page.waitForFunction(() => document.querySelector('.undo-files')?.children.length > 0);
             assert.equal(await confirm.isEnabled(), true, 'a restored confirmation uses successfully reloaded diff data');
-            assert.deepEqual(await dialog.locator('.undo-files .fpath').evaluateAll(nodes => nodes.map(node => node.title)),
+            assert.deepEqual(await dialog.locator('.undo-files .fpath').evaluateAll(nodes => nodes.map(node => node.getAttribute('data-tip'))),
               await page.evaluate(() => window.__cachedCheckpoints.turnFiles));
           }
           assert.deepEqual(await page.evaluate(() => window.__cachedCheckpoints.actions), []);
@@ -481,7 +481,7 @@ try {
       await page.waitForFunction(() => document.querySelector('.undo-files')?.children.length > 0);
       const before = await page.evaluate(() => window.__undoDiff.replies.at(-1));
       assert.ok(before.files.length > 0 && before.gone === null, 'real checkpoint changes loaded before the reconnect');
-      assert.deepEqual(await dialog.locator('.undo-files .fpath').evaluateAll(nodes => nodes.map(node => node.title)),
+      assert.deepEqual(await dialog.locator('.undo-files .fpath').evaluateAll(nodes => nodes.map(node => node.getAttribute('data-tip'))),
         before.files.map(file => file.path));
       assert.equal(await confirm.isEnabled(), true, 'Undo is enabled after the successful diff read');
       await page.screenshot({ path: join(out, `${theme}-undo-dialog-diff-before.png`), animations: 'disabled' });
@@ -682,7 +682,7 @@ try {
           await page.evaluate((id) => { location.hash = `#/p/NS/s/${id}`; }, id);
           input = page.locator('#composer');
         } else if (kind === 'chat') {
-          await page.locator('.chat-fab').click();
+          await page.locator('.chat-launch').click();
           input = page.locator('.chat textarea');
         }
         await input.fill('First draft');

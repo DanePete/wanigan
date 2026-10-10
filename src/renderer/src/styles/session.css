@@ -1,64 +1,86 @@
+/*
+  A session (views/SessionView.tsx), Studio: the terminal is the work, on the
+  canvas, with the composer at its foot; the session's bar names it and holds
+  its few tools; its turns and facts are a right panel that closes. Lists of
+  sessions (the project's Sessions, Running, a card's) are at the end.
+*/
+
+/* ── the bar ──────────────────────────────────────────────────────────────── */
+
 .session-bar {
-  gap: var(--space-4);
+  flex-wrap: nowrap;
+  gap: var(--space-3);
 }
 
-.back {
-  display: grid;
-  place-items: center;
-  width: 28px;
-  height: 28px;
-  border-radius: var(--radius-s);
-  color: var(--muted);
-}
-
-.back:hover {
-  background: var(--hover);
-  color: var(--fg);
-}
-
-.session-facts {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 0 var(--space-3);
-  min-width: 0;
-  font-size: var(--text-sm);
-  color: var(--muted);
-  white-space: nowrap;
-}
-
-/* The title keeps its room; the facts wrap to a second line before it is cut
-   (a one-off's "Make this a card" left "Claude Code · C"). */
 .session-bar .topbar-title {
-  flex-shrink: 0;
-  max-width: 40%;
+  flex: 1 1 auto;
+  gap: var(--space-2);
 }
 
-/* Started with Remote Control, or on this Mac's own model: a fact about where the session runs or can be reached, not a state. */
+.session-bar .topbar-tools {
+  flex: none;
+}
+
+.session-title {
+  display: flex;
+  min-width: 0;
+}
+
+.title-button {
+  max-width: 100%;
+  margin: 0 calc(-1 * var(--space-1));
+  padding: 0 var(--space-1);
+  border: var(--hairline) solid transparent;
+  border-radius: var(--radius-s);
+  background: none;
+  color: inherit;
+  font: inherit;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: text;
+  transition: border-color var(--dur-fast) var(--ease);
+}
+
+.title-button:hover {
+  border-color: var(--line-strong);
+}
+
+.title-input {
+  width: min(100%, calc(var(--space-12) * 10));
+  min-height: var(--control-s);
+  padding: 0 var(--space-1);
+  font: inherit;
+}
+
+/* Where the session runs or can be reached from: a fact, in a neutral badge. */
 .remote-mark {
   display: inline-flex;
-  align-items: center;
+  flex: none;
+}
+
+.remote-mark .badge {
   gap: var(--space-1);
-  padding: 0 var(--space-2);
-  border: 1px solid var(--water-line);
-  border-radius: var(--radius-round);
-  color: var(--fg);
-  font-size: var(--text-xs);
-  font-weight: 500;
-  line-height: var(--lh-md);
 }
 
-.remote-mark svg {
-  color: var(--water-text);
+.session-stop-confirm {
+  display: inline-flex;
+  gap: var(--space-1);
 }
 
-/* Narrow, the mark keeps the bar on one line: the icon shows, the words are read out. */
-@media (max-width: 1280px) {
-  .remote-mark {
-    padding: var(--space-1);
-  }
+.live-chip {
+  max-width: calc(var(--space-12) * 6);
+}
 
-  .remote-mark-label {
+.live-chip span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Narrow: the badges and the words on the bar's buttons give way to their icons (names stay, read out and in tooltips). */
+@container topbar (max-width: 960px) {
+  .session-bar .remote-mark-label,
+  .session-bar .topbar-tools .btn:not(.btn-icon) > span {
     position: absolute;
     width: 1px;
     height: 1px;
@@ -66,102 +88,383 @@
     clip-path: inset(50%);
     white-space: nowrap;
   }
+
+  .session-bar .topbar-tools .btn:not(.btn-icon) {
+    width: var(--control-s);
+    padding: 0;
+  }
 }
+
+/* ── what needs you, under the bar ───────────────────────────────────────── */
+
+.session-banner {
+  padding: var(--space-2) var(--space-4);
+}
+
+.banner-asks {
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--space-2);
+  max-height: 40vh;
+  overflow-y: auto;
+}
+
+.banner-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.banner-head .banner-text {
+  margin: 0;
+}
+
+.banner-limit {
+  flex-wrap: wrap;
+  row-gap: var(--space-1);
+}
+
+.banner-actions {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+/* ── the work: terminal, composer, the site beside, the panel ────────────── */
 
 .session-body {
   flex: 1;
   min-height: 0;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
+  display: flex;
 }
 
-.session-body.with-timeline {
-  grid-template-columns: minmax(0, 1fr) 280px;
+.session-stage {
+  position: relative;
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
 }
 
 .session-main {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
+  --terminal-bg: var(--bg-canvas);
+  flex: 1;
   min-height: 0;
-  background: var(--sunken);
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-canvas);
+  transition: box-shadow var(--dur-fast) var(--ease);
 }
 
+/* Files dragged over the terminal or the composer: they will join the message. */
+.session-main.drop-over {
+  box-shadow: inset 0 0 0 var(--focus-ring) var(--water);
+}
+
+.session-opening {
+  flex: 1;
+  background: var(--bg-canvas);
+}
+
+.session-live {
+  flex: 1 1 0;
+  min-width: var(--live-side-w);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-left: var(--hairline) solid var(--line);
+}
+
+/* The composer: one calm field at the foot of the terminal. */
 .composer {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-  padding: var(--space-3) var(--space-4);
-  border-top: 1px solid var(--line);
-  background: var(--surface);
+  container: composer / inline-size;
+  flex: none;
+  padding: 0 var(--space-4) var(--space-4);
 }
 
-.composer-row {
-  display: flex;
-  align-items: flex-end;
-  gap: var(--space-2);
+.composer-box {
+  display: grid;
+  gap: var(--space-1);
+  padding: var(--space-2) var(--space-2) var(--space-2) var(--space-3);
+  border: var(--hairline) solid var(--line-strong);
+  border-radius: var(--radius-l);
+  background: var(--bg-field);
+  box-shadow: var(--elev-raise);
+  transition: border-color var(--dur-fast) var(--ease), box-shadow var(--dur-fast) var(--ease);
 }
 
-.composer-files {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
+.composer-box:focus-within {
+  border-color: var(--water);
+  box-shadow: 0 0 0 var(--track-pad) var(--water-soft);
 }
 
-.composer .btn-icon {
-  width: 36px;
-}
-
-.composer textarea {
-  min-height: 36px;
-  max-height: 160px;
+.composer-box textarea,
+.composer-box textarea:focus {
+  min-height: var(--lh-lg);
+  max-height: calc(var(--lh-md) * 8);
+  padding: var(--space-1) 0;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  box-shadow: none;
+  overflow-y: auto;
   resize: none;
 }
 
-.composer .btn {
-  height: 36px;
+.composer-files {
+  display: grid;
+  gap: var(--space-1);
+  padding: var(--space-1) 0;
 }
 
-.timeline {
-  min-height: 0;
-  overflow-y: auto;
-  border-left: 1px solid var(--line);
-  padding: var(--space-4);
+.composer-tools {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+/* Voice input's place, beside the paperclip: nothing until it is merged. */
+.composer-slot:empty {
+  display: none;
+}
+
+.composer-hint {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+  margin-left: auto;
+  overflow: hidden;
+  color: var(--faint);
+  font-size: var(--text-xs);
+  white-space: nowrap;
+}
+
+.composer-hint-sep {
+  padding: 0 var(--space-1);
+}
+
+.composer-tools .btn-primary {
+  flex: none;
+  margin-left: var(--space-2);
+}
+
+@container composer (max-width: 620px) {
+  .composer-hint {
+    display: none;
+  }
+
+  .composer-tools .btn-primary {
+    margin-left: auto;
+  }
+}
+
+/* Where the composer was, once the session has ended. */
+.session-ended {
+  flex: none;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+  min-height: var(--toolbar-h);
+  margin: 0 var(--space-4) var(--space-4);
+  padding: var(--space-2) var(--space-2) var(--space-2) var(--space-4);
+  border-radius: var(--radius-l);
   background: var(--surface);
+  box-shadow: var(--elev-raise);
+  font-size: var(--text-sm);
 }
 
-.timeline h2 {
-  margin: 0 0 var(--space-3);
-  font: 600 var(--text-md) / 1 var(--font-ui);
+.session-ended-icon {
+  flex: none;
+  color: var(--faint);
 }
 
-.timeline ol {
-  list-style: none;
-  margin: 0;
-  padding: 0;
+.session-ended.failed .session-ended-icon {
+  color: var(--red);
+}
+
+.session-ended-text {
+  flex: 1;
+  min-width: 0;
+}
+
+/* ── the panel ────────────────────────────────────────────────────────────── */
+
+.session-agent {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.session-agent svg {
+  flex: none;
+  color: var(--muted);
+}
+
+.session-agent .faint {
+  overflow: hidden;
+  font-size: var(--text-sm);
+  font-weight: 400;
+  text-overflow: ellipsis;
+}
+
+.session-facts .limits-left.full {
   display: grid;
   gap: var(--space-2);
 }
 
-/* Turns: each one a fold, the newest open. */
+.session-facts .limit-left {
+  flex-wrap: wrap;
+}
+
+/* Facts: a term and its value, on the panel's surface; never a box. */
+.facts {
+  display: grid;
+  gap: var(--space-1);
+  margin: 0;
+}
+
+.facts > div {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 3fr);
+  align-items: baseline;
+  gap: var(--space-3);
+  min-height: var(--lh-md);
+}
+
+.facts dt {
+  color: var(--muted);
+  font-size: var(--text-sm);
+}
+
+.facts dd {
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.facts dd.mono {
+  font-size: var(--text-sm);
+}
+
+.facts-path {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.facts-note {
+  margin: var(--space-2) 0 0;
+  color: var(--muted);
+  font-size: var(--text-sm);
+  line-height: var(--leading);
+}
+
+.usage {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.usage-total {
+  margin: 0;
+  color: var(--muted);
+}
+
+.usage-big {
+  color: var(--fg);
+  font: 600 var(--text-xl) / var(--leading-tight) var(--font-ui);
+  font-variant-numeric: tabular-nums;
+}
+
+.usage-context {
+  display: grid;
+  gap: var(--space-1);
+  font-size: var(--text-sm);
+}
+
+.usage-meter {
+  height: var(--space-1);
+  overflow: hidden;
+  border-radius: var(--radius-round);
+  background: var(--sunken);
+}
+
+.usage-meter > span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--water);
+}
+
+.usage-note {
+  margin: 0;
+  font-size: var(--text-xs);
+  line-height: var(--leading);
+}
+
+/* Turns: a thread, newest first, each a fold (the newest open); its rule says how it went. */
+.timeline {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.timeline-note {
+  margin: 0;
+  font-size: var(--text-sm);
+}
+
+.timeline-error {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.timeline-error .error-text {
+  flex: 1;
+  margin: 0;
+}
+
 .turns {
-  list-style: none;
-  margin: 0;
-  padding: 0;
   display: grid;
   gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.turn {
+  padding-left: var(--space-2);
+  box-shadow: inset var(--gap-hair) 0 0 var(--line-strong);
+}
+
+.turn.turn-going {
+  box-shadow: inset var(--gap-hair) 0 0 var(--water);
+}
+
+.turn.asked {
+  box-shadow: inset var(--gap-hair) 0 0 var(--amber);
+}
+
+.turn.failed {
+  box-shadow: inset var(--gap-hair) 0 0 var(--red);
 }
 
 .turn > details > summary {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: var(--space-2);
-  padding: var(--space-2) var(--space-2) var(--space-2) var(--space-3);
-  border-radius: var(--radius-s);
-  box-shadow: inset 2px 0 0 var(--line-strong);
-  cursor: pointer;
-  list-style: none;
+  min-height: var(--control-s);
+  padding: 0 var(--space-2) 0 var(--space-1);
+  border-radius: var(--radius-m);
   font-size: var(--text-sm);
+  list-style: none;
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease);
 }
 
 .turn > details > summary::-webkit-details-marker {
@@ -172,16 +475,14 @@
   background: var(--hover);
 }
 
-.turn.live > details > summary {
-  box-shadow: inset 2px 0 0 var(--water);
+.turn-twist {
+  flex: none;
+  color: var(--faint);
+  transition: transform var(--dur-fast) var(--ease);
 }
 
-.turn.asked > details > summary {
-  box-shadow: inset 2px 0 0 var(--amber);
-}
-
-.turn.failed > details > summary {
-  box-shadow: inset 2px 0 0 var(--red);
+.turn > details[open] > summary .turn-twist {
+  transform: rotate(90deg);
 }
 
 .turn-name {
@@ -197,53 +498,58 @@
   white-space: nowrap;
 }
 
+.turn > details > summary time {
+  flex: none;
+  font-variant-numeric: tabular-nums;
+}
+
 .turn-files {
-  list-style: none;
-  margin: var(--space-1) 0 0;
-  padding: 0 0 0 var(--space-3);
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-1);
+  margin: var(--space-1) 0 0;
+  padding: 0 0 0 var(--space-5);
+  list-style: none;
 }
 
 .turn-files li {
+  max-width: 100%;
   padding: 0 var(--space-1);
-  border: 1px solid var(--line);
+  overflow: hidden;
   border-radius: var(--radius-s);
-  font-size: var(--text-xs);
+  background: var(--sunken);
   color: var(--muted);
+  font-size: var(--text-xs);
+  line-height: var(--lh-sm);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .turn-steps {
-  list-style: none;
-  margin: var(--space-2) 0 var(--space-1);
-  padding: 0 0 0 var(--space-3);
   display: grid;
   gap: var(--space-1);
+  margin: var(--space-2) 0 var(--space-1);
+  padding: 0 0 0 var(--space-5);
+  list-style: none;
 }
 
 .tl {
   display: grid;
-  grid-template-columns: auto 1fr;
+  grid-template-columns: auto minmax(0, 1fr);
   column-gap: var(--space-2);
   font-size: var(--text-sm);
 }
 
 .tl-kind {
+  min-width: calc(var(--space-12) + var(--space-1));
+  padding-top: var(--hairline);
   color: var(--faint);
   font-size: var(--text-xs);
   font-weight: 600;
-  padding-top: 1px;
-  min-width: 52px;
 }
 
 .tl-text {
   overflow-wrap: anywhere;
-}
-
-.tl time {
-  grid-column: 2;
-  font-size: var(--text-xs);
 }
 
 .tl-PermissionRequest .tl-kind,
@@ -261,22 +567,14 @@
   color: var(--green);
 }
 
-/* ── what each turn changed ─────────────────────────────────────────────── */
-
-.timeline-note {
-  margin: 0 0 var(--space-3);
-  font-size: var(--text-sm);
-}
-
-/* Under the turn's fold, so it shows whether the turn is open or not. */
+/* What each turn changed, under its fold, so it shows whether the turn is open or not. */
 .turn-change {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  column-gap: var(--space-2);
-  row-gap: var(--space-1);
+  gap: var(--space-1) var(--space-2);
   margin: 0;
-  padding: var(--space-1) 0 0 var(--space-3);
+  padding: var(--space-1) 0 0 var(--space-5);
   font-size: var(--text-sm);
 }
 
@@ -284,14 +582,15 @@
   display: inline-flex;
   align-items: baseline;
   gap: var(--space-1);
-  padding: 0 var(--space-1);
   margin-left: calc(-1 * var(--space-1));
+  padding: 0 var(--space-1);
   border: 0;
   border-radius: var(--radius-s);
   background: none;
   color: var(--water-text);
   font: inherit;
   cursor: pointer;
+  transition: background var(--dur-fast) var(--ease);
 }
 
 .turn-diff:hover,
@@ -304,8 +603,8 @@
 }
 
 .turn-undo {
-  flex-basis: 100%;
   display: flex;
+  flex-basis: 100%;
   flex-wrap: wrap;
   align-items: center;
   gap: var(--space-2);
@@ -321,52 +620,10 @@
   line-height: var(--lh-sm);
 }
 
-/* A turn's diff, laid over the terminal; the timeline stays beside it. */
-.session-body > .session-main,
-.session-body > .turn-panel {
-  grid-row: 1;
-  grid-column: 1;
-}
-
-.session-body > .timeline {
-  grid-row: 1;
-  grid-column: 2;
-}
-
-/* The live view beside the terminal (Settings › Live view): terminal, site, then the timeline. */
-.session-body.with-live {
-  grid-template-columns: minmax(0, 1fr) minmax(380px, 1fr);
-}
-
-.session-body.with-live.with-timeline {
-  grid-template-columns: minmax(0, 1fr) minmax(380px, 1fr) 280px;
-}
-
-.session-body > .session-live {
-  grid-row: 1;
-  grid-column: 2;
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-  min-height: 0;
-  border-left: 1px solid var(--line);
-}
-
-.session-body.with-live > .timeline {
-  grid-column: 3;
-}
-
-.live-chip {
-  max-width: 280px;
-}
-
-.live-chip span {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
+/* A turn's changes, laid over the terminal; the panel stays beside it. */
 .turn-panel {
+  position: absolute;
+  inset: 0;
   z-index: 1;
   display: flex;
   flex-direction: column;
@@ -382,23 +639,30 @@
 
 .turn-panel-head {
   display: flex;
+  flex: none;
   flex-wrap: wrap;
   align-items: center;
-  column-gap: var(--space-3);
-  row-gap: var(--space-1);
-  padding: var(--space-3) var(--space-3) var(--space-3) var(--space-4);
-  border-bottom: 1px solid var(--line);
+  gap: var(--space-2) var(--space-3);
+  min-height: var(--toolbar-h);
+  padding: var(--space-2) var(--space-3);
+  border-bottom: var(--hairline) solid var(--line);
 }
 
 .turn-panel-head h2 {
   margin: 0;
-  font: 600 var(--text-lg) / var(--leading-tight) var(--font-ui);
+  font: 600 var(--text-title) / var(--leading-tight) var(--font-ui);
 }
 
-.turn-panel-what {
-  flex: 1;
-  min-width: 200px;
+.turn-panel-head .changes-summary {
+  color: var(--muted);
   font-size: var(--text-sm);
+}
+
+.turn-panel-end {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-left: auto;
 }
 
 .turn-panel-head .turn-undo {
@@ -406,31 +670,35 @@
 }
 
 .turn-panel-head .turn-undo-why {
-  max-width: 360px;
+  max-width: calc(var(--space-12) * 7);
 }
 
 .turn-panel-note {
   margin: 0;
   padding: var(--space-2) var(--space-4);
-  border-bottom: 1px solid var(--line);
+  border-bottom: var(--hairline) solid var(--line);
   color: var(--muted);
   font-size: var(--text-sm);
 }
 
+.turn-panel-loading {
+  flex: 1;
+}
+
 .turn-panel .changes-body {
   border-top: 0;
-  grid-template-columns: minmax(160px, 240px) minmax(0, 1fr);
+  grid-template-columns: minmax(var(--panel-min-w), var(--panel-left-w)) minmax(0, 1fr);
 }
 
 /* The confirmation's list of files. */
 .undo-files {
-  list-style: none;
-  margin: 0 0 var(--space-3);
-  padding: var(--space-1) 0;
-  max-height: 240px;
-  overflow-y: auto;
   display: grid;
   gap: var(--space-1);
+  max-height: calc(var(--space-12) * 5);
+  margin: 0 0 var(--space-3);
+  padding: var(--space-1) 0;
+  overflow-y: auto;
+  list-style: none;
 }
 
 .undo-files li {
@@ -439,31 +707,27 @@
   gap: var(--space-2);
 }
 
-/* ── session rows (lists of sessions anywhere) ───────────────────────────── */
+/* ── lists of sessions (the project's Sessions, Running, a card's) ───────── */
 
-/* Lists are hairline rows, not boxes inside boxes. */
 .srows {
   display: grid;
-  border-top: 1px solid var(--line);
-}
-
-.srows > * {
-  border-bottom: 1px solid var(--line);
+  gap: var(--gap-hair);
 }
 
 .srow {
   display: flex;
   align-items: center;
   gap: var(--space-3);
-  min-height: 56px;
+  min-height: calc(var(--space-12) + var(--space-1));
   padding: var(--space-2) var(--space-3);
-  background: none;
+  border-radius: var(--radius-m);
   color: var(--fg);
   text-decoration: none;
+  transition: background var(--dur-fast) var(--ease);
 }
 
 .srow:hover {
-  background: var(--raised);
+  background: var(--hover);
   text-decoration: none;
 }
 
@@ -474,88 +738,174 @@
 }
 
 .srow-title {
-  font-weight: 500;
   overflow: hidden;
+  font-weight: 500;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .srow-activity {
-  font-size: var(--text-sm);
-  color: var(--muted);
   overflow: hidden;
+  color: var(--muted);
+  font-size: var(--text-sm);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.srow:not(.live) .srow-title {
+.srow:not(.srow-live) .srow-title {
   color: var(--muted);
 }
 
 .srow-meta {
   display: flex;
+  flex: none;
   align-items: center;
   gap: var(--space-3);
-  font-size: var(--text-sm);
   color: var(--muted);
+  font-size: var(--text-sm);
   white-space: nowrap;
 }
 
-.sessions-page,
-.running {
-  max-width: none;
+.srow-meta .mono {
+  font-size: var(--text-xs);
+}
+
+.srow-when {
+  min-width: calc(var(--space-12) + var(--space-4));
+  color: var(--faint);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+/* The project's Sessions: its toolbar, then the live and the ended, on the ground. */
+.sessions-view {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.sessions-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--space-5) var(--space-6) var(--space-8);
+}
+
+.sessions-list .section + .section {
+  margin-top: var(--space-6);
+}
+
+.sessions-list .section-label {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding-left: var(--space-3);
+}
+
+.sessions-none {
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  color: var(--faint);
+  font-size: var(--text-sm);
+}
+
+.toolbar-row .search-field {
+  width: calc(var(--space-12) * 6);
+}
+
+.toolbar-gap {
+  flex: 1;
+}
+
+.toolbar-count {
+  color: var(--faint);
+  font-size: var(--text-sm);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* Running: every project's live sessions, each with its action in place. */
+.running-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--space-5) var(--space-6) var(--space-8);
 }
 
 .running-group + .running-group {
   margin-top: var(--space-6);
 }
 
-.title-button {
-  padding: 0 var(--space-1);
-  margin: 0 calc(-1 * var(--space-1));
-  border: 1px solid transparent;
-  border-radius: var(--radius-s);
+.running-group .section-label {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding-left: var(--space-3);
+}
+
+.running-group .section-label .pmark {
+  flex: none;
+}
+
+.running-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding-right: var(--space-2);
+  border-radius: var(--radius-m);
+  transition: background var(--dur-fast) var(--ease);
+}
+
+.running-row:hover {
+  background: var(--hover);
+}
+
+.running-row .srow {
+  flex: 1;
+  min-width: 0;
+}
+
+.running-row .srow:hover {
   background: none;
-  color: inherit;
-  font: inherit;
-  cursor: text;
-  max-width: 48vw;
+}
+
+.running-actions {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+/* ── New session (dialogs/NewSessionDialog.tsx) ──────────────────────────── */
+
+.new-session-path {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.title-button:hover {
-  border-color: var(--line-strong);
+.new-session-check {
+  margin: 0 0 var(--space-3);
+  padding: var(--space-1) 0;
+  background: none;
 }
 
-.title-input {
-  font: inherit;
-  padding: 0 var(--space-1);
-  width: min(48vw, 520px);
+.check-text {
+  display: grid;
+  gap: var(--gap-hair);
 }
 
-/* Hit its usage limit: what Claude said, then the ways on. */
-.banner-limit {
-  flex-wrap: wrap;
-  row-gap: var(--space-1);
+.check-hint {
+  color: var(--faint);
+  font-size: var(--text-sm);
 }
 
-.banner-limit .banner-text {
-  min-width: 280px;
-}
-
-/* Asking permission: the line, then exactly what is asked, stacked. */
-.banner-asks {
-  flex-direction: column;
-  align-items: stretch;
-  max-height: 40vh;
-  overflow-y: auto;
-}
-
-.banner-asks .banner-text {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
+/* Why Start cannot start, beside it. */
+.dialog-foot-why {
+  flex: 1;
+  min-width: 0;
   margin: 0;
+  color: var(--muted);
+  font-size: var(--text-sm);
 }

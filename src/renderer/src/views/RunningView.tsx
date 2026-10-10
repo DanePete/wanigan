@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import type { Account, Need, NeedKind, ProjectSummary, Session } from '@shared/model';
-import { WATCH_MAX, pickWatched, topNeeds } from '@shared/watch';
+import { WATCH_FULL, WATCH_MAX, pickWatched, togglePin as pinToggled, topNeeds, watchColumns } from '@shared/watch';
 import { useQuery } from '../lib/api';
-import { href } from '../lib/router';
+import { href, openCard } from '../lib/router';
 import { PROVIDER_LABEL, duration, plural } from '../lib/format';
 import { Icon } from '../components/icons';
-import { Button, Empty, IconButton, NotAnswering, ProjectMark, Segmented, StateMark } from '../components/ui';
+import { Button, Count, EmptyState, IconButton, NotAnswering, ProjectMark, Segmented, StateMark, tipProps } from '../components/ui';
+import { Section } from '../components/Panel';
 import { Terminal } from '../components/Terminal';
 import { SessionRow } from './SessionsView';
 
@@ -55,8 +56,8 @@ export function RunningView({ projects, needs, onNewSession }: {
   }, [sessions.data]); // eslint-disable-line react-hooks/exhaustive-deps
   const pinsFull = pins.length >= WATCH_MAX;
   const togglePin = (id: string): void => {
-    if (pins.includes(id)) setPins(pins.filter((p) => p !== id));
-    else if (!pinsFull) setPins([...pins, id]);
+    const next = pinToggled(pins, id);
+    if ('pins' in next) setPins(next.pins);
   };
 
   const groups = useMemo(() => {
@@ -70,43 +71,50 @@ export function RunningView({ projects, needs, onNewSession }: {
   const [typing, setTyping] = useState<string | null>(null);
   // The same sessions the list shows: those in a project that is open.
   const pick = useMemo(() => pickWatched(groups.flatMap((g) => g.sessions), needs ?? [], pins, typing), [groups, needs, pins, typing]);
+  const top = useMemo(() => topNeeds(needs ?? []), [needs]);
   const watching = layout === 'watch' && total > 0;
 
   return (
-    <section className="view" aria-labelledby="running-title">
+    <section className="view running-view" aria-labelledby="running-title">
       <header className="topbar">
-        <div className="topbar-title"><h1 id="running-title">Running</h1><span className="faint">{sessions.data ? plural(total, 'live session') : ''}</span></div>
+        <div className="topbar-title">
+          <h1 id="running-title">Running</h1>
+          {sessions.data && total ? <Count n={total} label={plural(total, 'live session')} /> : null}
+        </div>
         <div className="topbar-tools">
           {watching && pick.more ? (
-            <span className="faint small watch-more">
-              {plural(pick.more, 'more session')} running, not shown.{pick.pinned ? '' : ' Pin the ones to watch from the list.'}
+            <span className="toolbar-count watch-more" {...(pick.pinned ? {} : tipProps('Pin the ones to watch from the list'))}>
+              {plural(pick.more, 'more session')} running, not shown.
             </span>
           ) : null}
-          <Segmented label="Layout" value={layout} options={LAYOUTS} onChange={setLayout} />
+          <Segmented label="Layout" size="s" value={layout} options={LAYOUTS} onChange={setLayout} />
+          <Button size="s" tone="primary" icon="terminal" keys="new-session" onClick={onNewSession}>New session</Button>
         </div>
       </header>
       <div className="view-body">
         {sessions.error ? <NotAnswering error={sessions.error} onRetry={sessions.reload} /> : sessions.data && !total ? (
-          <Empty title="Nothing is running" action={<Button tone="primary" icon="terminal" onClick={onNewSession}>New session</Button>}>
-            Sessions run in Wanigan’s core, not in this window. Close the window and they keep going; this list is where to find them again.
-          </Empty>
+          <EmptyState title="Nothing is running" icon="running" action={<Button tone="primary" icon="terminal" keys="new-session" onClick={onNewSession}>New session</Button>}>
+            Sessions run in Wanigan’s core, not in this window: close it and they keep going, and this is where to find them again.
+          </EmptyState>
         ) : watching ? (
           <Watch shown={pick.shown} projects={projects} needs={needs} pins={pins} onTogglePin={togglePin}
             typing={typing} setTyping={setTyping} />
         ) : (
-          <div className="view-pad running">
+          <div className="running-list">
             {groups.map(({ project, sessions: list }) => (
-              <section key={project.id} className="running-group" aria-label={project.name}>
-                <h2 className="section-title"><ProjectMark projectKey={project.key} size="s" /> {project.name} <span className="faint">{list.length}</span></h2>
+              <Section key={project.id} className="running-group" title={<><ProjectMark projectKey={project.key} size="s" />{project.name} <Count n={list.length} /></>}>
                 <div className="srows">
                   {list.map((s) => (
                     <div key={s.id} className="running-row">
                       <SessionRow session={s} projectKey={project.key} />
-                      <PinButton session={s} pinned={pins.includes(s.id)} full={pinsFull} onToggle={() => togglePin(s.id)} />
+                      <span className="running-actions">
+                        <RowAction session={s} projectKey={project.key} need={top.get(s.id) ?? null} />
+                        <PinButton session={s} pinned={pins.includes(s.id)} full={pinsFull} onToggle={() => togglePin(s.id)} />
+                      </span>
                     </div>
                   ))}
                 </div>
-              </section>
+              </Section>
             ))}
           </div>
         )}
@@ -115,15 +123,39 @@ export function RunningView({ projects, needs, onNewSession }: {
   );
 }
 
+/**
+ * What a row that needs you offers, in place: the same action Needs you gives
+ * it, in amber. A session that needs nothing has only its pin.
+ */
+function RowAction({ session, projectKey, need }: { session: Session; projectKey: string; need: NeedKind | null }) {
+  if (!need || !AMBER.has(need)) return null;
+  const open = href({ name: 'session', projectKey, sessionId: session.id });
+  if (need === 'question' && session.cardKey) {
+    const key = session.cardKey;
+    return <Button size="s" tone="attention" onClick={() => openCard(key)} {...tipProps(`Answer the question on ${key}`)}>Answer</Button>;
+  }
+  const words = need === 'permission' ? 'Answer in terminal' : need === 'limit' ? 'Carry it on' : 'Open';
+  const tip = need === 'permission' ? 'The terminal has the keys when it opens'
+    : need === 'limit' ? 'Out of its usage limit: continue on another account, or wait for the reset'
+      : 'Another session is working on the same files';
+  return <a className="btn btn-s btn-attention" href={open} {...tipProps(tip)}><span>{words}</span></a>;
+}
+
 function PinButton({ session, pinned, full, onToggle }: { session: Session; pinned: boolean; full: boolean; onToggle: () => void }) {
   return (
-    <IconButton icon="pin" label={pinned ? `Unpin ${session.title} from Watch` : `Pin ${session.title} to Watch`}
-      aria-pressed={pinned} disabled={!pinned && full} onClick={onToggle}
-      title={!pinned && full ? `Watch shows ${WATCH_MAX} at a time. Unpin one first.` : pinned ? 'Unpin from Watch' : 'Pin to Watch'} />
+    <IconButton icon="pin" size="s"
+      label={pinned ? `Unpin ${session.title} from Watch` : full ? `Pin ${session.title} to Watch. ${WATCH_FULL}` : `Pin ${session.title} to Watch`}
+      pressed={pinned} disabled={!pinned && full} onClick={onToggle} />
   );
 }
 
-/** Up to four live terminals at once: one fills the room, two sit side by side, three or four make a grid. */
+/**
+ * Up to WATCH_MAX live terminals at once. The columns follow the count (one
+ * fills the room, two sit side by side, then 2×2, 3×2, 3×3, 4×3) and the room:
+ * no tile is narrower or shorter than its stylesheet's readable minimum (80
+ * columns by 16 rows of the terminal's font at the smallest text size), so a
+ * window too small for them all scrolls rather than squeezing them.
+ */
 function Watch({ shown, projects, needs, pins, onTogglePin, typing, setTyping }: {
   shown: Session[];
   projects: ProjectSummary[] | undefined;
@@ -141,14 +173,42 @@ function Watch({ shown, projects, needs, pins, onTogglePin, typing, setTyping }:
     const t = setInterval(() => tick((n) => n + 1), 30_000);
     return () => clearInterval(t);
   }, []);
+  const grid = useRef<HTMLDivElement>(null);
+  const probe = useRef<HTMLSpanElement>(null);
+  const [layout, setLayout] = useState<{ columns: number; least: number }>({ columns: 1, least: 0 });
+  useEffect(() => {
+    const el = grid.current;
+    if (!el) return undefined;
+    const measure = (): void => {
+      const css = getComputedStyle(el);
+      const room = el.clientWidth - parseFloat(css.paddingLeft) - parseFloat(css.paddingRight);
+      const gap = parseFloat(css.columnGap) || 0;
+      // The probe is the readable minimum, drawn by the stylesheet: its size is the least a tile may be.
+      const width = probe.current?.offsetWidth ?? 0;
+      const height = probe.current?.offsetHeight ?? 0;
+      const columns = watchColumns(shown.length, room + gap, width + gap);
+      setLayout((was) => (was.columns === columns && was.least === height ? was : { columns, least: height }));
+    };
+    measure();
+    const watch = new ResizeObserver(measure);
+    watch.observe(el);
+    return () => watch.disconnect();
+  }, [shown.length]);
+  const { columns, least } = layout;
+  // Stacked in one column, each tile keeps about a terminal's shape; otherwise the rows share the room, never under the least.
+  const rows = columns === 1 && shown.length > 1 ? `max(${least}px, 62cqi)` : `minmax(${least}px, 1fr)`;
 
   return (
     <div className="watch-area">
-      <div className={`watch watch-n${shown.length}`}>
-        {shown.map((s) => {
+      <span ref={probe} className="watch-probe" aria-hidden="true" />
+      <div ref={grid} className={`watch watch-n${shown.length}`}
+        style={{ gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))`, gridAutoRows: rows }} data-columns={columns}>
+        {shown.map((s, i) => {
           const project = projects?.find((p) => p.id === s.projectId);
+          // A last tile alone in its row takes the whole row.
+          const alone = columns > 1 && i === shown.length - 1 && shown.length % columns === 1;
           return (
-            <WatchTile key={s.id} session={s} projectKey={project?.key ?? '?'} need={top.get(s.id) ?? null}
+            <WatchTile key={s.id} session={s} projectKey={project?.key ?? '?'} need={top.get(s.id) ?? null} wide={alone}
               account={s.accountId ? accounts.data?.find((a) => a.id === s.accountId) : undefined}
               pinned={pins.includes(s.id)} onTogglePin={() => onTogglePin(s.id)}
               typing={typing === s.id} onTyping={(on) => setTyping(on ? s.id : null)} />
@@ -159,9 +219,11 @@ function Watch({ shown, projects, needs, pins, onTogglePin, typing, setTyping }:
   );
 }
 
-function WatchTile({ session, projectKey, need, account, pinned, onTogglePin, typing, onTyping }: {
+function WatchTile({ session, projectKey, need, wide, account, pinned, onTogglePin, typing, onTyping }: {
   session: Session;
   projectKey: string;
+  /** Alone in the last row: it spans the row. */
+  wide: boolean;
   need: NeedKind | null;
   account: Account | undefined;
   pinned: boolean;
@@ -178,12 +240,13 @@ function WatchTile({ session, projectKey, need, account, pinned, onTogglePin, ty
   const asking = need !== null && AMBER.has(need);
 
   return (
-    <article ref={tile} className={`watch-tile${asking ? ' asking' : ''}${typing ? ' typing' : ''}`} aria-label={session.title}>
+    <article ref={tile} className={`watch-tile${asking ? ' asking' : ''}${typing ? ' typing' : ''}`} aria-label={session.title}
+      style={wide ? { gridColumn: '1 / -1' } : undefined}>
       <header className="watch-head">
         <ProjectMark projectKey={projectKey} size="s" />
-        <span className="watch-title" title={session.title}>{session.title}</span>
+        <span className="watch-title" {...tipProps(session.title)}>{session.title}</span>
         <StateMark state={session.state} />
-        <span className="watch-facts" title={`${who}, running for ${duration(session.startedAt)}`}>
+        <span className="watch-facts" {...tipProps(`${who}, running for ${duration(session.startedAt)}`)}>
           <span className="watch-who">
             <Icon name={session.provider === 'shell' ? 'terminal' : session.provider} size={14} />
             {account ? <><span className="visually-hidden">{PROVIDER_LABEL[session.provider]} as </span>{account.label}</> : PROVIDER_LABEL[session.provider]}
@@ -191,7 +254,7 @@ function WatchTile({ session, projectKey, need, account, pinned, onTogglePin, ty
           <span className="faint">{duration(session.startedAt)}</span>
         </span>
         <span className="watch-tools">
-          <a className="btn btn-quiet btn-icon" href={open} aria-label={`Open ${session.title}`} title="Open the session"><Icon name="open" /></a>
+          <a className="btn btn-quiet btn-icon btn-icon-s" href={open} aria-label={`Open ${session.title}`} {...tipProps('Open the session')}><Icon name="open" size={14} /></a>
           {/* Pinning is done from the list; a tile Wanigan chose has nothing to unpin. */}
           {pinned ? <PinButton session={session} pinned full={false} onToggle={onTogglePin} /> : null}
         </span>
@@ -203,7 +266,7 @@ function WatchTile({ session, projectKey, need, account, pinned, onTogglePin, ty
         role="group"
         tabIndex={0}
         aria-label={typing ? `Typing into ${session.title}. Escape to stop.` : `${session.title}. Press Enter to type into it.`}
-        title={typing ? undefined : 'Click to type into this session'}
+        {...(typing ? {} : tipProps('Click, or press Enter, to type into this session'))}
         onMouseDown={(e) => { if (e.button === 0) { e.preventDefault(); giveKeys.current?.(); } }}
         onKeyDown={(e) => {
           if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); giveKeys.current?.(); }

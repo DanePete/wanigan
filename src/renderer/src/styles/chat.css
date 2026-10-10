@@ -1,8 +1,47 @@
-/* Talk to Wanigan: the round button at the bottom right, and the conversation
-   it opens. Water blue throughout: this is Wanigan himself. Amber appears only
-   through the orb, when something needs you. */
+/* Talk to Wanigan: his small orb at the status line's end, and the
+   conversation it opens. Water blue throughout: this is Wanigan himself. Amber
+   appears only through the orb, when something needs you. */
 
-/* ── the button ──────────────────────────────────────────────────────────── */
+/* ── the launcher, in the status line ────────────────────────────────────── */
+
+.chat-launch {
+  position: relative;
+  order: 99; /* last in the status line's slot, beside the keys */
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: var(--control-s);
+  height: var(--control-s);
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-round);
+  background: none;
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease);
+}
+
+.chat-launch:hover,
+.chat-launch[aria-expanded='true'] {
+  background: var(--hover);
+}
+
+.chat-launch:focus-visible {
+  border-radius: var(--radius-round);
+}
+
+/* An answer arrived while the conversation was closed. */
+.chat-launch-dot {
+  position: absolute;
+  top: var(--gap-hair);
+  right: var(--gap-hair);
+  width: var(--dot);
+  height: var(--dot);
+  border-radius: var(--radius-round);
+  background: var(--water);
+  box-shadow: 0 0 0 var(--ring) var(--surface);
+}
+
+/* ── the floating button, only where a view draws its own status line ────── */
 
 .chat-fab {
   position: fixed;
@@ -34,6 +73,7 @@
 
 /* While Wanigan answers, a slow ring of water light around him. */
 .chat-fab.thinking::after,
+.chat-launch.thinking::after,
 .chat-orb.thinking::after {
   content: '';
   position: absolute;
@@ -72,13 +112,9 @@
   right: calc(var(--drawer-w) + var(--space-5));
 }
 
-/* Toasts rise above the button; the last cards in a column can scroll clear of it. */
+/* Toasts rise above the floating button. */
 .app:has(> .chat-fab) ~ .toasts {
   bottom: calc(var(--space-5) + var(--fab) + var(--space-3));
-}
-
-.app:has(> .chat-fab) .column-cards {
-  padding-bottom: calc(var(--fab) + var(--space-4));
 }
 
 /* With the conversation open, toasts sit beside it, never over its composer:
@@ -95,9 +131,10 @@ body:has(> .chat-scrim) .toasts .toast {
 
 /* ── the conversation ────────────────────────────────────────────────────── */
 
+/* The conversation rises from the launcher's corner, above the status line, which stays in view. */
 .chat-scrim {
   place-items: end;
-  padding: var(--space-5);
+  padding: var(--space-5) var(--space-4) calc(var(--status-h) + var(--space-3));
 }
 
 .chat {
@@ -106,7 +143,6 @@ body:has(> .chat-scrim) .toasts .toast {
   width: var(--chat-w);
   height: min(720px, 100%);
   overflow: hidden;
-  border: 1px solid var(--line-strong);
   border-radius: var(--radius-xl);
   background: var(--raised);
   box-shadow: var(--elev-sheet);
@@ -127,8 +163,7 @@ body:has(> .chat-scrim) .toasts .toast {
   align-items: center;
   gap: var(--space-4);
   padding: var(--space-4) var(--space-3) var(--space-4) var(--space-4);
-  border-bottom: 1px solid var(--line);
-  background: linear-gradient(180deg, var(--water-soft), transparent);
+  border-bottom: var(--hairline) solid var(--line);
 }
 
 .chat-orb {
@@ -146,8 +181,7 @@ body:has(> .chat-scrim) .toasts .toast {
 
 .chat-words h2 {
   margin: 0;
-  font: 600 var(--text-xl) / var(--leading-tight) var(--font-display);
-  letter-spacing: 0.01em;
+  font: 600 var(--text-lg) / var(--leading-tight) var(--font-ui);
 }
 
 .chat-scope {
@@ -194,7 +228,6 @@ body:has(> .chat-scrim) .toasts .toast {
   max-width: 86%;
   margin: 0;
   padding: var(--space-2) var(--space-3);
-  border: 1px solid var(--water-line);
   border-radius: var(--radius-l) var(--radius-l) var(--radius-s) var(--radius-l);
   background: var(--water-soft);
   white-space: pre-wrap;
@@ -328,30 +361,23 @@ body:has(> .chat-scrim) .toasts .toast {
   align-items: flex-end;
   gap: var(--space-2);
   padding: var(--space-3) var(--space-4) var(--space-2);
-  border-top: 1px solid var(--line);
+  border-top: var(--hairline) solid var(--line);
 }
 
 .chat-compose textarea {
-  min-height: 36px;
-  max-height: 160px;
+  min-height: var(--control-m);
+  max-height: calc(var(--lh-md) * 8);
   overflow-y: auto;
   resize: none;
 }
 
-.chat-compose .btn {
-  height: 36px;
-}
-
-.chat-compose .btn-icon {
-  width: 36px;
-}
 
 .chat-files {
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
   padding: var(--space-3) var(--space-4) 0;
-  border-top: 1px solid var(--line);
+  border-top: var(--hairline) solid var(--line);
 }
 
 .chat-files + .chat-compose {
@@ -401,7 +427,8 @@ body:has(> .chat-scrim) .toasts .toast {
   white-space: nowrap;
 }
 
-.chat-keys kbd {
-  min-width: 16px;
-  padding: 0 3px;
+.chat-keys {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
 }

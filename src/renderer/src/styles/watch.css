@@ -1,92 +1,79 @@
-/* Running › Watch: up to four live terminals at once, each at its PTY's own size, scaled to fit. */
-
-.running-row {
-  display: flex;
-  align-items: center;
-  padding-right: var(--space-2);
-}
-
-.running-row:hover {
-  background: var(--raised);
-}
-
-.running-row .srow {
-  flex: 1;
-  min-width: 0;
-}
-
-.running-row .srow:hover {
-  background: none;
-}
+/*
+  Running › Watch: up to twelve live terminals at once (WATCH_MAX), each at its
+  PTY's own size, scaled to fit. The tiles are sheets on the canvas; amber
+  marks the ones that need you, the focus ring the one taking keys. Columns and
+  rows are set by RunningView from the count, the room and the probe below.
+*/
 
 .watch-more {
   white-space: nowrap;
 }
 
 .watch-area {
-  flex: 1;
+  position: relative;
+  flex: 1 0 auto;
   min-height: 0;
   display: flex;
   flex-direction: column;
+  background: var(--bg-canvas);
   container-type: inline-size;
 }
 
 .watch {
-  flex: 1;
-  min-height: 0;
+  flex: 1 0 auto;
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   grid-auto-rows: minmax(0, 1fr);
-  gap: var(--space-3);
-  padding: var(--space-4) var(--space-6) var(--space-6);
+  gap: var(--space-4);
+  padding: var(--space-5) var(--space-6) var(--space-6);
 }
 
-/* The bottom-right tile stays clear of the Talk to Wanigan button. */
-.app:has(> .chat-fab) .watch {
-  padding-bottom: calc(var(--fab) + var(--space-5) + var(--space-2));
-}
-
-/* Two side by side; three or four in a 2×2 grid, where a third takes the whole bottom row. */
-.watch-n2,
-.watch-n3,
-.watch-n4 {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-}
-
-.watch-n3 > :last-child {
-  grid-column: 1 / -1;
+/*
+  The least a tile may be, for a terminal to stay readable: 80 columns by 16
+  rows of the terminal's font at the smallest text size, with the tile's head
+  and padding. Never shown; RunningView measures it.
+*/
+.watch-probe {
+  position: absolute;
+  top: 0;
+  left: 0;
+  visibility: hidden;
+  pointer-events: none;
+  width: calc(80ch + 2 * var(--space-3));
+  height: calc(16 * 1.3em + var(--control-m) + var(--space-2) + 2 * var(--space-2));
+  font: var(--text-xs) / 1.3 var(--font-mono);
 }
 
 .watch-tile {
+  --terminal-bg: var(--surface);
   display: flex;
   flex-direction: column;
   min-width: 0;
   min-height: 0;
-  border: 1px solid var(--line);
-  border-radius: var(--radius-m);
-  background: var(--sunken);
   overflow: hidden;
-  transition: border-color var(--dur-fast) var(--ease), box-shadow var(--dur-fast) var(--ease);
+  border-radius: var(--radius-l);
+  background: var(--surface);
+  box-shadow: var(--elev-sheet);
+  transition: box-shadow var(--dur-fast) var(--ease);
 }
 
 .watch-head {
-  flex: none;
   display: flex;
+  flex: none;
   align-items: center;
   gap: var(--space-2);
-  min-height: 38px;
+  min-height: calc(var(--control-m) + var(--space-2));
   padding: var(--space-1) var(--space-1) var(--space-1) var(--space-3);
-  border-bottom: 1px solid var(--line);
-  background: var(--surface);
+  border-bottom: var(--hairline) solid var(--line);
   font-size: var(--text-sm);
 }
 
 .watch-title {
   flex: 1;
   min-width: 0;
-  font-size: var(--text-md);
-  font-weight: 500;
   overflow: hidden;
+  font-size: var(--text-base);
+  font-weight: 600;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -104,7 +91,7 @@
   display: flex;
   align-items: center;
   gap: var(--space-1);
-  max-width: 160px;
+  max-width: calc(var(--space-12) * 3);
   overflow: hidden;
   text-overflow: ellipsis;
 }
@@ -116,11 +103,7 @@
 .watch-tools {
   display: flex;
   align-items: center;
-}
-
-.watch-tools .btn-icon {
-  width: 28px;
-  height: 28px;
+  gap: var(--gap-hair);
 }
 
 .watch-screen {
@@ -134,26 +117,26 @@
 
 .watch-screen:focus-visible {
   border-radius: 0;
-  box-shadow: inset 0 0 0 2px var(--water-line);
+  outline: none;
+  box-shadow: inset 0 0 0 var(--focus-ring) var(--water);
 }
 
 .watch-screen .terminal {
   padding: 0;
 }
 
-/* Needs you: the board's asking card, as a tile. */
+/* Needs you: an amber edge and rule, as the board's asking card has. */
 .watch-tile.asking {
-  border-color: var(--amber-line);
+  box-shadow: var(--elev-sheet), inset 0 0 0 var(--hairline) var(--amber-line);
 }
 
 .watch-tile.asking .watch-head {
-  box-shadow: inset 3px 0 0 var(--amber);
+  box-shadow: inset var(--track-pad) 0 0 var(--amber);
 }
 
 /* Taking keys: the focus ring, on the whole tile. */
 .watch-tile.typing {
-  border-color: var(--water);
-  box-shadow: var(--focus);
+  box-shadow: var(--elev-sheet), var(--focus);
 }
 
 .watch-hint {
@@ -161,23 +144,12 @@
   right: var(--space-3);
   bottom: var(--space-2);
   padding: 0 var(--space-2);
-  border: 1px solid var(--water-line);
   border-radius: var(--radius-s);
-  background: var(--surface);
+  background: var(--raised);
+  box-shadow: var(--elev-float);
   color: var(--muted);
   font-size: var(--text-xs);
-  line-height: var(--lh-sm);
+  line-height: var(--lh-md);
   pointer-events: none;
-}
-
-/* Narrow: one column, each tile about a terminal's shape, and the page scrolls.
-   Below this, two terminals side by side shrink past easy reading. */
-@container (max-width: 1040px) {
-  .watch-n2,
-  .watch-n3,
-  .watch-n4 {
-    flex: none;
-    grid-template-columns: minmax(0, 1fr);
-    grid-auto-rows: max(360px, 62cqi);
-  }
+  animation: rise var(--dur) var(--ease);
 }

@@ -4,6 +4,7 @@
 import type { ConversationUsage } from '@shared/tokens';
 import { shortTokens, tokensUsed } from '@shared/tokens';
 import { useQuery } from '../lib/api';
+import { tipProps } from './ui';
 
 const FROM: Record<ConversationUsage['source'], string> = {
   claude: 'Claude Code’s transcript', codex: 'Codex’s rollout', gemini: 'Gemini CLI’s chat file', mixed: 'each agent’s own record',
@@ -21,18 +22,45 @@ function breakdown(u: ConversationUsage, what: string): string {
   ].filter(Boolean).join('\n');
 }
 
-/** "1.2M tokens · 84k in context", for a session's header. */
-export function SessionTokens({ sessionId }: { sessionId: string }) {
+/**
+ * A session's tokens, for its details panel: the total, how full the context
+ * is (a meter, when the window is known), and each kind, read from the agent's
+ * own record and said to be so.
+ */
+export function SessionUsage({ sessionId }: { sessionId: string }) {
   const q = useQuery('sessions.tokens', { id: sessionId }, ['sessions'], (_e, d) => (d as { sessionId?: string })?.sessionId === sessionId);
   const t = q.data;
-  if (!t || (!t.usage && !t.note)) return null;
-  if (!t.usage) return <span className="faint small" title={t.note ?? undefined}>tokens not counted</span>;
+  if (q.error) return <p className="usage-note error-text">Wanigan could not read the tokens: {q.error.message}</p>;
+  if (!t) return <p className="usage-note faint">Reading the agent’s record…</p>;
+  if (!t.usage) return <p className="usage-note faint">{t.note ?? 'Not counted: the agent has not saved this conversation yet.'}</p>;
   const u = t.usage;
+  const n = (x: number): string => x.toLocaleString();
+  const full = u.context !== null && u.contextWindow ? Math.min(100, Math.round((u.context / u.contextWindow) * 100)) : null;
   return (
-    <span className="mono small" title={breakdown(u, 'this conversation')}>
-      {shortTokens(tokensUsed(u))} tokens{u.context !== null
-        ? <span className="faint"> · {shortTokens(u.context)}{u.contextWindow ? ` of ${shortTokens(u.contextWindow)}` : ''} in context</span> : null}
-    </span>
+    <div className="usage">
+      <p className="usage-total"><span className="usage-big">{shortTokens(tokensUsed(u))}</span> tokens</p>
+      {u.context !== null ? (
+        <div className="usage-context">
+          <span className="usage-context-words">
+            {shortTokens(u.context)}{u.contextWindow ? ` of ${shortTokens(u.contextWindow)}` : ''} in context{u.model ? <span className="faint"> · {u.model}</span> : null}
+          </span>
+          {full !== null ? (
+            <span className="usage-meter" role="meter" aria-valuenow={full} aria-valuemin={0} aria-valuemax={100}
+              aria-label={`Context: ${full}% of the window used`}>
+              <span style={{ width: `${full}%` }} />
+            </span>
+          ) : null}
+        </div>
+      ) : null}
+      <dl className="facts usage-kinds">
+        <div><dt>Input</dt><dd className="mono">{n(u.input)}</dd></div>
+        <div><dt>Cache read</dt><dd className="mono">{n(u.cacheRead)}</dd></div>
+        <div><dt>Cache write</dt><dd className="mono">{n(u.cacheWrite)}</dd></div>
+        <div><dt>Output</dt><dd className="mono">{n(u.output)}</dd></div>
+        <div><dt>Requests</dt><dd className="mono">{n(u.requests)}{u.subagents ? <span className="faint"> · {u.subagents} {u.subagents === 1 ? 'subagent' : 'subagents'}</span> : null}</dd></div>
+      </dl>
+      <p className="usage-note faint">From {FROM[u.source]}. A plan is not billed per token, so no cost is shown.</p>
+    </div>
   );
 }
 
@@ -42,10 +70,10 @@ export function CardTokens({ cardId }: { cardId: string }) {
   const t = q.data;
   if (!t || (!t.usage && !t.uncounted)) return null;
   const skipped = t.uncounted ? `${t.uncounted} ${t.uncounted === 1 ? 'session' : 'sessions'} not counted: a Codex thread not yet known, a conversation not saved yet, or a Gemini chat outside Wanigan’s Gemini home.` : '';
-  if (!t.usage) return <span className="faint small" title={skipped}>tokens not counted</span>;
+  if (!t.usage) return <span className="faint small" {...tipProps(skipped)}>tokens not counted</span>;
   const what = t.sessions === 1 ? 'this card’s conversation' : `this card’s ${t.sessions} conversations`;
   return (
-    <span className="faint small mono" title={[breakdown(t.usage, what), skipped].filter(Boolean).join('\n')}>
+    <span className="faint small mono" {...tipProps([breakdown(t.usage, what), skipped].filter(Boolean).join('\n'))}>
       {shortTokens(tokensUsed(t.usage))}{t.uncounted ? '+' : ''} tokens
     </span>
   );

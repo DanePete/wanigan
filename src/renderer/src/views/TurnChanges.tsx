@@ -6,7 +6,7 @@ import { LIVE_STATES, type Session } from '@shared/model';
 import { turnName, type Checkpoint, type LastTurn, type TurnFile } from '@shared/checkpoints';
 import { attempt, call, useQuery } from '../lib/api';
 import { PROVIDER_LABEL, plural } from '../lib/format';
-import { Button, Dialog, Empty, IconButton, useToast } from '../components/ui';
+import { Button, Dialog, EmptyState, IconButton, tipProps, useToast } from '../components/ui';
 import { FileDiff, STATUS_LABEL } from '../components/FileDiff';
 import { Icon } from '../components/icons';
 import { EditButton } from '../editor/EditButton';
@@ -31,7 +31,7 @@ export function TurnChange({ checkpoint, baseline, last, open, onOpen, onUndo }:
       {checkpoint.files === null ? <span className="faint">What it changed is unknown: no checkpoint from before it.</span>
         : checkpoint.files === 0 ? <span className="faint">No file changes</span>
           : (
-            <button type="button" className={`turn-diff${open ? ' on' : ''}`} aria-pressed={open} onClick={onOpen} title="See what changed in the folder during this turn">
+            <button type="button" className={`turn-diff${open ? ' on' : ''}`} aria-pressed={open} onClick={onOpen} {...tipProps('See what changed in the folder during this turn')}>
               <span>{plural(checkpoint.files, 'file')}</span>
               {checkpoint.additions ? <span className="add">+{checkpoint.additions}</span> : null}
               {checkpoint.deletions ? <span className="del">−{checkpoint.deletions}</span> : null}
@@ -79,27 +79,28 @@ export function TurnPanel({ session, projectId, checkpoint, label, last, onUndo,
   useEffect(() => { setSelected(null); }, [checkpoint.id]);
 
   return (
-    <section className="turn-panel" aria-labelledby="turn-panel-title" ref={panel} tabIndex={-1}
+    <section className="turn-panel" aria-labelledby="turn-panel-title" aria-describedby="turn-panel-what" ref={panel} tabIndex={-1}
       onKeyDown={(e) => { if (e.key === 'Escape' && !document.querySelector('[aria-modal="true"]')) { e.stopPropagation(); close.current(); } }}>
       <header className="turn-panel-head">
+        <IconButton icon="back" size="s" label="Back to the terminal" keys={{ id: null, label: 'Back to the terminal', group: 'In dialogs and lists', keys: ['Esc'] }} onClick={onClose} />
         <h2 id="turn-panel-title">{label}</h2>
+        <span id="turn-panel-what" className="visually-hidden">What changed in the folder during this turn.</span>
         {changes.data && !changes.data.gone ? (
           <span className="changes-summary">
-            <strong>{plural(files.length, 'file')} changed</strong>
+            <span>{plural(files.length, 'file')} changed</span>
             <span className="add">+{changes.data.additions}</span>
             <span className="del">−{changes.data.deletions}</span>
           </span>
         ) : null}
-        <span className="turn-panel-what faint">
-          What changed in the folder during this turn{changes.data?.shared ? '. Another session was running there too, so some of it may be theirs.' : '.'}
+        <span className="turn-panel-end">
+          {last ? <UndoControl last={last} undone={last.action === 'redo'} onUndo={onUndo} /> : null}
         </span>
-        {last ? <UndoControl last={last} undone={last.action === 'redo'} onUndo={onUndo} /> : null}
-        <IconButton icon="close" label="Back to the terminal" onClick={onClose} />
       </header>
+      {changes.data?.shared ? <p className="turn-panel-note">Another session was running in this folder too, so some of this may be its work.</p> : null}
       {changes.data?.includes ? <p className="turn-panel-note">{changes.data.includes}</p> : null}
-      {changes.error ? <p className="error-text view-pad">{changes.error.message}</p>
-        : !changes.data ? <p className="faint view-pad">Reading the checkpoint…</p>
-          : changes.data.gone ? <Empty title="These changes cannot be shown">{changes.data.gone}</Empty>
+      {changes.error ? <EmptyState title="These changes could not be read" icon="alert">{changes.error.message}</EmptyState>
+        : !changes.data ? <div className="turn-panel-loading" role="status" aria-label="Reading the checkpoint" />
+          : changes.data.gone ? <EmptyState title="These changes cannot be shown">{changes.data.gone}</EmptyState>
             : (
               <div className="changes-body">
                 <ul className="changes-files" aria-label={`Files ${label.toLowerCase()} changed`}>
@@ -113,7 +114,7 @@ export function TurnPanel({ session, projectId, checkpoint, label, last, onUndo,
                 </ul>
                 <div className="changes-diff">
                   {!current ? null
-                    : current.diff === null && !current.binary ? <p className="faint view-pad">This turn changed too much to show every file here.</p>
+                    : current.diff === null && !current.binary ? <EmptyState title="Too much to show here">This turn changed too much to show every file here.</EmptyState>
                       : (
                         <FileDiff key={current.path} projectId={projectId} cardId={null} file={current} notes={[]} onRemove={() => {}}
                           given={{ path: current.path, diff: current.diff ?? '', truncated: current.truncated }}
@@ -130,8 +131,8 @@ function FileRow({ file }: { file: TurnFile }) {
   const status = file.status === '?' ? 'U' : file.status;
   return (
     <>
-      <span className={`fstatus fstatus-${status}`} title={STATUS_LABEL[file.status]}>{status}</span>
-      <span className="fpath" title={file.path}>
+      <span className={`fstatus fstatus-${status}`} {...tipProps(STATUS_LABEL[file.status])}>{status}</span>
+      <span className="fpath" {...tipProps(file.path)}>
         <span className="fname">{file.path.split('/').pop()}</span>
         <span className="fdir">{file.path.includes('/') ? file.path.slice(0, file.path.lastIndexOf('/')) : ''}</span>
       </span>
@@ -177,14 +178,14 @@ export function UndoDialog({ session, last, onClose }: { session: Session; last:
         <p className="ask-warning"><Icon name="alert" size={14} /> Another session was running in this folder during {name}, so some of these changes may be its work. {redo ? 'Redoing' : 'Undoing'} puts them back too.</p>
       ) : null}
       {changes.error ? <p className="error-text">{changes.error.message}</p>
-        : !changes.data ? <p className="faint">Reading the checkpoint…</p>
+        : !changes.data ? <p className="faint" role="status">Reading the checkpoint…</p>
           : changes.data.gone ? <p className="error-text">{changes.data.gone}</p>
             : (
               <ul className="undo-files" aria-label="Files that change">
                 {files.map((f) => <li key={f.path}><FileRow file={f} /></li>)}
               </ul>
             )}
-      <p className="faint small">
+      <p className="field-hint">
         Wanigan checkpoints the folder as it is now first, so you can {redo ? 'undo this again' : 'redo it'}. Only the files change: nothing is committed or staged, and nothing is typed into the session.
       </p>
     </Dialog>
