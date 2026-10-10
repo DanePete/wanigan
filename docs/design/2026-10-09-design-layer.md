@@ -301,9 +301,15 @@ or the project.
    project's edits from the core and resolves each one on the page: the
    trace's parts by `identityKey` (or, for scope `kind`, every part with the
    same `kindKey`), then `inner` inside each part's own element, and checks
-   `textHash`. It tags what it found with `data-wl-edit`, injects
-   `compileLayer()` as one stylesheet it replaces whole, and patches the
-   words of text edits in place. An edit of this page that does not resolve
+   `textHash` (words one of the layer's own text edits saved are put back
+   first, so a style on a retyped heading, or the card around it, still
+   resolves). It tags what it found with `data-wl-edit`, injects
+   `compileLayer()` as one stylesheet, and patches the words of text edits in
+   place. The sheet is gated on a generation the page's root names
+   (`data-wl-layer`): Electron cannot take a user-origin sheet out again
+   (`removeInsertedCSS` removes author sheets only, seen on Electron 44), so
+   a new sheet replaces the old one by the root naming its generation, and
+   switching the layer off names none. An edit of this page that does not resolve
    is reported as orphaned (and the core told); edits of other pages are left
    alone.
 2. `layerTarget()` keys the picked element: its part's identity (the
@@ -317,7 +323,9 @@ or the project.
    with why.
 4. `layerVerify(id)` renders the page with the layer (the design) and without
    it (the result) in hidden windows in the view's session at each width,
-   measures the noise floor by rendering the result twice, then runs the
+   measures the noise floor by rendering each version twice (every width is
+   judged against the one floor the verdict states, the largest over both
+   versions and every width), then runs the
    steps in order: computed styles and boxes of the touched elements, pixels
    around them, then the rest of the page. It keeps the pictures in the data
    folder and tells the core (`verified`, or back to `draft` with the verdict).

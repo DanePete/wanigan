@@ -9,8 +9,10 @@
 //   descendants' too, as the site rendered them) checked against `textHash` (layerTextHash, here: the page script
 //   answers the text, so there is one hash). A WordPress block's identity is its place in the stored markup, so after
 //   a reorder it names whatever block is there now: the text is what tells them apart. What resolves is tagged with
-//   `data-wl-edit`; compileLayer() is injected as one stylesheet, replaced whole; text edits patch their words in
-//   place. The same stored thing rendered twice on a page (an entity, a post) is two parts with one identity: an edit
+//   `data-wl-edit`; compileLayer() is injected as one stylesheet, gated on a generation the page's root names, so a new
+//   one replaces it whole and switching off names none (Electron cannot take a user-origin sheet out); text edits
+//   patch their words in place. Words one of the layer's own text edits saved are not other words: put back, they
+//   still name the element an edit was made on. The same stored thing rendered twice on a page (an entity, a post) is two parts with one identity: an edit
 //   for `this` reaches every one of them, as the native change will, once one of them shows the words it was made on.
 //   An edit of this page that no longer resolves, or resolves to other words, is orphaned and the core is
 //   told; it is a draft again once it resolves. Without a trace nothing is resolved by identity, and nothing is
@@ -18,8 +20,8 @@
 // - Implementing: only words in a plain text field the helper can save (`POST /_wanigan/save`, the window's own
 //   helperSave path, as the logged-in user). Styles and tokens go to an agent as a brief; anything else says why.
 // - Verifying ("Stage 3: verify", steps 1–3): the design (the page with the layer) and the result (the page without
-//   it) rendered in hidden windows in the view's session at each width (live-capture.ts), the result twice first for
-//   the noise floor; the comparisons are src/shared/layer-verify.ts's. Pictures are kept in the data folder under
+//   it) rendered in hidden windows in the view's session at each width (live-capture.ts), each twice for the noise
+//   floor, and every width judged against the one floor the verdict states (the largest over both and every width); the comparisons are src/shared/layer-verify.ts's. Pictures are kept in the data folder under
 //   live-layer/<project>/<edit>/, and the core is told: verified, or back to draft with the verdict.
 //   What step 3 can see, as contracted: the design is the native page with the layer, so a change the native
 //   implementation made beyond the touched elements is in both renders and does not show. Seen in Electron on a
@@ -34,7 +36,7 @@ import {
   type LayerApplied, type LayerEdit, type LayerImplemented, type LayerPickTarget, type LayerSnapshot, type LayerTarget, type LayerVerdict,
 } from '../shared/design-layer.ts';
 import {
-  MAX_DIFFERENCES, compareElements, comparePixels, diffBitmaps, diffPicture, editsAt, judge, noiseFloor, verdictNoise, verifyWidths, zonesOf,
+  MAX_DIFFERENCES, compareElements, comparePixels, diffBitmaps, diffPicture, editsAt, judge, noiseFloor, verdictNoise, verifyWidths, widestNoise, zonesOf,
   type Bitmap, type ElementSnap, type WidthFindings, type Zone,
 } from '../shared/layer-verify.ts';
 import type { LiveTraceAnswer } from '../shared/live-lens.ts';
@@ -120,6 +122,15 @@ export async function resolveLayer(run: Run, trace: LiveTrace | null, edits: rea
     asked.push(e);
   }
   if (!asked.length) return out;
+  // Words the site renders now because one of the layer's own text edits was made real (implemented, verified or
+  // retired, or back to draft after a verification): put back as they were, an element showing them is still the
+  // one an edit was made on (a style on a heading whose words were then saved, a card around that heading). A
+  // draft never saved is left out: its words are not the site's, so they cannot vouch for an element.
+  const fold = (t: string): string => t.replace(/\s+/g, ' ').trim();
+  const saved = edits.flatMap((x) => (x.change.type === 'text' && typeof x.before.text === 'string'
+    && (x.state === 'implemented' || x.state === 'verified' || x.state === 'retired' || (x.state === 'draft' && x.verdict !== null))
+    ? [{ now: fold(x.change.value), was: fold(x.before.text) }] : [])).filter((w) => w.now && w.now !== w.was);
+  const asItWas = (t: string): string => saved.reduce((acc, w) => acc.split(w.now).join(w.was), fold(t));
   const found = await run<Found | null>(call('layerFind', specs, true), null);
   // No page script answered: nothing is said of any edit.
   if (!found || typeof found !== 'object') return out;
@@ -137,7 +148,7 @@ export async function resolveLayer(run: Run, trace: LiveTrace | null, edits: rea
     const named = !guarded(e) || Array.from({ length: count }, (_, i) => {
       const t = typeof texts[i] === 'string' ? texts[i] as string : null;
       const h = t === null ? null : layerTextHash(t);
-      return h === e.target.textHash || h === theirs;
+      return h === e.target.textHash || h === theirs || (t !== null && saved.length > 0 && layerTextHash(asItWas(t)) === e.target.textHash);
     }).some(Boolean);
     if (count && !named) why = 'Its element shows other words now.';
     for (let i = 0; i < count && named; i++) {
@@ -245,11 +256,11 @@ function renderInWindow(deps: {
       await page.read(script, null, PAGE_WORLD);
       const run: Run = (code, fallback) => page.read(code, fallback, PAGE_WORLD);
       const res = await resolveLayer(run, trace, r.edits, r.path);
-      await run(call('layerSet', { tags: res.tags, texts: r.design ? res.texts : [], on: r.design }), 0);
       if (r.design) {
-        const css = compileLayer(r.edits, []);
+        const css = compileLayer(r.edits, [], 'g1');
         if (css) await page.wc.insertCSS(css, { cssOrigin: 'user' });
       }
+      await run(call('layerSet', { tags: res.tags, texts: r.design ? res.texts : [], on: r.design, gate: r.design ? 'g1' : null }), 0);
       await page.freeze();
       const { height } = await page.grow(VERIFY_MAX_HEIGHT);
       const elements = snapsOf(await run<unknown>(call('layerSnap', r.edits.map((e) => e.id), LAYER_PROPERTIES), []));
@@ -312,8 +323,10 @@ export function wireLiveLayer(options: LiveLayerOptions): { hooks: LiveViewHooks
   const root = join(options.dataDir, 'live-layer');
   /** The layer is shown (layerShow); a load keeps the choice. */
   let on = true;
-  /** The one stylesheet the layer injected into the view's page, by the page's webContents. */
+  /** The stylesheet the layer injected into the view's page last, by the page's webContents. */
   let sheet: { wc: number; key: string } | null = null;
+  /** Each sheet's generation: the page's root names the one that holds (compileLayer's gate). */
+  let generation = 0;
   /** Applying, one at a time; and verifying, one at a time (each loads whole pages in hidden windows). */
   let applying: Promise<unknown> = Promise.resolve();
   let verifying: Promise<unknown> = Promise.resolve();
@@ -332,14 +345,19 @@ export function wireLiveLayer(options: LiveLayerOptions): { hooks: LiveViewHooks
     return url && sameSite(cur.base, url) ? { cur, url, path: pathOf(url) } : null;
   };
 
-  /** Replace the layer's one stylesheet on a page: the new one in before the old one goes, so nothing flickers. */
-  const replaceSheet = async (wc: WebContents, css: string): Promise<void> => {
+  /**
+   * Put the layer's new stylesheet on a page, gated on a generation the page does not name yet, so it holds nothing
+   * until layerSet switches the root to it. The user origin: its !important outranks every page declaration, a
+   * layered !important included (an author sheet from insertCSS comes before the page's and loses ties:
+   * docs/research/2026-10-09-design-layer-probes.md). Returns the old sheet's key, to let go of once the page has
+   * moved on. Electron cannot take a user-origin sheet out (removeInsertedCSS removes author sheets only), so the
+   * old one stays inert under a generation the root no longer names; asking costs nothing.
+   */
+  const putSheet = async (wc: WebContents, css: string): Promise<string | null> => {
     const old = sheet && sheet.wc === wc.id ? sheet.key : null;
     sheet = null;
-    // The user origin: its !important outranks every page declaration, a layered !important included (an author
-    // sheet from insertCSS comes before the page's and loses ties: docs/research/2026-10-09-design-layer-probes.md).
     if (css) sheet = { wc: wc.id, key: await wc.insertCSS(css, { cssOrigin: 'user' }) };
-    if (old) await wc.removeInsertedCSS(old).catch(() => {});
+    return old;
   };
 
   const applyNow = async (): Promise<LayerApplied> => {
@@ -350,11 +368,15 @@ export function wireLiveLayer(options: LiveLayerOptions): { hooks: LiveViewHooks
     const answer = await options.trace();
     const res = await resolveLayer(options.run, answer.state === 'ok' ? answer.trace : null, snap.edits, path);
     const now = effective(snap.edits, res);
-    await options.run(call('layerSet', { tags: res.tags, texts: on ? res.texts : [], on }), 0);
     // A page that went away meanwhile has its own load, and is applied then.
     if (cur.webContents.isDestroyed() || cur.webContents.getURL() !== url) return { page: path, shown: [], orphaned: [], elsewhere: [], off: !on };
-    // Phase 1 passes no breakpoints: an edit for a named one is left out, not guessed.
-    await replaceSheet(cur.webContents, on ? compileLayer(now, []) : '');
+    // Phase 1 passes no breakpoints: an edit for a named one is left out, not guessed. The new sheet goes in inert,
+    // then one call tags, patches the words and names its generation on the root: nothing flickers, and switched
+    // off, the root names none.
+    const gate = on ? `g${++generation}` : null;
+    const old = await putSheet(cur.webContents, gate ? compileLayer(now, [], gate) : '');
+    await options.run(call('layerSet', { tags: res.tags, texts: on ? res.texts : [], on, gate }), 0);
+    if (old && !cur.webContents.isDestroyed()) await cur.webContents.removeInsertedCSS(old).catch(() => {});
     // The core is told what this page found: lost edits are orphaned, found ones are drafts again.
     const was = new Map(snap.edits.map((e) => [e.id, e.state]));
     for (const o of res.orphaned) if (was.get(o.id) !== 'orphaned') await mark(cur.projectId, o.id, 'orphaned');
@@ -497,7 +519,7 @@ export function wireLiveLayer(options: LiveLayerOptions): { hooks: LiveViewHooks
     const ask = (width: number, design: boolean) => render({ projectId, partition, url, base: site.url as string, token: site.token as string, width, path: page, edits, design });
 
     const found: WidthFindings[] = [];
-    const images: { width: number; design: Buffer; result: Buffer; diff: Buffer }[] = [];
+    const shots: { width: number; design: Buffer; result: Buffer; resultBitmap: Bitmap; d: ReturnType<typeof diffBitmaps> }[] = [];
     for (const width of widths) {
       const first = await ask(width, false);
       if ('error' in first) throw new Error(first.error);
@@ -505,7 +527,10 @@ export function wireLiveLayer(options: LiveLayerOptions): { hooks: LiveViewHooks
       if ('error' in second) throw new Error(second.error);
       const design = await ask(width, true);
       if ('error' in design) throw new Error(design.error);
-      const noise = noiseFloor(first.bitmap, second.bitmap);
+      const again = await ask(width, true);
+      if ('error' in again) throw new Error(again.error);
+      // Each version against itself: what this page does not repeat exactly, whichever of the two it is.
+      const noise = widestNoise([noiseFloor(first.bitmap, second.bitmap), noiseFloor(design.bitmap, again.bitmap)]);
       const elements = compareElements(design.elements, first.elements, width);
       // An edit the design cannot find is not verified by finding nothing different.
       for (const e of edits) {
@@ -517,11 +542,16 @@ export function wireLiveLayer(options: LiveLayerOptions): { hooks: LiveViewHooks
       for (const e of edits) if (e.change.type === 'token') zones.push({ edit: e.id, rect: { x: 0, y: 0, width: Number.MAX_SAFE_INTEGER, height: Number.MAX_SAFE_INTEGER } });
       const d = diffBitmaps(design.bitmap, first.bitmap);
       found.push({ width, noise, elements, pixels: comparePixels(d, zones, width) });
-      images.push({ width, design: design.png, result: first.png, diff: d.pixels ? await encode(diffPicture(first.bitmap, d, noise)) : Buffer.alloc(0) });
+      shots.push({ width, design: design.png, result: first.png, resultBitmap: first.bitmap, d });
     }
-    const outcome = judge(found);
+    // One floor for the whole verdict, the one it states: the largest over both versions and every width. Two renders
+    // of a width that happened to match exactly do not make that width stricter than the page is.
+    const floor = verdictNoise(found);
+    const outcome = judge(found.map((w) => ({ ...w, noise: floor })));
+    const images: { width: number; design: Buffer; result: Buffer; diff: Buffer }[] = [];
+    for (const i of shots) images.push({ width: i.width, design: i.design, result: i.result, diff: i.d.pixels ? await encode(diffPicture(i.resultBitmap, i.d, floor)) : Buffer.alloc(0) });
     const base: Omit<LayerVerdict, 'pictures'> = {
-      at: clock(), ok: outcome.ok, failed: outcome.failed, widths, noise: verdictNoise(found), differences: outcome.differences.slice(0, MAX_DIFFERENCES),
+      at: clock(), ok: outcome.ok, failed: outcome.failed, widths, noise: floor, differences: outcome.differences.slice(0, MAX_DIFFERENCES),
     };
     // The pictures, for each edit's tray row: its own folder, written afresh.
     const verdicts = new Map<string, LayerVerdict>();

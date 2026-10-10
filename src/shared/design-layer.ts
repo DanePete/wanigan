@@ -221,13 +221,27 @@ export function layerBreakpoints(raw: readonly { id: unknown; label: unknown; me
 /** The selector for an edit's elements: tagged by the page script, doubled so the preview wins the cascade. */
 export const layerSelector = (id: string): string => `[data-wl-edit~="${id}"][data-wl-edit~="${id}"]`;
 
+/** A stylesheet's generation, as the page's root names it (`data-wl-layer`): `g` and a number. */
+export const LAYER_GATE = /^g\d{1,9}$/;
+
 /**
  * The preview stylesheet for the edits in effect (drafts and implemented ones
  * not yet verified), in the order they were made, so a later edit to the same
  * property wins. Tokens go on `:root`. Edits for a breakpoint the theme does
  * not declare are left out rather than guessed.
+ *
+ * With a `gate`, every rule holds only while the page's root says that
+ * generation (`<html data-wl-layer="g7">`). The sheet is injected at the user
+ * origin, and Electron cannot take a user-origin sheet out again
+ * (removeInsertedCSS removes author sheets only, seen on Electron 44): a sheet
+ * the page no longer names matches nothing, so switching the layer off or
+ * replacing it is one attribute on the root.
  */
-export function compileLayer(edits: readonly LayerEdit[], breakpoints: readonly LayerBreakpoint[]): string {
+export function compileLayer(edits: readonly LayerEdit[], breakpoints: readonly LayerBreakpoint[], gate: string | null = null): string {
+  const root = gate !== null && LAYER_GATE.test(gate) ? `:root[data-wl-layer="${gate}"]` : null;
+  if (gate !== null && !root) return '';
+  // The root itself and everything under it: an edit may be on <html>.
+  const scoped = (sel: string): string => (root ? `${root} ${sel}, ${root}${sel}` : sel);
   const media = new Map(breakpoints.map((b) => [b.id, b.media]));
   const blocks = new Map<string, string[]>();
   const add = (bp: string, rule: string): void => {
@@ -240,14 +254,14 @@ export function compileLayer(edits: readonly LayerEdit[], breakpoints: readonly 
     if (e.breakpoint !== 'all' && !media.has(e.breakpoint)) continue;
     if (e.change.type === 'token') {
       const value = layerValue(e.change.value);
-      if (value !== null && TOKEN.test(e.change.name)) add(e.breakpoint, `:root { ${e.change.name}: ${value} !important; }`);
+      if (value !== null && TOKEN.test(e.change.name)) add(e.breakpoint, `${root ?? ':root'} { ${e.change.name}: ${value} !important; }`);
       continue;
     }
     if (e.change.type !== 'style' || !ID.test(e.id)) continue;
     const decls = Object.entries(e.change.values)
       .filter(([k, v]) => (LAYER_PROPERTIES as readonly string[]).includes(k) && layerValue(v) !== null)
       .map(([k, v]) => `${k}: ${layerValue(v)} !important;`);
-    if (decls.length) add(e.breakpoint, `${layerSelector(e.id)} { ${decls.join(' ')} }`);
+    if (decls.length) add(e.breakpoint, `${scoped(layerSelector(e.id))} { ${decls.join(' ')} }`);
   }
   const out: string[] = [];
   const all = blocks.get('all');
@@ -348,8 +362,9 @@ export type VerifyStep = (typeof VERIFY_STEPS)[number];
 /**
  * What a verification said (LiveBridge.layerVerify), kept on the edit. The design is the page with the layer, the
  * result is the page without it, each rendered in a hidden window at the same width, scale and session. The noise
- * floor is measured first, by rendering one version twice, and stated as two numbers (the largest channel difference
- * and how many pixels differ), never as a percentage.
+ * floor is measured first, by rendering each version twice, and stated as two numbers (the largest channel difference
+ * and how many pixels differ, each the largest over both versions and every width), never as a percentage; every
+ * width is judged against it.
  */
 export interface LayerVerdict {
   at: number;
