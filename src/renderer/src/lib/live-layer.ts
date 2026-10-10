@@ -64,6 +64,17 @@ export const STATE_DETAIL: Record<LayerState, string> = {
   retired: 'Archived.',
 };
 
+/**
+ * What an edit's state means, said with it. A style or a token is made in the theme by an agent, and phase 1 does not
+ * yet see when one has: a draft of one is said honestly, not as "the site does not have it".
+ */
+export function stateDetail(e: Pick<LayerEdit, 'state' | 'change'>): string {
+  if (e.state === 'draft' && (e.change.type === 'style' || e.change.type === 'token')) {
+    return 'In Wanigan’s layer: the page shows it. An agent makes it in the theme, and the layer cannot tell yet when one has, so it stays a draft until then.';
+  }
+  return STATE_DETAIL[e.state];
+}
+
 /** Why an edit is fragile, as the main process decides it when it keys a pick (src/shared/layer-words.ts fragileWhy), or null. */
 export const fragileOf = (e: Pick<LayerEdit, 'target' | 'scope'>): string | null => fragileWhy(e.target, e.scope);
 export const isFragile = (e: Pick<LayerEdit, 'target' | 'scope'>): boolean => fragileOf(e) !== null;
@@ -133,10 +144,14 @@ export function orphanWhy(edit: LayerEdit, applied: LayerApplied | null): string
     : `Its element was not found on ${edit.page} the last time that page was shown. Open it to look again.`;
 }
 
-/** What undo would do, said on its button. */
+/**
+ * What undo would do, said on its button. The core blocks undo when the newest add is of an edit in the site (taking
+ * it out of the layer would not take it out of the site): with edits listed and nothing to undo, that is why, since
+ * every listed edit's add is still in effect.
+ */
 export function undoLabel(snapshot: LayerSnapshot | null | undefined): string {
   const u = snapshot?.undo;
-  if (!u) return 'Nothing to undo';
+  if (!u) return snapshot?.edits.length ? 'Nothing to undo: the newest edit is in the site' : 'Nothing to undo';
   return u.action === 'add' ? `Undo: take “${u.label}” out of the layer` : `Undo: bring back “${u.label}”`;
 }
 
@@ -163,15 +178,15 @@ export function verdictHeadline(v: LayerVerdict): string {
   return `Not verified at ${widthsWords(v.widths)}: the site does not render it as designed yet.`;
 }
 
-/** Which step failed, and that the ones after it did not run. */
+/** Which step failed, and that the ones after it were not judged (they were measured: the first failing step decides). */
 export function failedWords(v: LayerVerdict): string | null {
   if (v.ok || !v.failed) return null;
-  return v.failed === 'rest' ? `${STEP_WORDS.rest} failed.` : `${STEP_WORDS[v.failed]} failed; the steps after it did not run.`;
+  return v.failed === 'rest' ? `${STEP_WORDS.rest} failed.` : `${STEP_WORDS[v.failed]} failed; the steps after it were not judged.`;
 }
 
-/** The noise floor, as the verdict states it: two numbers, never a percentage. */
+/** The noise floor, as the verdict states it: two numbers, never a percentage, the most either version differed from itself. */
 export const noiseWords = (v: LayerVerdict): string =>
-  `Noise floor: up to ${v.noise.maxDiff} of 255 in ${many(v.noise.pixels, 'pixel')}, from rendering the site twice.`;
+  `Noise floor: up to ${v.noise.maxDiff} of 255 in ${many(v.noise.pixels, 'pixel')}, the most the page with the layer or without it differed from itself when rendered twice, at any width.`;
 
 const rectWords = (r: LayerRect): string => `${Math.round(r.width)} × ${Math.round(r.height)} at ${Math.round(r.x)}, ${Math.round(r.y)}`;
 const boxWords = (r: LayerRect): string => `a ${Math.round(r.width)} × ${Math.round(r.height)} box at ${Math.round(r.x)}, ${Math.round(r.y)}`;
@@ -179,7 +194,15 @@ const boxWords = (r: LayerRect): string => `a ${Math.round(r.width)} × ${Math.r
 /** One difference the verification found, in words. */
 export function differenceWords(d: LayerDifference): string {
   switch (d.kind) {
-    case 'style': return `At ${d.width} px, ${d.element}: ${d.property} is ${d.result} in the site, ${d.design} in the design.`;
+    case 'style':
+      // What the verification could not compare is said as that, not as a property with a value.
+      if (d.property === 'element') {
+        return d.design === d.result ? `At ${d.width} px, ${d.element}: ${d.design}, in the design and in the site.`
+          : `At ${d.width} px, ${d.element}: in the design, ${d.design}; in the site, ${d.result}.`;
+      }
+      if (d.property === 'compared') return `At ${d.width} px, the page was compared ${d.design}, ${d.result}.`;
+      if (d.property === 'breakpoint') return `At ${d.width} px, ${d.element} (${d.design}) is ${d.result}.`;
+      return `At ${d.width} px, ${d.element}: ${d.property} is ${d.result} in the site, ${d.design} in the design.`;
     case 'box': return `At ${d.width} px, ${d.element}’s box is ${rectWords(d.result)} in the site, ${rectWords(d.design)} in the design.`;
     case 'pixels': return `At ${d.width} px, ${many(d.pixels, 'pixel')} differ around it, by up to ${d.maxDiff} of 255, in ${boxWords(d.rect)}.`;
     case 'leak': return `At ${d.width} px, ${many(d.pixels, 'pixel')} differ away from every edited element, by up to ${d.maxDiff} of 255, in ${boxWords(d.rect)}: the change reached further than it should.`;
@@ -259,3 +282,33 @@ export function templateOf(edit: LayerEdit, saved: readonly LiveEdit[] | null | 
 /** A key that sends what was typed: Enter alone, pressed once, not one an input method is still composing with (it confirms a word there). */
 export const sendsTyped = (e: { key: string; shiftKey: boolean; metaKey: boolean; ctrlKey: boolean; altKey: boolean; repeat: boolean; isComposing: boolean }): boolean =>
   e.key === 'Enter' && !e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey && !e.repeat && !e.isComposing;
+
+/* ── the brief to an agent ── */
+
+/** A part's identity, as an agent reads it: what the site stores it as. */
+export function identityWords(i: PartIdentity): string {
+  switch (i.kind) {
+    case 'entity': return `${i.type} ${i.id}${i.bundle ? ` (${i.bundle})` : ''}${i.field ? `, field ${i.field}` : ''}${i.item ? `, item ${i.item}` : ''}${i.langcode ? `, in ${i.langcode}` : ''}`;
+    case 'component': return `component ${i.name}${i.within ? ` inside ${i.within}` : ''}, number ${i.nth + 1} of its name there`;
+    case 'config': return `${i.type} ${i.id}${i.plugin ? ` (${i.plugin})` : ''}`;
+    case 'block': return `block ${i.name} at ${i.path.join('.')} in ${i.store}`;
+  }
+}
+
+/** The edited element, as a brief names it: its label, then what the site stores it as and the path inside it, or the document path. */
+export function elementWords(e: Pick<LayerEdit, 'label' | 'target'>): string {
+  const t = e.target;
+  if (t.part) return `${e.label}: ${identityWords(t.part)}${t.inner ? `, at \`${t.inner}\` inside it` : ''}`;
+  return t.selector ? `${e.label}: \`${t.selector}\` in the page (no part of the site names it)` : e.label;
+}
+
+/** A layer edit in a brief to an agent: what it is and what it reaches, its element, and why no picture of it is attached when none is. */
+export interface LayerNote { label: string; reach: string; element?: string; noPicture?: string | null }
+
+/** The lines a brief gives a layer edit (note-store.ts notesText). */
+export function layerNoteLines(layer: LayerNote, pictured: boolean): string[] {
+  const lines = [`   An edit in Wanigan’s design layer, shown on the page but not in the site yet: ${layer.label}, for ${layer.reach}.`];
+  if (layer.element) lines.push(`   Its element: ${layer.element}.`);
+  if (!pictured && layer.noPicture) lines.push(`   No picture of it is attached: ${layer.noPicture}.`);
+  return lines;
+}

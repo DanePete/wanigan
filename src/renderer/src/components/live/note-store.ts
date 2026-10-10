@@ -5,6 +5,7 @@
 import { useSyncExternalStore } from 'react';
 import type { LivePick, LiveRegion } from '@shared/live';
 import { nameOf } from '@shared/live-names';
+import { layerNoteLines, type LayerNote } from '../../lib/live-layer';
 
 export interface StyleChange { property: string; from: string; to: string }
 
@@ -19,8 +20,11 @@ export interface LiveNote {
   text: string;
   words: { before: string; after: string; file: string | null } | null;
   style: StyleChange[];
-  /** An edit of the design layer the note takes to an agent (the tray's Make it real): what it is, and what it reaches. */
-  layer?: { label: string; reach: string } | null;
+  /**
+   * An edit of the design layer the note takes to an agent (the tray's Make it real): what it is, what it reaches, its
+   * element as the site names it, and why no picture is attached when the live view shows another page than its own.
+   */
+  layer?: LayerNote | null;
   /** A PNG (base64) of the part as it looked. */
   shot: string | null;
   /** For a part dragged where its order is in a template: a PNG of the order wanted, beside `shot` (the order now). */
@@ -85,7 +89,7 @@ export function notesText(notes: readonly LiveNote[], dirOf: (componentId: strin
     if (n.pick) lines.push(`   Pointed at: \`${n.pick.selector}\`${n.pick.text ? ` (“${n.pick.text.slice(0, 120)}”)` : ''}`);
     const made = n.regions.slice(0, 4).map((r) => regionLine(r, r.component ? dirOf(r.component) : null));
     if (made.length) lines.push(`   Made by (innermost first): ${made.join('; ')}`);
-    if (n.layer) lines.push(`   An edit in Wanigan’s design layer, shown on the page but not in the site yet: ${n.layer.label}, for ${n.layer.reach}.`);
+    if (n.layer) lines.push(...layerNoteLines(n.layer, !!n.shot));
     if (n.words) lines.push(`   Words: “${n.words.before}” → “${n.words.after}”${n.words.file ? ` (written in ${n.words.file})` : ''}`);
     if (n.style.length) {
       lines.push(`   Style ${n.layer ? 'in the layer' : 'tried in the page'} (not saved): ${n.style.map((s) => `${s.property} ${s.from} → ${s.to}`).join(', ')}`);
@@ -93,9 +97,10 @@ export function notesText(notes: readonly LiveNote[], dirOf: (componentId: strin
     }
   });
   if (notes.some((n) => n.shot)) {
+    const each = notes.every((n) => n.shot) ? 'A picture of each part' : 'A picture of each part that has one';
     lines.push('', notes.some((n) => n.after)
-      ? 'A picture of each part, as it looked, is attached in the same order; where a note asks for a new order, a second picture after it shows the order wanted.'
-      : 'A picture of each part, as it looked, is attached in the same order.');
+      ? `${each}, as it looked, is attached in the same order; where a note asks for a new order, a second picture after it shows the order wanted.`
+      : `${each}, as it looked, is attached in the same order.`);
   }
   return lines.join('\n');
 }

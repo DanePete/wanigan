@@ -7,8 +7,8 @@ import type { LayerApplied, LayerEdit, LayerImplemented, LayerSnapshot, LayerVer
 import type { LiveEdit } from '../../../shared/live.ts';
 import type { EditTarget, LiveTrace, PartIdentity } from '../../../shared/live-trace.ts';
 import {
-  NOTHING_HOLDS, byPage, changeLines, differenceWords, draftsOf, failedWords, fragileOf, heldInLayer, isFragile, madeOn, noiseWords, orphanWhy, ownTemplate,
-  pagePath, placesOf, reachWords, redoLabel, sameTarget, sendsTyped, thisReach, templateOf, templateOffered, templateSaveRefused, undoLabel, verdictHeadline,
+  NOTHING_HOLDS, byPage, changeLines, differenceWords, draftsOf, elementWords, failedWords, fragileOf, heldInLayer, layerNoteLines, isFragile, madeOn, noiseWords, orphanWhy, ownTemplate,
+  pagePath, placesOf, reachWords, redoLabel, sameTarget, sendsTyped, stateDetail, thisReach, templateOf, templateOffered, templateSaveRefused, undoLabel, verdictHeadline,
 } from './live-layer.ts';
 
 const card = (nth: number): PartIdentity => ({ kind: 'component', name: 'acme:card', within: null, nth });
@@ -91,6 +91,8 @@ test('fragile is decided as the main process decides it and said as it behaves; 
 test('undo and redo say what they would do', () => {
   const snap = (undo: LayerSnapshot['undo'], redo: LayerSnapshot['redo']): LayerSnapshot => ({ projectId: 'p', edits: [], undo, redo });
   assert.equal(undoLabel(snap(null, null)), 'Nothing to undo');
+  // Edits listed and nothing to undo: the core blocked it, because the newest add is an edit in the site.
+  assert.equal(undoLabel({ ...snap(null, null), edits: [edit({ state: 'implemented' })] }), 'Nothing to undo: the newest edit is in the site');
   assert.equal(undoLabel(snap({ id: 'a', label: 'Heading in Card', action: 'add' }, null)), 'Undo: take “Heading in Card” out of the layer');
   assert.equal(undoLabel(snap({ id: 'a', label: 'Heading in Card', action: 'discard' }, null)), 'Undo: bring back “Heading in Card”');
   assert.equal(redoLabel(snap(null, { id: 'a', label: 'Heading in Card', action: 'add' })), 'Redo: put “Heading in Card” back in the layer');
@@ -107,12 +109,22 @@ test('a verification is said in words: the step that failed, each difference, an
     ],
   };
   assert.equal(verdictHeadline(failed), 'Not verified at 390 and 1440 px: the site does not render it as designed yet.');
-  assert.equal(failedWords(failed), 'Step 1 of 3, the styles and boxes of the edited elements failed; the steps after it did not run.');
+  assert.equal(failedWords(failed), 'Step 1 of 3, the styles and boxes of the edited elements failed; the steps after it were not judged.');
   assert.deepEqual(failed.differences.map(differenceWords), [
     'At 1440 px, h3.card__title: color is rgb(20, 20, 20) in the site, rgb(192, 57, 43) in the design.',
     'At 390 px, h3.card__title’s box is 300 × 40 at 24, 910 in the site, 300 × 48 at 24, 910 in the design.',
   ]);
-  assert.equal(noiseWords(failed), 'Noise floor: up to 3 of 255 in 12 pixels, from rendering the site twice.');
+  assert.equal(noiseWords(failed), 'Noise floor: up to 3 of 255 in 12 pixels, the most the page with the layer or without it differed from itself when rendered twice, at any width.');
+  // What could not be compared is said as that, not as a property with a value.
+  const style = { kind: 'style', edit: 'a', width: 1440, element: 'Heading in Card (component)' } as const;
+  assert.equal(differenceWords({ ...style, property: 'element', design: 'not found on the page', result: 'on the page' }),
+    'At 1440 px, Heading in Card (component): in the design, not found on the page; in the site, on the page.');
+  assert.equal(differenceWords({ ...style, property: 'element', design: 'its element was not there when the page was measured', result: 'its element was not there when the page was measured' }),
+    'At 1440 px, Heading in Card (component): its element was not there when the page was measured, in the design and in the site.');
+  assert.equal(differenceWords({ ...style, element: 'The page', property: 'compared', design: 'down to 6,000 px', result: 'not below that: the page is 9,000 px tall, and nothing under 6,000 px was compared' }),
+    'At 1440 px, the page was compared down to 6,000 px, not below that: the page is 9,000 px tall, and nothing under 6,000 px was compared.');
+  assert.equal(differenceWords({ ...style, property: 'breakpoint', design: 'only at the theme’s “md” breakpoint', result: 'not verifiable yet' }),
+    'At 1440 px, Heading in Card (component) (only at the theme’s “md” breakpoint) is not verifiable yet.');
   assert.equal(differenceWords({ kind: 'pixels', edit: 'a', width: 390, rect: { x: 24, y: 900, width: 320, height: 60 }, pixels: 1840, maxDiff: 172 }),
     'At 390 px, 1,840 pixels differ around it, by up to 172 of 255, in a 320 × 60 box at 24, 900.');
   assert.match(differenceWords({ kind: 'leak', width: 1440, rect: { x: 0, y: 1200, width: 1440, height: 80 }, pixels: 2, maxDiff: 40 }), /2 pixels differ away from every edited element/);
@@ -218,4 +230,27 @@ test('an edit for one element shown in more than one place says so, as the layer
   assert.equal(reachWords(one, twice, applied({ shown: [{ id: 'o', elements: 2 }], off: true })), 'this element', 'switched off, nothing is shown');
   assert.equal(reachWords(edit({ id: 's', target: { part: null, inner: null, selector: 'html > body > h3', textHash: null } }), null, applied({ shown: [{ id: 's', elements: 2 }] })),
     'this element (2 matches on this page)');
+});
+
+test('a state says what it means, and a style draft says the layer cannot tell yet when an agent made it', () => {
+  assert.match(stateDetail(edit({ change: { type: 'text', value: 'New' }, before: { text: 'Old' } })), /the site does not have it/);
+  assert.match(stateDetail(edit()), /cannot tell yet when one has/, 'a style: an agent may have made it');
+  assert.doesNotMatch(stateDetail(edit()), /the site does not have it/);
+  assert.match(stateDetail(edit({ scope: 'site', change: { type: 'token', name: '--accent', value: 'red' } })), /cannot tell yet/);
+  assert.match(stateDetail(edit({ state: 'implemented' })), /Verify compares/);
+});
+
+test('a brief to an agent names the edit’s element as the site stores it, and says when no picture of it is attached', () => {
+  assert.equal(elementWords(edit()), 'Heading in Card (component): component acme:card, number 1 of its name there, at `h3:nth-of-type(1)` inside it');
+  assert.equal(elementWords(edit({ label: 'Title', target: { part: { kind: 'entity', type: 'node', id: 'u-1', bundle: 'article', langcode: 'fr', field: 'title' }, inner: null, selector: null, textHash: null } })),
+    'Title: node u-1 (article), field title, in fr');
+  assert.equal(elementWords(edit({ label: 'Box (no part names it)', target: { part: null, inner: null, selector: 'html > body > div:nth-of-type(2)', textHash: null } })),
+    'Box (no part names it): `html > body > div:nth-of-type(2)` in the page (no part of the site names it)');
+  const note = { label: 'Heading in Card (component)', reach: 'this element', element: 'Heading in Card (component): component acme:card', noPicture: 'it was made on /events, and the live view shows /about' };
+  assert.deepEqual(layerNoteLines(note, false), [
+    '   An edit in Wanigan’s design layer, shown on the page but not in the site yet: Heading in Card (component), for this element.',
+    '   Its element: Heading in Card (component): component acme:card.',
+    '   No picture of it is attached: it was made on /events, and the live view shows /about.',
+  ]);
+  assert.equal(layerNoteLines({ ...note, noPicture: null }, true).length, 2, 'pictured: nothing to say');
 });

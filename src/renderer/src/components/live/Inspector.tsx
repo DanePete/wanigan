@@ -174,12 +174,12 @@ export function Inspector({ project, platform, selection, regions, components, d
       const onPage = 'On the page · in the design layer, nothing saved yet';
       editItems.push({
         id: 'words', group: onPage, icon: 'pencil', label: 'Retype the words', disabled: !pick.own,
-        detail: pick.own ? 'Shown on the page at once; made real in the site from Edits (⇧E)' : 'Pick the words themselves (an element with only text in it) to retype them',
+        detail: pick.own ? `${layer.on ? 'Shown on the page at once' : 'Kept in the layer (the page is shown without it now)'}; made real in the site from Edits (⇧E)` : 'Pick the words themselves (an element with only text in it) to retype them',
         run: () => { setStyling(false); setAdded(null); setRetyping(true); },
       });
       editItems.push({
         id: 'style', group: onPage, icon: 'brush', label: 'Try a style', kind: 'check', checked: styling,
-        detail: 'This element or every one of its kind, shown on the page at once; it goes to an agent as intent', run: () => { setRetyping(false); setStyling((v) => !v); },
+        detail: `This element or every one of its kind, ${layer.on ? 'shown on the page at once' : 'kept in the layer (the page is shown without it now)'}; it goes to an agent as intent`, run: () => { setRetyping(false); setStyling((v) => !v); },
       });
     }
   }

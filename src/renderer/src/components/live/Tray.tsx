@@ -23,8 +23,9 @@ import { identityKey, type LiveTrace } from '@shared/live-trace';
 import { ancestors } from '@shared/live-tree';
 import type { ProjectSummary } from '@shared/model';
 import { call, useQuery } from '../../lib/api';
+import { ago } from '../../lib/format';
 import {
-  STATE_DETAIL, STATE_WORDS, byPage, changeLines, differenceWords, failedWords, fragileOf, noiseWords, orphanWhy, reachWords, redoLabel,
+  STATE_WORDS, byPage, changeLines, elementWords, stateDetail, differenceWords, failedWords, fragileOf, noiseWords, orphanWhy, reachWords, redoLabel,
   templateOf, templateOffered, undoLabel, verdictHeadline,
 } from '../../lib/live-layer';
 import { liveBridge } from '../../lib/live';
@@ -131,8 +132,6 @@ function TrayEdit({ edit: e, here, ctx }: { edit: LayerEdit; here: boolean; ctx:
   const busy = layer.running[e.id];
   const [answer, setAnswer] = useState<LayerImplemented | null>(null);
   const [noting, setNoting] = useState(false);
-  const [verifying, setVerifying] = useState(false);
-  const [failure, setFailure] = useState<string | null>(null);
   const [written, setWritten] = useState<TemplateWritten | null>(null);
   const lines = changeLines(e);
   const reach = reachWords(e, ctx.trace, layer.applied);
@@ -153,44 +152,39 @@ function TrayEdit({ edit: e, here, ctx }: { edit: LayerEdit; here: boolean; ctx:
 
   const real = (): Promise<unknown> => layer.task(e.id, 'real', async () => {
     if (!live) return;
-    setFailure(null);
     const a = await layer.change(() => live.layerImplement(e.id));
     if (!a) return;
     setAnswer(a);
     if (a.ok) { toast(`Saved ${name} in the site${a.revision ? `, as revision ${a.revision}` : ''}. Verify compares the site with the design.`); return; }
     if (a.route === 'agent') setNoting(true);
   });
-  const verify = (): Promise<unknown> => layer.task(e.id, 'verify', async () => {
-    if (!live) return;
-    setVerifying(true);
-    setFailure(null);
-    try {
-      await live.layerVerify(e.id);
-    } catch (err) {
-      setFailure((err as Error).message);
-    } finally {
-      setVerifying(false);
-      await layer.refresh();
-    }
-  });
+  // Kept by the layer per edit: closed and opened again, the tray still says it runs, and never starts it twice.
+  const verifying = busy === 'verify';
+  const verify = (): Promise<unknown> => layer.verify(e.id);
+  // What stopped the last verification, said only while the edit is still waiting for one.
+  const failure = e.state === 'implemented' ? layer.failures[e.id] ?? null : null;
   const discard = (): Promise<unknown> => once(() => layer.discard(e.id));
   const retire = (): Promise<unknown> => once(async () => {
     const done = await layer.change(() => call('live.layerMark', { projectId: project.id, id: e.id, state: 'retired' }));
     if (done) toast(`Retired ${name}: archived, and out of the tray.`);
   });
+  // The brief: the edit's own page, its element as the site names it, and a picture only when the view shows that page.
   const noteDraft = {
     url: (() => { try { return new URL(e.page, ctx.siteUrl).toString(); } catch { return e.page; } })(),
     regions, pick: null,
     words: e.change.type === 'text' ? { before: e.before.text ?? '', after: e.change.value, file: null } : null,
     style: e.change.type === 'text' ? [] : lines.map((l) => ({ property: l.what, from: l.before, to: l.after })),
-    layer: { label: e.label, reach },
+    layer: {
+      label: e.label, reach, element: elementWords(e),
+      noPicture: here ? null : `it was made on ${e.page}, and the live view shows ${ctx.page || 'another page'}`,
+    },
   };
 
   return (
     <li className="live-tray-edit" data-edit={e.id} data-state={e.state}>
       <div className="live-tray-edit-head">
         <span className="live-tray-label">{e.label}</span>
-        <span className={`live-tray-state ${e.state}`} title={STATE_DETAIL[e.state]}>{STATE_WORDS[e.state]}</span>
+        <span className={`live-tray-state ${e.state}`} title={stateDetail(e)}>{STATE_WORDS[e.state]}</span>
       </div>
       <ul className="live-layer-lines" aria-label="Before and after">
         {lines.map((l) => (
@@ -219,7 +213,7 @@ function TrayEdit({ edit: e, here, ctx }: { edit: LayerEdit; here: boolean; ctx:
           {!noting ? (
             <div className="live-actions"><Button size="s" tone="quiet" icon="note" onClick={() => setNoting(true)}>Tell an agent…</Button></div>
           ) : (
-            <NoteComposer project={project} components={ctx.components} prefer={ctx.prefer} draft={noteDraft} onDone={() => setNoting(false)} />
+            <NoteComposer project={project} components={ctx.components} prefer={ctx.prefer} draft={noteDraft} picture={here} onDone={() => setNoting(false)} />
           )}
         </div>
       ) : null}
@@ -259,17 +253,25 @@ function Verdict({ verdict: v }: { verdict: LayerVerdict }) {
         </ul>
       ) : null}
       <p className="faint small">{noiseWords(v)}</p>
+      <p className="faint small">Checked {ago(v.at)}.</p>
       {v.pictures.length ? <Pictures pictures={v.pictures} at={v.at} /> : null}
     </div>
   );
 }
 
-/** Pictures read back once per verification: a later one writes its pictures to the same paths. */
+/**
+ * Pictures read back once per verification (a later one writes its pictures to the same paths), the most recently
+ * shown kept: each is a whole page as a PNG, so the window keeps a few verdicts' worth, not every one it has shown.
+ */
+const KEPT_PICTURES = 24;
 const kept = new Map<string, Promise<string | null>>();
 const picture = (path: string, at: number): Promise<string | null> => {
   const key = `${at}|${path}`;
   let p = kept.get(key);
-  if (!p) { p = liveBridge()?.layerPicture(path).catch(() => null) ?? Promise.resolve(null); kept.set(key, p); }
+  if (p) kept.delete(key);
+  else p = liveBridge()?.layerPicture(path).catch(() => null) ?? Promise.resolve(null);
+  kept.set(key, p);
+  for (const old of kept.keys()) { if (kept.size <= KEPT_PICTURES) break; kept.delete(old); }
   return p;
 };
 
@@ -279,15 +281,17 @@ const KINDS = [['design', 'The design'], ['result', 'The site'], ['diff', 'Diffe
 function Pictures({ pictures, at }: { pictures: LayerVerdict['pictures']; at: number }) {
   const [srcs, setSrcs] = useState<Record<string, string | null>>({});
   const [large, setLarge] = useState<{ src: string; alt: string } | null>(null);
+  // Read again only when the verdict's pictures change: every read of the log brings a new array holding the same paths.
+  const paths = pictures.flatMap((p) => [p.design, p.result, p.diff]).filter((x): x is string => !!x);
+  const key = paths.join('\n');
   useEffect(() => {
     let current = true;
     setSrcs({});
-    for (const p of pictures) for (const path of [p.design, p.result, p.diff]) {
-      if (!path) continue;
+    for (const path of key ? key.split('\n') : []) {
       void picture(path, at).then((data) => { if (current) setSrcs((s) => ({ ...s, [path]: data ? `data:image/png;base64,${data}` : null })); });
     }
     return () => { current = false; };
-  }, [pictures, at]);
+  }, [key, at]);
   return (
     <div className="live-tray-pictures">
       {pictures.map((p) => (

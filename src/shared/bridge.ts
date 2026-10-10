@@ -140,7 +140,7 @@ export interface LiveBridge {
   problems(): Promise<LiveProblem[]>;
   /** How many times the page has changed itself since it loaded: late content means scanning again. */
   mutations(): Promise<number>;
-  /** The picked element, described again (after a tried style or new words). */
+  /** The picked element, described again: its words, its style and every region it sits in, innermost first. */
   picked(): Promise<LivePick | null>;
   /** The site helper's count of content changes (null without a helper, or when it did not answer). */
   helperChanged(): Promise<number | null>;

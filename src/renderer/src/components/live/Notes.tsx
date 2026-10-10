@@ -50,12 +50,14 @@ function SendTo({ agents, value, onChange }: { agents: Session[]; value: string;
  * The box under a chosen part: what should change, kept as a note or sent at
  * once. A change tried by hand (new words, a style) rides along in the draft.
  */
-export function NoteComposer({ project, draft, components, prefer, compact = false, onDone }: {
+export function NoteComposer({ project, draft, components, prefer, compact = false, picture = true, onDone }: {
   project: ProjectSummary;
   draft: Draft;
   components: Map<string, LiveComponent>;
   prefer: string | null;
   compact?: boolean;
+  /** Attach a picture of the view: false when the view shows another page than the one the note is about. */
+  picture?: boolean;
   onDone?: () => void;
 }) {
   const toast = useToast();
@@ -67,7 +69,7 @@ export function NoteComposer({ project, draft, components, prefer, compact = fal
   const hasChange = !!draft.words || draft.style.length > 0;
   const ready = text.trim().length > 0 || hasChange;
 
-  const note = async (): Promise<LiveNote> => ({ ...draft, text: text.trim(), shot: await liveBridge()?.capture() ?? null, id: '', at: Date.now() });
+  const note = async (): Promise<LiveNote> => ({ ...draft, text: text.trim(), shot: picture ? await liveBridge()?.capture() ?? null : null, id: '', at: Date.now() });
   const keep = async (): Promise<void> => {
     if (!ready) return;
     const n = await note();

@@ -32,6 +32,9 @@ const sends = (e: KeyboardEvent<HTMLElement>): boolean => sendsTyped({
   key: e.key, shiftKey: e.shiftKey, metaKey: e.metaKey, ctrlKey: e.ctrlKey, altKey: e.altKey, repeat: e.repeat, isComposing: e.nativeEvent.isComposing,
 });
 
+/** Where an edit shows once added: on the page at once, or, while the page is shown without the layer, once it is shown again. */
+const shownWords = (on: boolean): string => (on ? 'Shown on the page at once, in Wanigan’s layer' : 'Kept in Wanigan’s layer, and shown on the page once you show the layer again (the page is shown without it now)');
+
 const many = (n: number, one: string): string => `${n.toLocaleString('en')} ${n === 1 ? one : `${one}s`}`;
 
 /** The picked element as the layer keys it, asked again whenever `again` changes. */
@@ -94,7 +97,7 @@ export function RetypeWords({ pick, layer, page, trace, onAdded, onCancel }: {
         <Button size="s" tone="primary" icon="check" type="submit" disabled={!changed}>Show it on the page</Button>
         <Button size="s" tone="quiet" onClick={onCancel}>Cancel</Button>
       </div>
-      <p className="faint small">For {reach}. Shown on the page at once, in Wanigan’s layer; the site has it only once you make it real from Edits (⇧E).</p>
+      <p className="faint small">For {reach}. {shownWords(layer.on)}; the site has it only once you make it real from Edits (⇧E).</p>
     </form>
   );
 }
@@ -252,7 +255,7 @@ export function StyleEdit({ pick, layer, page, trace, onAdded, onDone }: {
         <Button size="s" tone="quiet" onClick={onDone}>Done</Button>
       </div>
       <p className="faint small">
-        Shown on the page at once, in Wanigan’s layer, for {reach}. Making it real goes to an agent as intent, to make in the theme’s own styles.
+        {shownWords(layer.on)}, for {reach}. Making it real goes to an agent as intent, to make in the theme’s own styles.
       </p>
       <Disclosure title="A token, for the whole site" summary="a custom property">
         <div className="live-style-grid">
@@ -270,7 +273,10 @@ export function StyleEdit({ pick, layer, page, trace, onAdded, onDone }: {
         <div className="live-actions">
           <Button size="s" icon="check" disabled={!tokenOk || !target} onClick={addToken}>Change it for the whole site</Button>
         </div>
-        <p className="faint small">Every use of the property repaints together. Only a custom property (--name) is changed for the whole site.</p>
+        <p className="faint small">
+          Set on the page’s root: everything that reads the property from there repaints together, and a part that sets it itself keeps its own value.
+          Only a custom property (--name) is changed for the whole site.
+        </p>
       </Disclosure>
     </form>
   );
