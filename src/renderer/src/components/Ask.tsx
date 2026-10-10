@@ -5,6 +5,7 @@ import { useId, useMemo, useState } from 'react';
 import type { PermissionAsk } from '@shared/model';
 import { clampParts, reveal, revealWarning } from '@shared/hidden';
 import { Icon } from './icons';
+import { tipProps } from './ui';
 
 const CLAMP_CHARS = 480;
 const CLAMP_LINES = 6;
@@ -49,6 +50,6 @@ export function RevealedLine({ text }: { text: string }) {
 }
 
 function Pieces({ parts }: { parts: ReturnType<typeof reveal>['parts'] }) {
-  return <>{parts.map((p, i) => (p.flag ? <mark key={i} className="hidden-char" title={p.flag.note}>{p.text}</mark> : p.text))}</>;
+  return <>{parts.map((p, i) => (p.flag ? <mark key={i} className="hidden-char" {...tipProps(p.flag.note)}>{p.text}</mark> : p.text))}</>;
 }
 

@@ -3,8 +3,16 @@
 import { rankNeeds } from './attention.ts';
 import { LIVE_STATES, type Need, type NeedKind, type Session } from './model.ts';
 
-/** Four terminals is as many as one person can watch at once. */
-export const WATCH_MAX = 4;
+/**
+ * How many live terminals Watch shows at once. Every tile streams its
+ * terminal live (a replay, then each chunk of output as it comes), so the
+ * window's work grows with each one; twelve keeps it responsive while still
+ * showing a whole crew. Past that, pins choose which twelve.
+ */
+export const WATCH_MAX = 12;
+
+/** Why another pin is refused once Watch is full. */
+export const WATCH_FULL = `Watch shows ${WATCH_MAX} terminals at a time: unpin one first.`;
 
 export interface WatchPick {
   /** What to show, in the order to show it. */
@@ -13,6 +21,25 @@ export interface WatchPick {
   more: number;
   /** The owner chose these, rather than Wanigan. */
   pinned: boolean;
+}
+
+/** Pin a session to Watch, or unpin it; past the most Watch shows, the pin is refused, and says why. */
+export function togglePin(pins: readonly string[], id: string, max = WATCH_MAX): { pins: string[] } | { refused: string } {
+  if (pins.includes(id)) return { pins: pins.filter((p) => p !== id) };
+  if (pins.length >= max) return { refused: max === WATCH_MAX ? WATCH_FULL : `Watch shows ${max} terminals at a time: unpin one first.` };
+  return { pins: [...pins, id] };
+}
+
+/**
+ * How many columns the tiles take: by how many there are (one fills the room,
+ * two side by side, then 2×2, 3×2, 3×3, 4×3), and never more than fit at the
+ * narrowest a terminal stays readable, so a narrow window gets fewer, taller
+ * columns and scrolls rather than squeezing.
+ */
+export function watchColumns(count: number, room: number, tileMin: number): number {
+  const wanted = count <= 1 ? 1 : count <= 4 ? 2 : count <= 9 ? 3 : 4;
+  const fit = tileMin > 0 ? Math.max(1, Math.floor(room / tileMin)) : wanted;
+  return Math.max(1, Math.min(wanted, fit));
 }
 
 /** Each session's most urgent need, by Needs you's own ranking. */

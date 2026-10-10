@@ -1,7 +1,8 @@
-// Talk to Wanigan: a round button at the bottom right of every view, holding a
-// small live orb, and the conversation it opens. Claude Code answers as
-// Wanigan, on the owner's plan, read-only, and only when the owner sends a
-// message (the core runs it: core/chat.ts). Advice only.
+// Talk to Wanigan: a small live orb at the status line's end, beside the keys,
+// and the conversation it opens, with Wanigan drawn whole. Nothing floats over
+// the work. Claude Code answers as Wanigan, on the owner's plan, read-only,
+// and only when the owner sends a message (the core runs it: core/chat.ts).
+// Advice only.
 import { Select } from './Select';
 import { Fragment, useCallback, useEffect, useId, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
@@ -15,7 +16,9 @@ import { Orb, type OrbSignal } from './Orb';
 import { PlayableOrb } from './PlayableOrb';
 import { useMaterial } from '../lib/material';
 import type { OrbMood } from '../orb/mood';
-import { Button, IconButton, Segmented, useFocusTrap, useToast } from './ui';
+import { Button, IconButton, KeyCaps, Segmented, tipProps, useFocusTrap, useToast } from './ui';
+import { StatusSlot } from './StatusLine';
+import { useNotices } from '../lib/notices';
 import { AttachButton, AttachmentChips, useAttachments, useFileDrop } from './Attachments';
 import { receivesLine } from '@shared/attachments';
 import { useCoversLive } from '../lib/live';
@@ -40,11 +43,14 @@ function useChatOrb(thinking: boolean, landed: string | null): { signal: OrbSign
   return { signal: 'quiet', mood: thinking ? 'thinking' : celebrating ? 'celebrate' : 'idle' };
 }
 
-export function TalkToWanigan({ project, hidden }: {
+export function TalkToWanigan({ project }: {
   /** The project being looked at, if any: the chat opens about it. */
   project: ProjectSummary | undefined;
-  /** No button here (the session view, whose composer sits at the bottom right). */
-  hidden: boolean;
+  /**
+   * Once there was no floating button on a session, whose composer sat under it. The launcher is in the status
+   * line now and covers nothing, so it is offered on every view, and this is not read.
+   */
+  hidden?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [everywhere, setEverywhere] = useState(false);
@@ -73,23 +79,21 @@ export function TalkToWanigan({ project, hidden }: {
     wasOpen.current = open;
   }, [open]);
   const close = useCallback(() => setOpen(false), []);
+  // Its home is the status line, under every view: nothing floats over the work.
+  const { slot } = useNotices();
+  const name = `Talk to Wanigan${thinking ? ' (answering)' : unread ? ' (new answer)' : ''}`;
 
   return (
     <>
-      {open || hidden ? null : (
-        <button
-          ref={button}
-          type="button"
-          className={`chat-fab${thinking ? ' thinking' : ''}`}
-          aria-haspopup="dialog"
-          aria-label={`Talk to Wanigan${thinking ? ' (answering)' : unread ? ' (new answer)' : ''}`}
-          title="Talk to Wanigan"
-          onClick={() => setOpen(true)}
-        >
-          <Orb size={44} {...orb} material={material} />
-          {unread ? <span className="chat-fab-dot" aria-hidden="true" /> : null}
-        </button>
-      )}
+      {slot ? (
+        <StatusSlot>
+          <button ref={button} type="button" className={`chat-launch${thinking ? ' thinking' : ''}`} aria-haspopup="dialog" aria-expanded={open}
+            aria-label={name} {...tipProps(name)} onClick={() => setOpen((o) => !o)}>
+            <Orb size={22} {...orb} material={material} />
+            {unread ? <span className="chat-launch-dot" aria-hidden="true" /> : null}
+          </button>
+        </StatusSlot>
+      ) : null}
       {open ? (
         <ChatSheet
           project={project}
@@ -196,7 +200,7 @@ function ChatSheet({ project, everywhere, setEverywhere, thread, error, orb, onC
           </div>
           <div className="chat-tools">
             <IconButton icon="plus" label="New conversation" onClick={reset} disabled={thinking || !turns.length}
-              title={thinking ? 'New conversation, once Wanigan has answered or you stop it' : !turns.length ? 'This conversation is new: nothing to start over' : 'New conversation'} />
+              data-tip={thinking ? 'New conversation, once Wanigan has answered or you stop it' : !turns.length ? 'This conversation is new: nothing to start over' : 'New conversation'} />
             <IconButton icon="close" label="Close" onClick={onClose} />
           </div>
         </header>
@@ -257,7 +261,7 @@ function ChatSheet({ project, everywhere, setEverywhere, thread, error, orb, onC
             ) : <b>{account?.label ?? 'your Claude account'}</b>}
             ’s plan.
           </span>
-          <span className="chat-keys"><kbd>↩</kbd> send · <kbd>⇧</kbd><kbd>↩</kbd> new line</span>
+          <span className="chat-keys"><KeyCaps keys={['Enter']} /> send · <KeyCaps keys={['Shift', 'Enter']} /> new line</span>
         </div>
       </div>
     </div>,
@@ -385,7 +389,7 @@ function Inline({ text, cards, onCard }: { text: string; cards: string[]; onCard
         if (part.startsWith('`')) return <code key={i}>{part.slice(1, -1)}</code>;
         if (part.startsWith('**')) return <strong key={i}>{part.slice(2, -2)}</strong>;
         return cards.includes(part)
-          ? <button key={i} type="button" className="linkish mono" onClick={() => onCard(part)} title={`Open ${part}`}>{part}</button>
+          ? <button key={i} type="button" className="linkish mono" onClick={() => onCard(part)} {...tipProps(`Open ${part}`)}>{part}</button>
           : <span key={i} className="mono">{part}</span>;
       })}
     </>

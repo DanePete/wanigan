@@ -8,7 +8,7 @@ import { CODEX_STAYS, continueTargets } from '@shared/limits';
 import type { Provider } from '@shared/model';
 import { attempt, call, useQuery } from '../lib/api';
 import { navigate } from '../lib/router';
-import { Button, useToast } from './ui';
+import { Button, tipProps, useToast } from './ui';
 
 export function ContinueOn({ sessionId, accountId, projectKey, provider }: { sessionId: string; accountId: string | null; projectKey: string; provider: Provider | null }) {
   const toast = useToast();
@@ -73,7 +73,7 @@ export function ContinueOn({ sessionId, accountId, projectKey, provider }: { ses
         <Select className="continue-pick" label="Account to continue on" size="s" value={target.account.id} onChange={setChosen}
           options={targets.map((t) => ({ value: t.account.id, label: t.account.label, detail: t.room }))} />
       ) : null}
-      <Button size="s" tone="primary" icon="resume" title={target.room} onClick={() => setConfirming(true)}>Continue on {target.account.label}</Button>
+      <Button size="s" tone="primary" icon="resume" {...tipProps(target.room)} onClick={() => setConfirming(true)}>Continue on {target.account.label}</Button>
       <Button size="s" tone="quiet" onClick={wait}>Wait for the reset</Button>
     </>
   );

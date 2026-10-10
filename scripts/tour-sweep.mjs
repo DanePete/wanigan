@@ -121,6 +121,14 @@ try {
     const places = [['board', `#/p/${ns}/board`], ['sessions', `#/p/${ns}/sessions`], ['changes', `#/p/${ns}/changes`], ['history', `#/p/${ns}/history`],
       ['decisions', `#/p/${ns}/decisions`], ['activity', `#/p/${ns}/activity`], ['list', `#/p/${ns}/list`], ['running', '#/running'], ['needs', '#/needs'], ['settings', '#/settings'],
       ['live', `#/p/${ns}/live`], ['code', `#/p/${ns}/code`]];
+    // A session is a place of its own: one of the demo's live Claude Code sessions.
+    const sessionHash = await page.evaluate(async () => {
+      const s = (await window.wanigan.call('sessions.list', { live: true })).find((x) => x.provider === 'claude');
+      const p = s ? (await window.wanigan.call('projects.list', {})).find((x) => x.id === s.projectId) : null;
+      return s && p ? `#/p/${p.key}/s/${s.id}` : null;
+    });
+    if (sessionHash) places.push(['session', sessionHash]);
+    else fail('session: the demo has no live Claude Code session to visit');
     let offered = 0;
     for (const [place, hash] of places) {
       await page.goto(`${base}${hash}`);

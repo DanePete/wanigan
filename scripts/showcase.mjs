@@ -146,7 +146,7 @@ try {
     await go('#/mcp', '.mcp-row');
     await shot('mcp', theme);
     await go('#/p/NS/board', '.card');
-    await win.click('.chat-fab');
+    await win.click('.chat-launch');
     await win.waitForSelector('.chat textarea');
     if (!(await win.$('.chat .chat-a'))) {
       await win.keyboard.type('What is everyone working on?');

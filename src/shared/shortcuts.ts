@@ -36,7 +36,7 @@ export const GIT_COMMANDS: readonly { id: GitCommandId; label: string }[] = [
   { id: 'git-stash', label: 'Stash changes…' },
 ];
 
-export type ShortcutGroup = 'Anywhere' | 'Go to' | 'Git' | 'In the code editor' | 'On the board' | 'In Changes' | 'In Commits' | 'In the live view' | 'Comparing pages' | 'In dialogs and lists';
+export type ShortcutGroup = 'Anywhere' | 'Go to' | 'Git' | 'In the code editor' | 'On the board' | 'In a session' | 'In Changes' | 'In Commits' | 'In the live view' | 'Comparing pages' | 'In dialogs and lists';
 
 export interface Shortcut {
   /** The command it runs; null when a view handles the key itself (the board, a dialog). */
@@ -56,6 +56,10 @@ export interface Shortcut {
 const viewShortcuts: Shortcut[] = PROJECT_VIEWS.map((v) => ({
   id: `go-${v.view}` as CommandId, label: `${v.label} of the open project`, group: 'Go to', keys: ['G', v.key.toUpperCase()], sequence: true,
 }));
+
+/** A session's own keys (views/SessionView.tsx): the panel of turns and details, and the composer. */
+export const SESSION_PANEL_KEYS: Shortcut = { id: null, label: 'Show or hide the session’s turns and details', group: 'In a session', keys: ['Mod', 'Shift', 'D'] };
+export const SESSION_COMPOSER_KEYS: Shortcut = { id: null, label: 'Message the agent, or go back to its terminal', group: 'In a session', keys: ['Mod', 'Shift', 'M'] };
 
 export const SHORTCUTS: readonly Shortcut[] = [
   { id: 'palette', label: 'Search and commands', group: 'Anywhere', keys: ['Mod', 'K'] },
@@ -101,6 +105,8 @@ export const SHORTCUTS: readonly Shortcut[] = [
   { id: null, label: 'Accept into Ready (Inbox)', group: 'On the board', keys: ['A'] },
   { id: null, label: 'Archive (Inbox)', group: 'On the board', keys: ['X'] },
   { id: null, label: 'Apply a saved view, by its number', group: 'On the board', keys: ['1–9'] },
+  SESSION_PANEL_KEYS,
+  SESSION_COMPOSER_KEYS,
   // Moving a card by keyboard follows the same rules as a drag (views/Board.tsx).
   { id: null, label: 'Move the card up or down its column', group: 'On the board', keys: ['Mod', '↑'], alt: [['Mod', '↓']] },
   { id: null, label: 'Move the card to the next column', group: 'On the board', keys: ['Mod', '→'], alt: [['Mod', '←']] },
@@ -159,7 +165,7 @@ export const SHORTCUTS: readonly Shortcut[] = [
   { id: null, label: 'Close a dialog', group: 'In dialogs and lists', keys: ['Esc'] },
 ];
 
-export const SHORTCUT_GROUPS: readonly ShortcutGroup[] = ['Anywhere', 'Go to', 'Git', 'In the code editor', 'On the board', 'In Changes', 'In Commits', 'In the live view', 'Comparing pages', 'In dialogs and lists'];
+export const SHORTCUT_GROUPS: readonly ShortcutGroup[] = ['Anywhere', 'Go to', 'Git', 'In the code editor', 'On the board', 'In a session', 'In Changes', 'In Commits', 'In the live view', 'Comparing pages', 'In dialogs and lists'];
 
 /** How a key is written on this platform. */
 export function keyLabel(key: string, mac: boolean): string {

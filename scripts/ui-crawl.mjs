@@ -118,7 +118,7 @@ function plan(w) {
   for (const c of w.cards) if (c.worktree && !drawers.includes(c)) drawers.push(c);
   return [
     { name: 'Rail', hash: '#/needs', scope: 'nav.rail' },
-    { name: 'Demo banner and chat button', hash: board, scope: '.demo-banner, .chat-fab' },
+    { name: 'Demo banner and chat button', hash: board, scope: '.demo-banner, .chat-launch' },
     { name: 'Needs you', hash: '#/needs', ready: '.needs-headline' },
     { name: 'Running › List', hash: '#/running', storage: { 'wanigan.running.layout': 'list' }, ready: '.srow' },
     { name: 'Running › Watch', hash: '#/running', storage: { 'wanigan.running.layout': 'watch' }, ready: '.watch-tile .xterm-rows' },
@@ -146,7 +146,7 @@ function plan(w) {
     { name: 'Keyboard shortcuts', hash: board, open: press('Shift+Slash'), scope: '.dialog', ready: '.shortcuts' },
     { name: 'How this works', hash: board, open: click('.board-how button'), scope: '.dialog', ready: '.how-flow' },
     { name: 'Saved views', hash: board, open: click('.views-trigger'), scope: '.views-panel', ready: '.views-panel .views-row' },
-    { name: 'Talk to Wanigan', hash: board, open: click('.chat-fab'), scope: '.chat' },
+    { name: 'Talk to Wanigan', hash: board, open: click('.chat-launch'), scope: '.chat' },
     { name: 'Play with Wanigan', hash: '#/needs', open: click('.needs-orb .play-button'), scope: '.play-panel' },
     ...drawers.map((c) => ({
       name: `Card drawer › ${c.key} (${c.status}${c.worktree ? ', own branch' : ''})`,
