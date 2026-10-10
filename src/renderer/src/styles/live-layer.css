@@ -125,8 +125,7 @@
   color: var(--green);
 }
 
-.live-tray-state.orphaned,
-.live-tray-state.failed {
+.live-tray-state.orphaned {
   background: var(--red-soft);
   color: var(--red);
 }

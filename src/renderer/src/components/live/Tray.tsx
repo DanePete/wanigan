@@ -83,7 +83,8 @@ export function LayerTray({ onClose, ...ctx }: TrayContext & { onClose: () => vo
       </p>
       {readOnly ? <p className="small live-tray-note">A hosted environment is shown. The layer is your local site’s: show Local to see it on the page, or to make an edit real.</p> : null}
       <div className="live-tray-tools" role="group" aria-label="The layer">
-        <Button size="s" tone="quiet" icon="undo" disabled={!snap?.undo} onClick={() => layer.change(() => call('live.layerUndo', { projectId: ctx.project.id }))}>
+        <Button size="s" tone="quiet" icon="undo" disabled={!snap?.undo} onClick={() => layer.change(() => call('live.layerUndo', { projectId: ctx.project.id }))}
+          title="Undo takes back the newest add or discard; an edit already in the site is never taken out of the layer">
           {undoLabel(snap)}
         </Button>
         <Button size="s" tone="quiet" icon="forward" disabled={!snap?.redo} onClick={() => layer.change(() => call('live.layerRedo', { projectId: ctx.project.id }))}>
@@ -128,7 +129,6 @@ function TrayEdit({ edit: e, here, ctx }: { edit: LayerEdit; here: boolean; ctx:
   const lines = changeLines(e);
   const reach = reachWords(e, ctx.trace, layer.applied);
   const fragile = isFragile(e);
-  const failed = !!e.verdict && !e.verdict.ok;
   const name = `“${e.label}”`;
   // The regions on the page shown that are this edit's part: what a note points at, and where its words are written.
   const regions = useMemo(() => {
@@ -208,7 +208,7 @@ function TrayEdit({ edit: e, here, ctx }: { edit: LayerEdit; here: boolean; ctx:
     <li className="live-tray-edit" data-edit={e.id} data-state={e.state}>
       <div className="live-tray-edit-head">
         <span className="live-tray-label">{e.label}</span>
-        <span className={`live-tray-state ${e.state}${failed ? ' failed' : ''}`} title={STATE_DETAIL[e.state]}>{STATE_WORDS[e.state]}</span>
+        <span className={`live-tray-state ${e.state}`} title={STATE_DETAIL[e.state]}>{STATE_WORDS[e.state]}</span>
       </div>
       <ul className="live-layer-lines" aria-label="Before and after">
         {lines.map((l) => (
@@ -274,33 +274,35 @@ function Verdict({ verdict: v }: { verdict: LayerVerdict }) {
         </ul>
       ) : null}
       <p className="faint small">{noiseWords(v)}</p>
-      {v.pictures.length ? <Pictures pictures={v.pictures} /> : null}
+      {v.pictures.length ? <Pictures pictures={v.pictures} at={v.at} /> : null}
     </div>
   );
 }
 
-/** Pictures read back once, by their path in the data folder. */
+/** Pictures read back once per verification: a later one writes its pictures to the same paths. */
 const kept = new Map<string, Promise<string | null>>();
-const picture = (path: string): Promise<string | null> => {
-  let p = kept.get(path);
-  if (!p) { p = liveBridge()?.layerPicture(path).catch(() => null) ?? Promise.resolve(null); kept.set(path, p); }
+const picture = (path: string, at: number): Promise<string | null> => {
+  const key = `${at}|${path}`;
+  let p = kept.get(key);
+  if (!p) { p = liveBridge()?.layerPicture(path).catch(() => null) ?? Promise.resolve(null); kept.set(key, p); }
   return p;
 };
 
 const KINDS = [['design', 'The design'], ['result', 'The site'], ['diff', 'Difference']] as const;
 
 /** The design, the site and their difference, at each width; each opens larger. */
-function Pictures({ pictures }: { pictures: LayerVerdict['pictures'] }) {
+function Pictures({ pictures, at }: { pictures: LayerVerdict['pictures']; at: number }) {
   const [srcs, setSrcs] = useState<Record<string, string | null>>({});
   const [large, setLarge] = useState<{ src: string; alt: string } | null>(null);
   useEffect(() => {
     let current = true;
+    setSrcs({});
     for (const p of pictures) for (const path of [p.design, p.result, p.diff]) {
       if (!path) continue;
-      void picture(path).then((data) => { if (current) setSrcs((s) => ({ ...s, [path]: data ? `data:image/png;base64,${data}` : null })); });
+      void picture(path, at).then((data) => { if (current) setSrcs((s) => ({ ...s, [path]: data ? `data:image/png;base64,${data}` : null })); });
     }
     return () => { current = false; };
-  }, [pictures]);
+  }, [pictures, at]);
   return (
     <div className="live-tray-pictures">
       {pictures.map((p) => (
