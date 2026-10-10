@@ -525,6 +525,16 @@ try {
         'At 1440 px, h3.teaser__title: color is rgb(20, 20, 20) in the site, rgb(192, 57, 43) in the design.', 'Noise floor: up to 3 of 255 in 12 pixels']) {
         if (!failing.includes(w)) fail(t(`layer: a failing verdict does not say "${w}"`));
       }
+      // Made real elsewhere, with no page from before: step 3 says it could not compare with it, and why; what was left
+      // out and how far down the page was compared are said as statements, not differences.
+      for (const w of ['Not compared with the page as it was before it was made real: No page from before was kept for it',
+        'At 1440 px the page is 9,412 px tall: compared down to 6,000 px, and nothing below that.',
+        'Left out of the pixel comparison, because the site says they change from one render to the next:', 'Who’s online (block): made for each user, at 390 and 1440 px.']) {
+        if (!failing.includes(w)) fail(t(`layer: a failing verdict does not say "${w}"`));
+      }
+      if ((await rowOf('Open every day').locator('.live-tray-differences[aria-label="What differs"] li').count()) !== 1) fail(t('layer: a statement of the verdict was listed among its differences'));
+      await page.waitForSelector('.live-tray-edit:has-text("Open every day") .live-tray-picture:has-text("The page before · 390 px") .live-tray-picture-none:has-text("None kept")', { timeout: 4000 })
+        .catch(() => fail(t('layer: a verdict with no page from before does not say none was kept')));
       if ((await stateOf('Open every day')) !== 'draft') fail(t('layer: a failing verification did not send the edit back to draft'));
       await page.waitForSelector('.live-tray-edit:has-text("Open every day") img[alt="Difference at 390 px"]', { timeout: 4000 }).catch(() => fail(t('layer: a failing verdict shows no difference picture')));
       await page.waitForSelector('.live-tray-edit:has-text("Open every day") img[alt="The design at 1440 px"]', { timeout: 4000 }).catch(() => fail(t('layer: a verdict shows no design picture')));
@@ -548,6 +558,15 @@ try {
       if (!(await rowOf('Open every day').innerText()).includes('Verified at 390 and 1440 px: the site renders it as designed.')) fail(t('layer: a passing verdict does not say so'));
       if (!(await since(n)).some((c) => /^layerVerify l-\d+$/.test(c))) fail(t('layer: Verify did not ask the main process'));
       await page.waitForSelector('.live-tray-edit[data-state="verified"] img[alt="The site at 390 px"]', { timeout: 4000 }).catch(() => fail(t('layer: a passing verdict shows no pictures')));
+      // Passing: compared with the page as it was before too, held still, and what was left out said; no difference listed.
+      const passing = (await rowOf('Open every day').innerText()).replace(/\s+/g, ' ');
+      for (const w of ['The rest of the page was also compared with the page as it was just before this was made real, at 390 and 1440 px.',
+        'The site’s helper held relative dates and random orders still for every render', 'At 1440 px the page is 9,412 px tall: compared down to 6,000 px',
+        'Who’s online (block): made for each user, at 390 and 1440 px.', 'Noise floor: up to 3 of 255 in 12 pixels, from rendering the site twice, over what was not left out.']) {
+        if (!passing.includes(w)) fail(t(`layer: a passing verdict does not say "${w}"`));
+      }
+      if (await rowOf('Open every day').locator('.live-tray-differences[aria-label="What differs"]').count()) fail(t('layer: a verdict that passed lists a difference'));
+      await page.waitForSelector('.live-tray-edit[data-state="verified"] img[alt="The page before at 390 px"]', { timeout: 4000 }).catch(() => fail(t('layer: a passing verdict does not picture the page as it was before')));
       if (await rowOf('Open every day').getByRole('button', { name: /^Discard/ }).count()) fail(t('layer: an edit in the site can be discarded'));
       await layerShot('layer-verified', '.live-tray-edit[data-state="verified"] .live-tray-verdict');
 

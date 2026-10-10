@@ -6,8 +6,8 @@ import { kindWords } from '../../../main/live-layer.ts';
 import type { LayerApplied, LayerEdit, LayerSnapshot, LayerVerdict } from '../../../shared/design-layer.ts';
 import { kindKey, type LiveTrace, type PartIdentity, type TracePart } from '../../../shared/live-trace.ts';
 import {
-  byPage, changeLines, differenceWords, draftsOf, failedWords, isFragile, kindName, madeOn, noiseWords, orphanWhy, pagePath, reachWords, redoLabel,
-  undoLabel, verdictHeadline,
+  beforeWords, byPage, changeLines, cutWords, differenceWords, draftsOf, failedWords, heldWords, isFragile, kindName, madeOn, maskWords, noiseWords, orphanWhy,
+  pagePath, reachWords, redoLabel, undoLabel, verdictHeadline,
 } from './live-layer.ts';
 
 const card = (nth: number): PartIdentity => ({ kind: 'component', name: 'acme:card', within: null, nth });
@@ -107,4 +107,31 @@ test('a verification is said in words: the step that failed, each difference, an
   assert.equal(verdictHeadline(passed), 'Verified at 1440 px: the site renders it as designed.');
   assert.equal(failedWords(passed), null);
   assert.equal(failedWords({ ...failed, failed: 'rest' }), 'Step 3 of 3, the rest of the page failed.');
+});
+
+test('what a verification says whatever it decided: the page before compared or why not, how far down, what was held, and what was left out', () => {
+  const v: LayerVerdict = {
+    at: 1, ok: true, failed: null, widths: [390, 1440], noise: { maxDiff: 0, pixels: 0 }, differences: [], pictures: [],
+    before: { ran: true, at: 1, widths: [390, 1440] }, held: { at: 1_700_000_000 }, cut: [{ width: 1440, to: 6_000, full: 9_412 }],
+    masked: [{ label: 'Who’s online (block)', why: 'made for each user', widths: [390], nearEdit: false }, { label: 'The core/gallery block', why: 'shows its items in a random order', widths: [390, 1440], nearEdit: true }],
+  };
+  assert.equal(verdictHeadline(v), 'Verified at 390 and 1440 px: the site renders it as designed.');
+  assert.equal(beforeWords(v), 'The rest of the page was also compared with the page as it was just before this was made real, at 390 and 1440 px.');
+  assert.equal(cutWords(v.cut![0]!), 'At 1440 px the page is 9,412 px tall: compared down to 6,000 px, and nothing below that.');
+  assert.equal(heldWords(v), 'The site’s helper held relative dates and random orders still for every render, so they were compared rather than left out.');
+  assert.deepEqual(v.masked!.map(maskWords), [
+    'Who’s online (block): made for each user, at 390 px.',
+    'The core/gallery block: shows its items in a random order, at 390 and 1440 px. It is around an edited element, which was compared in full all the same.',
+  ]);
+  assert.equal(noiseWords(v), 'Noise floor: up to 0 of 255 in 0 pixels, from rendering the site twice, over what was not left out.');
+  // A pass whose step 3 could not compare with the page before does not claim it.
+  const unchecked: LayerVerdict = { ...v, before: { ran: false, why: 'No page from before was kept for it.' }, held: null };
+  assert.equal(verdictHeadline(unchecked), 'Verified at 390 and 1440 px against the design: the site renders it as designed. It was not compared with the page as it was before.');
+  assert.equal(beforeWords(unchecked), 'Not compared with the page as it was before it was made real: No page from before was kept for it.');
+  assert.equal(heldWords(unchecked), null);
+  // A verdict kept before any of these says none of them.
+  const old: LayerVerdict = { at: 1, ok: true, failed: null, widths: [390], noise: { maxDiff: 0, pixels: 0 }, differences: [], pictures: [] };
+  assert.deepEqual([beforeWords(old), heldWords(old), noiseWords(old), verdictHeadline(old)], [null, null, 'Noise floor: up to 0 of 255 in 0 pixels, from rendering the site twice.', 'Verified at 390 px: the site renders it as designed.']);
+  assert.equal(differenceWords({ kind: 'leak', width: 390, rect: { x: 0, y: 150, width: 64, height: 20 }, pixels: 1280, maxDiff: 90, against: { edit: 'a', at: 1 } }),
+    'At 390 px, 1,280 pixels away from every edited element differ from the page as it was before it was made real (with it as designed on it), by up to 90 of 255, in a 64 × 20 box at 0, 150: the change reached further than it should.');
 });

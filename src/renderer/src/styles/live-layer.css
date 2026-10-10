@@ -63,7 +63,8 @@
 
 .live-tray-edits,
 .live-layer-lines,
-.live-tray-differences {
+.live-tray-differences,
+.live-tray-said {
   display: grid;
   gap: var(--space-1);
   margin: 0;
@@ -184,8 +185,20 @@
   color: var(--red);
 }
 
-.live-tray-differences li {
+.live-tray-differences li,
+.live-tray-said li {
   overflow-wrap: anywhere;
+}
+
+/* What the verification says whatever it decided, and what it left out: statements, not differences. */
+.live-tray-said {
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--line);
+}
+
+.live-tray-masked {
+  display: grid;
+  gap: var(--space-1);
 }
 
 .live-tray-pictures {
@@ -195,7 +208,8 @@
 
 .live-tray-picture-row {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-auto-columns: minmax(0, 1fr);
+  grid-auto-flow: column;
   gap: var(--space-2);
 }
 
