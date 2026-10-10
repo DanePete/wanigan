@@ -7,25 +7,35 @@ agents as they work. Every project has a **Live** tab. The view is off until
 you switch it on, from that tab or in **Settings › Live view**, where Drupal,
 WordPress and other sites can each be on or off.
 
-- **One bar, three groups.** The site (one menu: Local and the hosted
-  environments to show the page on, Compare, Site settings), the page (back,
-  forward, reload, the address, the width, the lens) and the tools (Pick,
-  Library, Edits, Snap, Record, DevTools, and a menu for drag handles, the
-  default browser and a card's before and after). One
-  status line under the page says what just happened (what an edit outlined,
-  a hosted environment shown read-only, a piece shown alone, a palette entry
-  being placed), what the view follows, and the keys that work now. In a
-  narrow window, or with the dock beside it, the bar narrows without drawing
-  anything over anything: the address field shrinks, then the tools show
-  their icons only, then they take a row of their own.
-- **Around the page.** The side panel holds the Layers tree (with a chosen
-  part's details under it, the tree folded to that part's branch, or beside it
-  in a window 1680 px wide or more), Add, the component library and the
-  design layer's edits. Beneath the page, a dock shared with the code editor:
-  Code, Notes, Problems, Request and DevTools, opened from its tabs (they wait
-  in a strip when it is closed) or ⇧[ and ⇧]. What it shows, its height, its side and
-  whether it is open are kept on this Mac. Compare is drawn where the page is,
-  and leaving it puts the page back as it was.
+- **One toolbar.** The site (one menu: Local and the hosted environments to
+  show the page on, Compare and Site settings; its tooltip says what the view
+  follows), the page (back, forward, reload, and the address, which opens Go to), the tools
+  (Select, Type on the page, Style and Move, then Snap, Record and Voice), then
+  the lens, the widths, the layer's eye (the page without the design layer),
+  Edits with its count, and **Make real**, whose menu makes the page's edits
+  real, verifies them or opens Edits. A menu at its end holds drag handles,
+  the default browser and a card's before and after, and **How this works**
+  draws the editor as a picture. The status line under the page says what just
+  happened and the mode the view is in (recording, typing, selecting, placing,
+  comparing, a hosted environment read-only, the page without the layer), with
+  the dock's tabs at its end. In a narrow window, or with the dock beside it,
+  the bar narrows without drawing anything over anything: Edits keeps its
+  count and How this works its icon.
+- **Around the page.** On the left, Structure: Layers (the page's parts as a
+  tree), Add (the site's component library, and what this page itself can
+  take) and Pages (Go to's list of the site's pages). In the middle, the page
+  as a sheet, the chosen part outlined with its name and its action bar
+  (Style, Move, Take out, Ask an agent) floating above it. On the right, the
+  Inspector: the chosen part's **Design** (every way to change it), **Made
+  by** (its files and whose they are, the hooks that shaped it, its cache,
+  cost, revisions and access) and **Data** (the fields and values it was
+  rendered with); Edits (⇧E) takes its place while open. Structure and the
+  Inspector each close to give the page the room. Beneath the page, a dock
+  shared with the code editor: Code, Notes, Problems, Request and DevTools,
+  closed by default and opened from its tabs at the end of the status line or
+  ⇧[ and ⇧]. What it shows, its height, its side and whether it is open are
+  kept on this Mac. Compare, a snap being marked up and a recording's review
+  are drawn where the page is, and leaving them puts the page back as it was.
 - **Keys for everything**, in the view and in its page while nothing is typed
   into: P picks (and stops picking), ⇧L chooses a lens, 1 2 3 the widths,
   [ and ] the side panel's tabs, ⇧[ and ⇧] the dock's, ⇧C Compare, ⇧B the
@@ -37,7 +47,7 @@ WordPress and other sites can each be on or off.
 - **The page's own DevTools**, in the dock: Chromium's DevTools for the page
   (Elements with its own picker, Console, Network, Sources, Application,
   Performance) in a DevTools tab beneath or beside the page, following the dock
-  as you resize or move it. **DevTools** in the bar, or Chrome's own key (⌥⌘I
+  as you resize or move it. **DevTools** among the dock's tabs, or Chrome's own key (⌥⌘I
   on macOS, Ctrl+Shift+I on Windows and Linux, also from the page and from
   DevTools itself), opens or closes it. **Show in DevTools** on a chosen part,
   on a row of the Layers tree, or ⇧D, scrolls the page to the element when it
@@ -79,15 +89,17 @@ WordPress and other sites can each be on or off.
   debug's own comments), WordPress's template files and blocks. A part chosen
   there or picked on the page (from the keyboard too: P starts on the chosen
   part, the arrows walk, Enter picks) keeps the tree in view, marked where the
-  part is, and offers the same verbs: **Edit ▾**
+  part is, and offers the same verbs in the Inspector's Design tab: **Edit ▾**
   (every way to change it, by where the change is saved: in the site, on the
-  page, in code), **Move**, **Code** and **Alone**; the note to an agent is
-  right under them, and why it looks as it does (whose code it is, how to
-  override someone else's template in your theme, its data, cache and cost)
-  is folded below.
+  page, in code), **Move**, **Code**, **Alone** and **Take out**; the note to
+  an agent (Tell an agent) is right under them. Why it looks as it does (whose
+  code it is, how to override someone else's template in your theme, its
+  cache and cost) is the Made by tab, and its data the Data tab.
 - **Notes for an agent.** Point at parts across pages, say what should change,
   and send them to a session as one message with a picture of each part. They
-  wait in the dock's Notes tab.
+  wait in the dock's Notes tab. With no agent running, the composer offers to
+  start one (the agent New session would start) with them as its first
+  message.
 - **Snap** (the camera in the bar, or ⇧S). A picture of the page as the view
   shows it, drawn where the page is: drag over the part that is wrong, or take
   the whole view (W) or the whole page (F, loaded again at the same width in

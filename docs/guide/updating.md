@@ -3,8 +3,8 @@
 How Wanigan checks for a new version, and how to install one without losing your work. Back to the [README](../../README.md).
 
 **Wanigan 2 › Check for Updates…**, or **Settings › Updates**, asks GitHub
-whether a newer version is out. Wanigan can also check once a day: the sidebar
-asks you once, and nothing is checked until you say yes. A check reads GitHub's
+whether a newer version is out. Wanigan can also check once a day: the
+notification tray asks you once, and nothing is checked until you say yes. A check reads GitHub's
 public list of releases. No project, conversation or usage data is included;
 GitHub receives normal connection metadata. Someone running a prerelease
 (alpha, beta or release candidate) is offered newer prereleases and stable

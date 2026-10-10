@@ -40,9 +40,10 @@ npm run dev           # the app, with hot reload
 sample projects and stand-in agents, in its own data folder; nothing real is
 touched and no model is called. Help › Leave the Demo closes it.
 
-**Then open a real project:** the + beside Projects in the sidebar, or
-⌘K › Open a project. Pick its Claude Code and Codex accounts with the gear
-beside its name, start a session on a card, and keep **Needs you** open.
+**Then open a real project:** the + at the end of the projects in the rail,
+or ⌘K › Open a project. Pick its Claude Code and Codex accounts in Project
+settings, from the menu on its name in the project bar, start a session on a
+card, and keep **Needs you** open.
 
 **To build the app itself:** `npm run dist:mac` writes
 `release/mac-arm64/Wanigan 2.app` and a zip. Drag the app to Applications.

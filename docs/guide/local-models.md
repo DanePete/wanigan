@@ -12,7 +12,7 @@ Wanigan works exactly as it does, and nothing is downloaded until you choose.
   **Qwen3-Coder 30B** with Claude Code (17.2 GB, MLX). **Get** shows the size
   before anything is fetched, checks there is room (Wanigan keeps 10 GB of the
   disk free), shows progress and can be stopped; it carries on where it stopped.
-- **New session** offers these models under **On this Mac**. A project's
+- **New session** offers these models under **On this computer**. A project's
   settings can make one the model its new sessions start on.
 - Starting a session starts LM Studio's server if it is off (on whichever port
   it chooses) and loads the model with room for an agent's instructions and
