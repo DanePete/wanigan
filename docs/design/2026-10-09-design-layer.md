@@ -511,8 +511,9 @@ or the project.
      domain (a translation file is the way without code; a parent theme's file
      under an active child is changed as a copy at the same path in the child
      theme); a plugin's or core's template says whose it is; words in no
-     template are said by what made their part (a plugin, named from its
-     code's file; the template's PHP, never guessed at; a template not read).
+     template are said by what made their part (a plugin or the theme's own
+     code, named from its file; the template's PHP, never guessed at; a
+     template not read).
      An element no part with an identity names is looked up the same way from
      the trace's parts around it (the page script's `layerOf` lists them), on
      both platforms, and only an element outside every traced part is said to

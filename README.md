@@ -250,8 +250,8 @@ WordPress and other sites can each be on or off.
   code), and a parent theme's template, when a child theme is active, is to be
   copied into the child theme and changed there, since a theme update would
   overwrite it. What a template's PHP works out is never guessed at: words in
-  no template are said to be made by its code, by a plugin (named), or in a
-  template the helper did not read. Only an element outside everything the
+  no template are said to be made by its code, by a plugin or the theme's own
+  code (named), or in a template the helper did not read. Only an element outside everything the
   page's trace knows is called unknown. A WordPress change across formatting
   and words in a classic post's content go to an agent too, as does a style:
   never written into the stylesheets by hand. Where neither helper can say
