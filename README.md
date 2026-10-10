@@ -120,8 +120,9 @@ WordPress and other sites can each be on or off.
 
 - **One bar, three groups.** The site (one menu: Local and the hosted
   environments to show the page on, Compare, Site settings), the page (back,
-  forward, reload, the address, the width, the lens) and the tools (Pick, and a
-  menu for drag handles, the default browser and a card's before and after). One
+  forward, reload, the address, the width, the lens) and the tools (Pick,
+  Library, Edits, Snap, Record, and a menu for drag handles, the default
+  browser and a card's before and after). One
   status line under the page says what just happened (what an edit outlined,
   a hosted environment shown read-only, a piece shown alone, a palette entry
   being placed), what the view follows, and the keys that work now. In a
@@ -139,7 +140,8 @@ WordPress and other sites can each be on or off.
 - **Keys for everything**, in the view and in its page while nothing is typed
   into: P picks (and stops picking), ⇧L chooses a lens, 1 2 3 the widths,
   [ and ] the side panel's tabs, ⇧[ and ⇧] the dock's, ⇧C Compare, ⇧B the
-  component library; on a chosen part E types on its words on the page (or,
+  component library, ⇧S a snap, ⇧R starts or stops a recording; on a chosen
+  part E types on its words on the page (or,
   for a part that is more than words, opens Edit ▾), M moves, . opens its
   code, ⇧A shows it alone, ⇧X takes it out; ⌘↩ adds a note, ⇧⌘↩ sends it (or
   the notes waiting). All are on the shortcut sheet (?).
@@ -179,6 +181,35 @@ WordPress and other sites can each be on or off.
 - **Notes for an agent.** Point at parts across pages, say what should change,
   and send them to a session as one message with a picture of each part. They
   wait in the dock's Notes tab.
+- **Snap** (the camera in the bar, or ⇧S). A picture of the page as the view
+  shows it, drawn where the page is: drag over the part that is wrong, or take
+  the whole view (W) or the whole page (F, loaded again at the same width in
+  a hidden window). Mark it up with a box, an arrow, a highlight, a short
+  label and a blur for anything private (B A H T U, each undone with ⌘Z or
+  Ctrl+Z); the blur replaces the pixels before the picture is kept or sent.
+  **Ask an agent** opens the note composer with the marked-up picture
+  attached and the context written out for you to read and change: the
+  page's address and the view's width, the parts the area covers and what
+  made them (template and file, block or component, module or plugin, from
+  the site's trace), and the console's errors. Choose the session and send
+  it, or **Save to Notes** to send later. Nothing leaves Wanigan until you do.
+- **Record** (in the bar, or ⇧R). A recording of the live view and nothing
+  else, from the view's own frames (no screen recording, so no permission is
+  asked, on macOS or Windows), at most two minutes. While it runs the bar
+  says **Stop** with the time and the status line says it is recording;
+  Escape or ⇧R stops it, and so does leaving the live view. Meanwhile a step
+  log is kept: each click with the element and the part under it, keys and
+  what was typed (never in a password field: only that keys were pressed
+  there), scrolls, pages, console errors, and requests that failed or were
+  slow (status, path and time; never a body, a header, a cookie or a query).
+  Stopped, you see the clip (a WebM video, which Wanigan, Chrome, Edge,
+  Firefox and Safari play; QuickTime Player does not), up to eight key frames
+  (each click, page and error) and the log. **Ask an agent** sends the key
+  frames as pictures and the log as words with your explanation; agents never
+  get the video, and the composer says so. Recordings are kept in Wanigan's
+  own data, under `live-recordings/` (never in the site), with the same
+  limits as attachments; a project keeps its last five, and the review has
+  Show in Finder (File Explorer on Windows) and Delete.
 - **The design layer** (Edit ▾ › On the page, and Edits, ⇧E). You edit on
   the page itself, as in a site builder. Retype the words (E, or a
   double-click on the chosen part's words) makes those words editable where
