@@ -31,6 +31,7 @@ import { saveOf, type LiveTrace, type PaletteEntry, type TraceCollection, type T
 import type { Layer } from '@shared/live-tree';
 import type { ProjectSummary } from '@shared/model';
 import { liveBridge } from '../../lib/live';
+import type { NoticeAction } from '../../lib/notices';
 import { Select } from '../Select';
 import { Button, Dialog, useToast } from '../ui';
 import { addNote } from './note-store';
@@ -140,18 +141,23 @@ export function useArrange({ project, platform, trace, parts, regions, layers, e
     if (r.ok) { toast(back); say(back); } else toast(r.error ?? 'It could not be put back.', 'error');
   }, [live, toast, say, checks]);
 
-  const done = useCallback((r: LiveMoveSaved, what: string, saved: string, name: string, back: string): void => {
+  /** A write's Undo: offered with its saved message, and again with its read-back (write-checks `offer`). */
+  const undoOffer = useCallback((r: LiveMoveSaved, back: string): NoticeAction | null => {
+    const token = r.ok ? r.undo : null;
+    return token ? { label: 'Undo', run: () => void undo(token, back) } : null;
+  }, [undo]);
+
+  const done = useCallback((r: LiveMoveSaved, what: string, saved: string, name: string, offer: NoticeAction | null): void => {
     if (r.ok) {
       onSaved(name);
-      const token = r.undo;
-      toast(`${what}. ${saved}`, 'info', token ? { action: { label: 'Undo', run: () => void undo(token, back) } } : undefined);
+      toast(`${what}. ${saved}`, 'info', offer ? { action: offer } : undefined);
       say(`${what}: ${saved}`);
       return;
     }
     toast(r.error, 'error');
     say(r.error);
     if (!r.conflict) void live?.unpreview();
-  }, [live, toast, say, undo, onSaved]);
+  }, [live, toast, say, onSaved]);
 
   /** Save a move the page or the keyboard made; a configuration move, or code beyond core on its save, is said and asked first. */
   const saveMove = useCallback(async (move: LiveMove): Promise<void> => {
@@ -170,9 +176,10 @@ export function useArrange({ project, platform, trace, parts, regions, layers, e
     }
     const check = baseline.current ? checks.fromSnapshot(baseline.current, 'move', name, watchedIn(ids)) : await checks.prepare('move', name, watchedIn(ids));
     const r = await live.move(move, answer === 'without-ai' ? { noSiteAi: true } : undefined);
-    checks.settle(check, { ok: r.ok, ai: r.ai, undo: r.ok ? r.undo : null });
-    done(r, `Moved ${name} to ${where}`, notice.saved, name, `${name} is back where it was.`);
-  }, [live, cms, done, say, checks]); // eslint-disable-line react-hooks/exhaustive-deps
+    const offer = undoOffer(r, `${name} is back where it was.`);
+    checks.settle(check, { ok: r.ok, ai: r.ai, undo: r.ok ? r.undo : null, offer });
+    done(r, `Moved ${name} to ${where}`, notice.saved, name, offer);
+  }, [live, cms, done, say, checks, undoOffer]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const saveInsert = useCallback(async (insert: LiveInsert): Promise<void> => {
     const into = coll(insert.collection);
@@ -187,9 +194,10 @@ export function useArrange({ project, platform, trace, parts, regions, layers, e
     if (answer === 'no') return;
     const check = baseline.current ? checks.fromSnapshot(baseline.current, 'insert', entry.label, watchedIn([into.id])) : await checks.prepare('insert', entry.label, watchedIn([into.id]));
     const r = await live.insert(insert, answer === 'without-ai' ? { noSiteAi: true } : undefined);
-    checks.settle(check, { ok: r.ok, ai: r.ai, undo: r.ok ? r.undo : null });
-    done(r, `Added ${entry.label} at ${insert.index + 1} of ${into.items.length + 1} in ${into.label}`, notice.saved, entry.label, `${entry.label} is taken out again.`);
-  }, [live, trace, cms, done, checks]); // eslint-disable-line react-hooks/exhaustive-deps
+    const offer = undoOffer(r, `${entry.label} is taken out again.`);
+    checks.settle(check, { ok: r.ok, ai: r.ai, undo: r.ok ? r.undo : null, offer });
+    done(r, `Added ${entry.label} at ${insert.index + 1} of ${into.items.length + 1} in ${into.label}`, notice.saved, entry.label, offer);
+  }, [live, trace, cms, done, checks, undoOffer]); // eslint-disable-line react-hooks/exhaustive-deps
 
   /**
    * Take one item out of its collection. Out of anything shared (configuration, or content shown in many places) it
@@ -209,9 +217,10 @@ export function useArrange({ project, platform, trace, parts, regions, layers, e
     const item = (parts.regionsOf.get(remove.item) ?? []).map((ix) => regions.find((r) => r.index === ix)).find((r): r is LiveRegion => !!r);
     const check = await checks.prepare('remove', name, watchedIn([from.id]), undefined, item ? { region: item, present: false } : undefined);
     const r = await live.remove(checked, answer === 'without-ai' ? { noSiteAi: true } : undefined);
-    checks.settle(check, { ok: r.ok, ai: r.ai, undo: r.ok ? r.undo : null });
-    done(r, `Took ${name} out of ${from.label}`, notice.saved, name, `${name} is back.`);
-  }, [live, trace, cms, done, say, checks, toast, regions, parts]); // eslint-disable-line react-hooks/exhaustive-deps
+    const offer = undoOffer(r, `${name} is back.`);
+    checks.settle(check, { ok: r.ok, ai: r.ai, undo: r.ok ? r.undo : null, offer });
+    done(r, `Took ${name} out of ${from.label}`, notice.saved, name, offer);
+  }, [live, trace, cms, done, say, checks, toast, regions, parts, undoOffer]); // eslint-disable-line react-hooks/exhaustive-deps
 
   /** A part whose order is in a template: pictures of the order now and the order wanted, as a note for an agent. */
   const request = useCallback(async (region: number, ref: number, place: 'before' | 'after', previewed: boolean): Promise<void> => {

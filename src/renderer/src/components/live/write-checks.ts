@@ -11,6 +11,7 @@ import { itemsAfter, judge, regionsAfter, verdictText, type WriteCheck, type Wri
 import { countOf } from '@shared/live';
 import type { LiveTraceAnswer } from '@shared/live-lens';
 import type { liveBridge } from '../../lib/live';
+import type { NoticeAction } from '../../lib/notices';
 
 type Bridge = NonNullable<ReturnType<typeof liveBridge>>;
 
@@ -32,8 +33,12 @@ export interface WriteChecks {
   fromSnapshot(snap: WriteSnapshot, kind: WriteKind, what: string, regions: readonly LiveRegion[]): WriteCheck;
   /** A write's undo: the same parts as the write it undoes, found on the page as it is now (a part taken out, put back). */
   prepareUndo(token: string, what: string): Promise<WriteCheck>;
-  /** The write came back: say what the site's AI did, and check it once the page reloads. `undo` keeps it for its undo. */
-  settle(check: WriteCheck, result: { ok: boolean; ai?: SaveAi | null; undo?: string | null }): void;
+  /**
+   * The write came back: say what the site's AI did, and check it once the page reloads. `undo` keeps it for its undo;
+   * `offer` is the write's own Undo, offered again with the read-back (it once went with whatever the status line said
+   * last, and a notice between, or a slow read-back, lost it: take dry-k6).
+   */
+  settle(check: WriteCheck, result: { ok: boolean; ai?: SaveAi | null; undo?: string | null; offer?: NoticeAction | null }): void;
   /** The page started loading. */
   loading(): void;
   /** A trace arrived for the page as it is now (after its scan): a pending check is judged against it. */
@@ -47,11 +52,11 @@ export function useWriteChecks({ live, scan, traceId, say, written }: {
   /** The trace the page shows now. */
   traceId: () => string | null;
   /** Say something about a write: `warn` when it needs the owner to look. */
-  say: (text: string, warn: boolean, toast: boolean) => void;
+  say: (text: string, warn: boolean, toast: boolean, offer?: NoticeAction | null) => void;
   /** A write came back from the site: its own change is not someone else's (the content watch need not reload for it). */
   written?: () => void;
 }): WriteChecks {
-  const pending = useRef<{ check: WriteCheck; reloaded: boolean; ai: string | null } | null>(null);
+  const pending = useRef<{ check: WriteCheck; reloaded: boolean; ai: string | null; offer: NoticeAction | null } | null>(null);
   const undos = useRef(new Map<string, WriteCheck>());
 
 
@@ -78,14 +83,14 @@ export function useWriteChecks({ live, scan, traceId, say, written }: {
     return prepare('undo', what, now, undefined, done?.item ? { region: done.item.region, present: !done.item.present } : undefined);
   }, [prepare, scan]);
 
-  const settle = useCallback((check: WriteCheck, result: { ok: boolean; ai?: SaveAi | null; undo?: string | null }): void => {
+  const settle = useCallback((check: WriteCheck, result: { ok: boolean; ai?: SaveAi | null; undo?: string | null; offer?: NoticeAction | null }): void => {
     written?.();
     const ai = saveAiSentence(result.ai ?? null);
     // What the site's AI did is said at once, whether or not the save went through: it may have spent either way.
     if (ai?.ran) say(ai.text, false, true);
     if (!result.ok) { pending.current = null; return; }
     if (result.undo) undos.current.set(result.undo, check);
-    pending.current = { check, reloaded: false, ai: ai?.text ?? null };
+    pending.current = { check, reloaded: false, ai: ai?.text ?? null, offer: result.offer ?? null };
   }, [say, written]);
 
   const loading = useCallback((): void => {
@@ -103,7 +108,7 @@ export function useWriteChecks({ live, scan, traceId, say, written }: {
     const prints = live && indexes.length ? await live.fingerprints(indexes) : {};
     const verdict = judge(p.check, answer.state === 'ok' ? answer.trace : null, after.map((r) => (r ? prints[r.index] ?? null : null)), itemsAfter(p.check, scan.current));
     const said = verdictText(p.check, verdict);
-    say(p.ai ? `${said.text} ${p.ai}` : said.text, said.tone === 'warn', said.tone === 'warn');
+    say(p.ai ? `${said.text} ${p.ai}` : said.text, said.tone === 'warn', said.tone === 'warn', p.offer);
   }, [live, scan, say]);
 
   return useMemo(() => ({ prepare, snapshot, fromSnapshot, prepareUndo, settle, loading, traced }), [prepare, snapshot, fromSnapshot, prepareUndo, settle, loading, traced]);

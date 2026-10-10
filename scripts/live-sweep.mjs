@@ -1892,7 +1892,10 @@ try {
       if (await page.$('.live-library')) fail(t('library: ⇧B again did not go back from the library'));
       if ((await page.$eval('.live-structure [role="tab"][aria-selected="true"]', (b) => b.textContent).catch(() => '')) !== 'Layers') fail(t('library: ⇧B again did not go back to Layers'));
 
-      // Taking out a content item: saved at once, said, with Undo.
+      // Taking out a content item: saved at once, said, with Undo. The site's AI ran during it here, so a notice comes
+      // between the save and its read-back: the read-back still offers the Undo (it once offered only what the status
+      // line said last, and lost it: take dry-k6).
+      await page.evaluate(() => { window.__wgLive.removeAi = { watched: { prompts: true, abilities: false }, prompts: [{ provider: 'acme', model: 'acme-small', tokens: 120, done: true }], abilities: [] }; });
       const before = (await calls()).length;
       await page.locator('.live-layer', { hasText: 'Quote paragraph' }).first().click();
       await page.locator('.live-inspector .live-side-title').focus();
@@ -1906,6 +1909,7 @@ try {
         .catch(async () => fail(t(`take out: the read-back was not said (${await lastSaid(page)})`)));
       if (!/Took Quote paragraph out/.test(await said())) fail(t('take out: it was not said aloud'));
       await shot('take-out-saved');
+      await page.evaluate(() => { window.__wgLive.removeAi = null; });
       await page.locator('.status-line button', { hasText: 'Undo' }).click().catch(() => fail(t('take out: the read-back did not carry the Undo')));
       await page.waitForFunction(() => window.__wgLive.calls.includes('undo u-3'), null, { timeout: 3000 }).catch(() => fail(t('take out: Undo did not ask the site')));
       await page.waitForSelector('.status-line .status-done:has-text("Quote paragraph: put back, and it is on the page again after reloading.")', { timeout: 4000 })

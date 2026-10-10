@@ -933,7 +933,8 @@ export function liveStub(f) {
       // Taken out: the reloaded page no longer has it, as a site's would not.
       if (!w.unchanged) { w.gone.push(r.item); w.undoes['u-3'] = r.item; if (bounds) regions = toRegions(bounds.width); }
       written();
-      return { ok: true, undo: 'u-3', revision: '216' };
+      // What the site's AI did during it, when a test says it ran (removeAi): said at once, between the save and its read-back.
+      return { ok: true, undo: 'u-3', revision: '216', ...(w.removeAi ? { ai: w.removeAi } : {}) };
     },
     // The component library (live-library.ts): the answer the sweep set, pictures drawn here, a little slower than at once.
     async library(id, options) {

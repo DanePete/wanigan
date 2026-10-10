@@ -45,7 +45,7 @@ import { attempt, bridge, call, forProject, useQuery } from '../lib/api';
 import { liveBridge, useLiveCovered } from '../lib/live';
 import { anchorGoTo, isTyping, showingOrigin, useGoToKeys } from '../lib/live-goto';
 import { navigate } from '../lib/router';
-import { actionable, useNotices, type Notice } from '../lib/notices';
+import { actionable, useNotices, type Notice, type NoticeAction } from '../lib/notices';
 import { PROVIDER_LABEL, plural } from '../lib/format';
 import { useAppState } from '../lib/settings';
 import { liveFor, type AppSettings } from '@shared/settings';
@@ -468,14 +468,16 @@ function LiveShown({ site, url, project, follow, card, compact, following, shots
    * A write read back: in red when it needs the owner, in green when the site holds it. A read-back that confirms a
    * move or a removal carries on its Undo (the save said it first), so the status line goes on offering it.
    */
-  const sayWrite = useCallback((text: string, warn: boolean, now: boolean): void => {
+  const sayWrite = useCallback((text: string, warn: boolean, now: boolean, offer?: NoticeAction | null): void => {
     if (warn) { toast(text, 'error'); return; }
     // What the site's AI did is said at once (`now`), as news; a read-back that found the write in place is a check passed.
     if (now) { toast(text); return; }
+    // The write's own Undo when it has one (`offer`); else the one the status line offers now, carried on.
     const { notice, dismiss } = latest.current;
-    const undo = notice && notice.tone !== 'error' && notice.action && actionable(notice) ? notice.action : null;
+    const carried = notice && notice.tone !== 'error' && notice.action && actionable(notice) ? notice.action : null;
+    const undo = offer ?? carried;
     toast(text, 'done', undo ? { action: undo } : undefined);
-    if (undo && notice) dismiss(notice.id);
+    if (undo && notice && notice.action === undo) dismiss(notice.id);
   }, [toast]);
   /** Until when the site's change counter moving is the live view's own write, not someone else's. */
   const ownWriteUntil = useRef(0);
