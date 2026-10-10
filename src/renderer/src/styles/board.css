@@ -52,8 +52,52 @@
   font-variant-numeric: tabular-nums;
 }
 
-/* Where the bar is short of room, the card types keep their marks and give up their words (each keeps its name). */
-@container board-toolbar (max-width: 1180px) {
+/* Priority and agent: one menu, water-tinted while it narrows the cards (a choice made, like a saved view). */
+.board-filter {
+  gap: var(--space-1);
+  max-width: calc(var(--column-w) + var(--space-6));
+}
+
+.board-filter-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.board-filter.on {
+  border-color: var(--water-line);
+  background: var(--water-soft);
+  color: var(--water-text);
+}
+
+.board-filter > svg {
+  flex: none;
+  color: var(--faint);
+}
+
+/* Where the bar is short of room, the card types keep their marks and give up their words (each keeps its name),
+   then New card keeps its plus (and its name, and its key in its tooltip). */
+@container board-toolbar (max-width: 1080px) {
+  .board-new > span {
+    position: absolute;
+    width: var(--hairline);
+    height: var(--hairline);
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+
+  .board-new {
+    width: var(--control-s);
+    padding: 0;
+  }
+
+  .board-search {
+    flex-basis: calc(var(--column-w) - var(--space-8));
+  }
+}
+
+@container board-toolbar (max-width: 1300px) {
   .board-types .chip .type > span:last-child {
     position: absolute;
     width: var(--hairline);

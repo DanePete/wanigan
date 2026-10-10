@@ -76,6 +76,12 @@ const tileFits = (page) => page.evaluate(() => [...document.querySelectorAll('.w
   }];
 }));
 const sameSizes = (a, b) => Object.keys(a).every((id) => b[id] === a[id]);
+/** The card drawer's underline tab by name (Overview, Review, Branch, Looks), chosen and showing. */
+async function drawerTab(page, name) {
+  const tab = page.locator('.drawer [role="tab"]', { hasText: name });
+  await tab.click({ timeout: 8000 });
+  await page.waitForFunction((n) => [...document.querySelectorAll('.drawer [role="tab"]')].some((t) => t.textContent.startsWith(n) && t.getAttribute('aria-selected') === 'true'), name, { timeout: 3000 });
+}
 
 const failures = [];
 const browser = await chromium.launch();
@@ -163,7 +169,8 @@ try {
       ['needs', '#/needs', '.needs-headline'],
       ['running', '#/running', '.srow'],
       ['board', `#/p/${ns}/board`, '.card'],
-      ['board-drawer-review', `#/p/${ns}/board?card=${ns}-7`, '.drawer .ai-result'],
+      // The drawer opens on Overview; a fourth entry is the tab to choose first (Review, Branch, Looks).
+      ['board-drawer-review', `#/p/${ns}/board?card=${ns}-7`, '.drawer .ai-result', 'Review'],
       ['board-drawer-working', `#/p/${ns}/board?card=${ns}-6`, '.drawer .stages'],
       ['list', `#/p/${ns}/list`, '.list-table tbody tr[data-key]'],
       ['sessions', `#/p/${ns}/sessions`, '.srow'],
@@ -177,7 +184,7 @@ try {
       ['git-stashes', `#/p/${ns}/changes/stashes`, '.stash-diffs .dl-add'],
       ['git-card-pr', `#/p/${ns}/changes?branch=${ns}-3`, '.pr-chip .pr-number'],
       ['git-card-turns', `#/p/${ns}/changes?branch=${ns}-12`, '.who-line'],
-      ['board-drawer-branch', `#/p/${ns}/board?card=${ns}-3`, '.drawer .branch-line'],
+      ['board-drawer-branch', `#/p/${ns}/board?card=${ns}-3`, '.drawer .branch-line', 'Branch'],
       ['decisions', `#/p/${ns}/decisions`, '.decision'],
       ['activity', `#/p/${ns}/activity`, '.activity-item'],
       ['accounts', '#/accounts', '.account'],
@@ -190,9 +197,10 @@ try {
       ['session-limited-codex', codexLimitedHref, '.banner-limit button'],
       ['session-attached', attachedHref, '.composer .attach-chip img'],
     ];
-    for (const [name, hash, ready] of routes) {
+    for (const [name, hash, ready, tab] of routes) {
       await page.goto(`${base}${hash.startsWith('#') ? hash : `#${hash.replace(/^.*#/, '')}`}`);
       try {
+        if (tab) await drawerTab(page, tab);
         await page.waitForSelector(ready, { timeout: 8000 });
       } catch {
         failures.push(`${theme}/${name}: never showed ${ready}`);
@@ -249,6 +257,7 @@ try {
     {
       await page.evaluate(async (body) => { await fetch('/test/looks', { method: 'POST', body: JSON.stringify(body) }); }, { sessionId: shipping?.id });
       await page.goto(`${base}#/p/${ns}/board?card=${ns}-7`);
+      await drawerTab(page, 'Looks').catch(() => failures.push(`${theme}/looks: the drawer has no Looks tab`));
       await page.waitForSelector('.drawer .live-looks li', { timeout: 8000 }).catch(() => failures.push(`${theme}/looks: the review card lists no looks`));
       const rows = await page.$$eval('.drawer .live-looks li', (items) => items.map((li) => li.textContent.replace(/\s+/g, ' ').trim()));
       const expected = [
@@ -577,16 +586,18 @@ try {
       // A card's merge, from its drawer. With agents at work in the project folder it is not
       // offered, and says why.
       await page.goto(`${base}#/p/${ns}/board?card=${ns}-3`);
+      await drawerTab(page, 'Branch');
       await page.waitForSelector('.drawer .branch-line');
       const mergeIt = page.locator('.drawer button:has-text("Merge into main")');
       if (status.agents.length) {
         // The branch comes from cards.get; its refusal waits on a separate sessions.list.
         // Read the final disabled state and explanation together, not across two renders.
         await page.waitForFunction(() => [...document.querySelectorAll('.drawer button')].some((button) =>
-          button.textContent.includes('Merge into main') && button.disabled && /working in the project folder, and merging would change the files under/.test(button.title)), null, { timeout: 8000 }).catch(() => {});
-        const held = await mergeIt.evaluate((button) => ({ disabled: button.disabled, title: button.title }));
-        if (!held.disabled || !/working in the project folder, and merging would change the files under/.test(held.title)) {
-          failures.push(`${theme}/card-merge: with agents in the folder, Merge into main is ${held.disabled ? 'disabled' : 'offered'} and says "${held.title}"`);
+          button.textContent.includes('Merge into main') && button.disabled && /working in the project folder, and merging would change the files under/.test(button.dataset.tip ?? '')), null, { timeout: 8000 }).catch(() => {});
+        // Said twice: in the button's tooltip, and in words under it (a disabled button takes no keyboard focus).
+        const held = await mergeIt.evaluate((button) => ({ disabled: button.disabled, title: button.dataset.tip ?? '', said: document.querySelector('.drawer .branch-held')?.textContent ?? '' }));
+        if (!held.disabled || !/working in the project folder, and merging would change the files under/.test(held.title) || held.said !== held.title) {
+          failures.push(`${theme}/card-merge: with agents in the folder, Merge into main is ${held.disabled ? 'disabled' : 'offered'} and says "${held.title}" ("${held.said}" under it)`);
         }
       }
       // A merge that conflicts, as the drawer takes the core's answer: the files named, then resolve,
@@ -609,6 +620,7 @@ try {
       // fixture's replacement sessions.list applies only after a fresh query.
       await page.waitForSelector('.drawer', { state: 'detached', timeout: 5000 });
       await page.goto(`${base}#/p/${ns}/board?card=${ns}-3`);
+      await drawerTab(page, 'Branch');
       await page.waitForSelector('.drawer .branch-line');
       try {
         await page.click('.drawer button:has-text("Merge into main"):not([disabled])', { timeout: 5000 });
@@ -617,7 +629,7 @@ try {
       } catch (error) {
         const state = await page.evaluate(() => ({
           hash: location.hash,
-          buttons: [...document.querySelectorAll('.drawer .branch-actions button')].map((button) => ({ text: button.textContent, disabled: button.disabled, title: button.title })),
+          buttons: [...document.querySelectorAll('.drawer .branch-actions button')].map((button) => ({ text: button.textContent, disabled: button.disabled, title: button.dataset.tip ?? '' })),
           merges: window.__wgMerges,
         }));
         console.error(`${theme}/card-merge prerequisites failed: ${JSON.stringify({ failures, state })}`);
@@ -778,6 +790,7 @@ try {
 
     // An approved card's pull request: the confirm step says what is pushed where.
     await page.goto(`${base}#/p/${ns}/board?card=${ns}-10`);
+    await drawerTab(page, 'Branch');
     await page.waitForSelector('.drawer .branch-line');
     await page.click('.drawer button:has-text("Open a pull request")');
     await page.waitForSelector('.drawer .pr-confirm', { timeout: 8000 }).catch(() => failures.push(`${theme}: the pull request plan never showed`));

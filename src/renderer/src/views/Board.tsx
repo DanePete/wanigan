@@ -19,6 +19,7 @@ import { SinceStrip } from './SinceStrip';
 import { JevChip, JevStrip } from '../components/Jev';
 import { HowItWorks } from './HowItWorks';
 import { Select } from '../components/Select';
+import { MenuButton, type MenuItem } from '../components/Menu';
 import { orbPlay } from '../components/Orb';
 import { SavedViews } from './SavedViews';
 
@@ -157,6 +158,13 @@ export function BoardToolbar({ project, mode, board, setDialog, onHow }: {
     modes.current?.querySelector<HTMLElement>('[aria-current="page"]')?.focus();
   }, []);
   const order = useMemo(() => sorts(isMac()), []);
+  // Priority and agent, in one menu: each a choice of one, the button saying what is chosen.
+  const filterItems: MenuItem[] = [
+    { id: 'priority-any', group: 'Priority', label: 'Any priority', kind: 'radio', checked: board.priority === 'any', run: () => board.setPriority('any') },
+    ...PRIORITIES.map((p): MenuItem => ({ id: `priority-${p}`, group: 'Priority', label: `P${p}`, detail: PRIORITY_MEANING[p], kind: 'radio', checked: board.priority === p, run: () => board.setPriority(p) })),
+    ...AGENTS.map((a): MenuItem => ({ id: `agent-${a.value}`, group: 'Agent', label: a.label, kind: 'radio', checked: board.agent === a.value, run: () => board.setAgent(a.value) })),
+  ];
+  const narrowed = [board.priority === 'any' ? null : `P${board.priority}`, board.agent === 'any' ? null : AGENTS.find((a) => a.value === board.agent)?.label].filter(Boolean).join(' · ');
   const to = (view: 'board' | 'list'): string => href({ name: 'project', projectKey: project.key, view }, openKey);
   return (
     <Toolbar label="Cards" className="board-toolbar">
@@ -179,16 +187,18 @@ export function BoardToolbar({ project, mode, board, setDialog, onHow }: {
           </button>
         ))}
       </div>
-      <Select<Priority | 'any'> label="Priority" size="s" value={board.priority} onChange={board.setPriority}
-        options={[{ value: 'any', label: 'Any priority' }, ...PRIORITIES.map((p) => ({ value: p, label: `P${p}`, detail: PRIORITY_MEANING[p] }))]} />
-      <Select<BoardAgent> label="Agent" size="s" value={board.agent} onChange={board.setAgent} options={AGENTS} />
+      <MenuButton label={`Filter by priority and agent${narrowed ? `: ${narrowed}` : ''}`} items={filterItems} width={240}
+        className={`btn-plain btn-s board-filter${narrowed ? ' on' : ''}`} tip="Priority and agent">
+        <span className="board-filter-text">{narrowed || 'Priority, agent'}</span>
+        <Icon name="down" size={12} />
+      </MenuButton>
       {board.filtering ? <Button size="s" tone="quiet" onClick={board.clear}>Clear</Button> : null}
       <div className="board-toolbar-end">
         <SavedViews projectId={project.id} views={board.views} current={board.current} appliedId={board.applied} onApply={board.apply} setApplied={board.setApplied} />
         {mode === 'board' ? <Select<BoardSort> label="Order" size="s" className="board-order" value={board.sort} onChange={board.setSort} options={order} /> : null}
         {onHow ? <IconButton icon="question" label="How the board works" className="how-btn" onClick={onHow} /> : null}
         {setDialog ? (
-          <Button tone="primary" size="s" icon="plus" keys="new-card" onClick={() => setDialog({ kind: 'card', projectId: project.id })}>New card</Button>
+          <Button tone="primary" size="s" icon="plus" keys="new-card" className="board-new" onClick={() => setDialog({ kind: 'card', projectId: project.id })}>New card</Button>
         ) : null}
       </div>
     </Toolbar>
