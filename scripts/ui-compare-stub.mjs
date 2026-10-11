@@ -114,7 +114,7 @@ export function compareStub() {
     hide: async () => { log.hides += 1; },
     cover: async (covered) => { log.covers.push(covered); return null; },
     reload: async () => { log.reloads += 1; },
-    css: async () => 0, restyled: async () => [],
+    css: async () => 0, restyled: async () => [], settled: async () => 0,
     go: async () => true,
     back: async () => {},
     forward: async () => {},
