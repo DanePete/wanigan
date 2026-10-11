@@ -149,8 +149,8 @@ function NavButtons({ projectId, mac }: { projectId: string; mac: boolean }) {
   const forward = mac ? '⌃⇧-' : 'Alt+→';
   return (
     <div className="crumbs-nav" role="group" aria-label="Back and forward">
-      <IconButton icon="back" label={`Back (${back}); hold for recent places`} disabled={!mayGoBack(projectId)} onClick={() => { if (!recent) goBack(projectId); }} {...hold} />
-      <IconButton icon="forward" label={`Forward (${forward}); hold for recent places`} disabled={!mayGoForward(projectId)} onClick={() => { if (!recent) goForward(projectId); }} {...hold} />
+      <IconButton icon="back" label={`Back (${back}); hold for recent places`} disabled={!mayGoBack(projectId)} aria-description={mayGoBack(projectId) ? undefined : 'Nowhere to go back to yet.'} onClick={() => { if (!recent) goBack(projectId); }} {...hold} />
+      <IconButton icon="forward" label={`Forward (${forward}); hold for recent places`} disabled={!mayGoForward(projectId)} aria-description={mayGoForward(projectId) ? undefined : 'Nowhere to go forward to: Back first.'} onClick={() => { if (!recent) goForward(projectId); }} {...hold} />
       <IconButton icon="clock" label="Recent places" aria-haspopup="listbox" aria-expanded={recent} onClick={() => setRecent((r) => !r)} />
       {recent ? <RecentMenu projectId={projectId} onClose={() => setRecent(false)} /> : null}
     </div>
