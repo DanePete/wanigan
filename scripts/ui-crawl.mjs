@@ -12,6 +12,7 @@
 // is disabled and says why). Nothing that would leave the machine is used:
 // the demo refuses those and must say so. Report: .artifacts/crawl/report.md.
 import { mkdirSync, writeFileSync } from 'node:fs';
+import { availableParallelism } from 'node:os';
 import { join } from 'node:path';
 import { chromium } from 'playwright-core';
 import { SHORTCUTS } from '../src/shared/shortcuts.ts';
@@ -30,7 +31,9 @@ import { qualifyStoppedResize } from './ui-crawl-refusals.ts';
 
 const out = join(root, '.artifacts', 'crawl');
 mkdirSync(out, { recursive: true });
-const WORKERS = Math.max(1, Number(process.env.CRAWL_WORKERS ?? 4));
+// Surfaces crawled at once, each with its own core and browser context: four, or more where there are cores to spare
+// (eight on a 12-core Mac). A starved worker times out on its own and fails a control that works.
+const WORKERS = Math.max(1, Number(process.env.CRAWL_WORKERS ?? Math.max(4, Math.min(8, availableParallelism() - 4))));
 /** Crawl only the surfaces whose name matches (for working on one). */
 const ONLY = process.env.CRAWL_ONLY ? new RegExp(process.env.CRAWL_ONLY, 'i') : null;
 /** What goes in a text field: harmless if a shell session ever runs it. */
@@ -312,7 +315,7 @@ async function problemsOf(before, after, log, errors, errorsAt, rec, page) {
  * Crawl one surface on its own seeded core. With `retry`, use only those
  * controls: the ones an earlier action on the first pass took away.
  */
-async function crawlSurface(browser, surface, world0, retry = null) {
+async function crawlSurface(browser, surface, world0, retry = null, shard = null) {
   const started = Date.now();
   const records = [];
   let context, gateway;
@@ -415,7 +418,13 @@ async function crawlSurface(browser, surface, world0, retry = null) {
     const replay = async (step) => {
       let d = await mark(step);
       if (!d) return false;
-      if (d.disabled && (await page.evaluate((x) => window.__crawl.prime(x), TYPED))) await settle(page);
+      if (d.disabled && (await page.evaluate((x) => window.__crawl.prime(x), TYPED))) {
+        await settle(page);
+        d = { ...d, ...(await page.evaluate(() => window.__crawl.disabled())) };
+      }
+      // A step that is off now (an earlier action here took away what it needs) reveals nothing: what it led to is
+      // unreached here, and tried again on a fresh core, rather than a click the crawler could never finish.
+      if (d.disabled) return false;
       if (step.kind === 'text') { await target().click({ timeout: 3000 }); await page.keyboard.type(TYPED); }
       else if (step.kind === 'select' && step.choice) {
         await target().click({ timeout: 3000 });
@@ -426,11 +435,19 @@ async function crawlSurface(browser, surface, world0, retry = null) {
     };
 
     const first = (await items()).map((x) => ({ ...x, path: [] }));
-    const queue = retry ? [...retry] : first;
+    // A copy: a shard takes its share out of the queue, and every first control must stay known to it, or another
+    // shard's controls would look revealed by its first click and be used here too.
+    const queue = retry ? [...retry] : [...first];
     // Last what changes a lot, and just before it what is reached through such a
     // change, so a Cancel beside a Reopen is used before the Reopen.
     const later = (x) => (DESTRUCTIVE.test(x.name) ? 2 : x.path.some((step) => DESTRUCTIVE.test(step.name)) ? 1 : 0);
     queue.sort((a, b) => later(a) - later(b));
+    // One shard of a large surface: every n-th of its first controls, counted in the order they are used, so the
+    // shards share them out and each still uses what changes a lot last. What a control reveals stays with its shard.
+    if (shard && !retry) {
+      const mine = new Set(queue.filter((_, i) => i % shard.n === shard.k).map((x) => x.sig));
+      for (let i = queue.length - 1; i >= 0; i--) if (!mine.has(queue[i].sig)) queue.splice(i, 1);
+    }
     const known = new Set([...first, ...queue].map((x) => x.sig));
     const enqueue = (x) => {
       const at = queue.findIndex((y) => later(y) > later(x));
@@ -512,8 +529,11 @@ async function crawlSurface(browser, surface, world0, retry = null) {
       // What it revealed on this surface is used too, after doing this again.
       if (item.path.length < MAX_DEPTH && after.hash === before.hash && item.kind !== 'link') {
         for (const x of await items()) {
-          if (known.has(x.sig)) continue;
+          // Shards of one surface share what they have taken: a control several first controls reveal (a file's diff,
+          // a Cancel) is used once in all of them, by whichever reaches it first, as it is when nothing is sharded.
+          if (known.has(x.sig) || shard?.taken.has(x.sig)) continue;
           known.add(x.sig);
+          shard?.taken.add(x.sig);
           enqueue({ ...x, path: [...item.path, { sig: item.sig, kind: item.kind, name: item.name, identity: item.identity, observation: item.observation, choice: item.choice }] });
         }
       }
@@ -1356,24 +1376,64 @@ async function crawlChecks(browser) {
  * need was about, the first of two Opens) is used again, each on a core of its
  * own, freshly seeded, so nothing is left out for the order controls came in.
  */
-async function crawlFully(browser, surface, world) {
-  const result = await crawlSurface(browser, surface, world);
-  for (const gone of result.records.filter((r) => r.result === 'unreached' && r.item)) {
-    const again = await crawlSurface(browser, surface, world, [gone.item]);
-    result.ms += again.ms;
-    const now = again.records.find((r) => r.item?.sig === gone.item.sig);
-    if (now && now.result !== 'unreached') {
+async function crawlFully(browser, surface, world, shard = null) {
+  const result = await crawlSurface(browser, surface, world, null, shard);
+  /** Try again, on a fresh core, what an earlier action here took away; what only they reveal is reported too. */
+  const again = async (gone) => {
+    const run = await crawlSurface(browser, surface, world, gone.map((r) => r.item));
+    result.ms += run.ms;
+    const reached = new Set();
+    const left = [];
+    for (const r of gone) {
+      const now = run.records.find((x) => x.item?.sig === r.item.sig);
+      if (!now || now.result === 'unreached') { left.push(r); continue; }
       now.note = [now.note, 'on a fresh core: an earlier action here had taken it away'].filter(Boolean).join('; ');
-      result.records[result.records.indexOf(gone)] = now;
+      result.records[result.records.indexOf(r)] = now;
+      reached.add(now);
     }
-    // What only it revealed is reported too.
-    result.records.push(...again.records.filter((r) => r !== now && r.result !== 'unreached'));
+    result.records.push(...run.records.filter((x) => !reached.has(x) && x.result !== 'unreached'));
+    return left;
+  };
+  // A fresh page finds a control again only by an identity nothing else here shares: one whose twin is beside it (the
+  // same name and attributes, on the same path) cannot be told apart there, so no core is spent on it.
+  const twin = (r) => result.records.some((x) => x !== r && x.item && x.item.identity === r.item.identity && x.path.join('›') === r.path.join('›'));
+  let gone = [];
+  for (const r of result.records.filter((x) => x.result === 'unreached' && x.item)) {
+    if (twin(r)) r.note = [r.note, 'not tried on a fresh core: another control here has the same name and attributes'].join('; ');
+    else gone.push(r);
   }
+  // All of them on one fresh core, again while that reaches some; what is left is tried one at a time, as before.
+  while (gone.length > 1) {
+    const left = await again(gone);
+    if (left.length === gone.length) break;
+    gone = left;
+  }
+  for (const r of gone) await again([r]);
   return result;
 }
 
+/**
+ * The surfaces that take longest, from a full crawl (10 Oct 2026, four workers): the big ones are crawled in shards,
+ * each on its own seeded core, and the longest pieces start first. A surface not listed takes about half a minute.
+ * The run ends by naming its slowest pieces; when one passes about two minutes, shard it here.
+ */
+const HEAVY = [
+  { name: /^Northstar Storefront › Changes$/, seconds: 1190, shards: 8 },
+  { name: /› Changes › NS-13’s merge$/, seconds: 555, shards: 4 },
+  { name: /^Northstar Storefront › Activity$/, seconds: 444, shards: 4 },
+  { name: /^Keyboard$/, seconds: 139, shards: 1 },
+  { name: /› Changes › (Commits|Branches)$/, seconds: 130, shards: 2 },
+  { name: /^MCP (store|servers)$/, seconds: 120, shards: 2 },
+  { name: /› Changes › NS-3’s branch$/, seconds: 77, shards: 1 },
+  { name: /^Card drawer › NS-7/, seconds: 77, shards: 1 },
+  { name: /^Talk to Wanigan$/, seconds: 74, shards: 1 },
+  { name: /^Running › List$/, seconds: 64, shards: 1 },
+];
+
+const startedAt = Date.now();
 const browser = await chromium.launch();
 const results = [];
+const pieces = [];
 let world;
 try {
   {
@@ -1392,21 +1452,32 @@ try {
     }
   }
   const surfaces = world ? plan(world).filter((s) => !ONLY || ONLY.test(s.name)) : [];
+  const size = (name) => HEAVY.find((h) => h.name.test(name)) ?? { seconds: 30, shards: 1 };
   const todo = (world ? [
-    ...surfaces.map((s) => ({ name: s.name, run: () => crawlFully(browser, s, world) })),
-    { name: 'Keyboard', run: () => crawlKeys(browser) },
-    { name: 'Checks', run: () => crawlChecks(browser) },
+    ...surfaces.flatMap((s) => {
+      const { seconds, shards } = size(s.name);
+      const taken = new Set();
+      return Array.from({ length: shards }, (_, k) => ({
+        name: s.name, part: shards > 1 ? ` (shard ${k + 1} of ${shards})` : '', weight: seconds / shards,
+        run: () => crawlFully(browser, s, world, shards > 1 ? { k, n: shards, taken } : null),
+      }));
+    }),
+    { name: 'Keyboard', part: '', weight: size('Keyboard').seconds, run: () => crawlKeys(browser) },
+    { name: 'Checks', part: '', weight: size('Checks').seconds, run: () => crawlChecks(browser) },
   ] : []).filter((job) => !ONLY || ONLY.test(job.name) || surfaces.some((s) => s.name === job.name));
+  // The longest pieces first: what is left at the end is short, so no worker finishes long after the others.
+  todo.sort((a, b) => b.weight - a.weight);
   const total = todo.length;
   let finished = 0;
   await Promise.all(Array.from({ length: Math.min(WORKERS, todo.length) }, async () => {
     for (let job = todo.shift(); job; job = todo.shift()) {
       const r = await job.run();
-      const { name } = job;
+      const { name, part } = job;
       results.push({ name, ...r });
+      pieces.push({ name: `${name}${part}`, ms: r.ms });
       const failed = r.records.filter((x) => x.result === 'fail').length;
       finished++;
-      console.log(`${failed ? '✗' : '✓'} [${finished}/${total}] ${name}: ${r.records.length} controls${failed ? `, ${failed} failed` : ''} (${(r.ms / 1000).toFixed(1)}s)`);
+      console.log(`${failed ? '✗' : '✓'} [${finished}/${total}] ${name}${part}: ${r.records.length} controls${failed ? `, ${failed} failed` : ''} (${(r.ms / 1000).toFixed(1)}s)`);
     }
   }));
 } finally {
@@ -1414,6 +1485,26 @@ try {
 }
 
 /* ── report ───────────────────────────────────────────────────────────────── */
+
+// A sharded surface is reported as one surface: its shards' controls together, their times added. A control two shards
+// both reached (a Cancel that several confirm steps reveal) is reported once, as a failure if either found one.
+{
+  const merged = [];
+  const keyOf = (x) => x.item?.sig ?? `${x.kind}|${x.label}|${x.problems.join(';')}`;
+  for (const r of results) {
+    const same = merged.find((m) => m.name === r.name);
+    if (!same) { merged.push({ ...r, records: [...r.records] }); continue; }
+    same.ms += r.ms;
+    for (const x of r.records) {
+      const at = same.records.findIndex((y) => keyOf(y) === keyOf(x));
+      if (at < 0) same.records.push(x);
+      else if (x.result === 'fail' && same.records[at].result !== 'fail') same.records[at] = x;
+    }
+  }
+  results.splice(0, results.length, ...merged);
+}
+const wall = (Date.now() - startedAt) / 60_000;
+console.log(`The crawl took ${wall.toFixed(1)} min with ${WORKERS} workers. Slowest pieces: ${[...pieces].sort((a, b) => b.ms - a.ms).slice(0, 5).map((p) => `${p.name} ${(p.ms / 1000).toFixed(0)}s`).join(', ')}.`);
 
 const records = results.flatMap((r) => r.records);
 const count = (result) => records.filter((x) => x.result === result).length;
