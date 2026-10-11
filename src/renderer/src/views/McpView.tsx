@@ -285,6 +285,8 @@ function AddDialog({ entry, accounts, projects, onClose }: { entry: McpCatalogEn
   const [scope, setScope] = useState<'user' | 'local' | 'project'>('user');
   const [projectId, setProjectId] = useState(projects[0]?.id ?? '');
   const [plan, setPlan] = useState<McpPlan | null>(null);
+  // Said before anything is tried, as the reason Add is off for this account and place: another may not have it.
+  const existsWhy = `A server called ${entry.server} is already there: choose another account or place to add it to.`;
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const effectiveScope = account?.provider === 'codex' || (gemini && scope === 'local') ? 'user' : scope;
@@ -328,10 +330,10 @@ function AddDialog({ entry, accounts, projects, onClose }: { entry: McpCatalogEn
         {plan?.mode === 'terminal' ? (
           <>
             <Button onClick={() => copy()} disabled={!plan}>Copy command</Button>
-            <Button tone="primary" icon="terminal" onClick={() => openTerminal()} disabled={!plan || plan.exists || busy || !projects.length}>Open in a terminal</Button>
+            <Button tone="primary" icon="terminal" onClick={() => openTerminal()} disabled={!plan || plan.exists || busy || !projects.length} {...(plan?.exists ? tipProps(existsWhy) : {})}>Open in a terminal</Button>
           </>
         ) : (
-          <Button tone="primary" onClick={() => add()} disabled={!plan || plan.exists || busy}>{busy ? 'Adding…' : 'Add'}</Button>
+          <Button tone="primary" onClick={() => add()} disabled={!plan || plan.exists || busy} {...(plan?.exists ? tipProps(existsWhy) : {})}>{busy ? 'Adding…' : 'Add'}</Button>
         )}
       </>}>
       <p className="faint">{entry.purpose} <span className="mono small">{entry.source}</span></p>
@@ -374,7 +376,7 @@ function AddDialog({ entry, accounts, projects, onClose }: { entry: McpCatalogEn
       {plan ? (
         <div className="plan">
           <p>{plan.effect}</p>
-          {plan.exists ? <p className="error-text">A server called {entry.server} is already there.</p> : null}
+          {plan.exists ? <div className="plan-warn" role="note"><p>{existsWhy}</p></div> : null}
           <p className="faint small">{plan.mode === 'terminal' ? 'The command, typed into a new terminal for you to finish:' : 'Wanigan runs exactly this, with no shell:'}</p>
           <pre className="plan-command">{plan.command}</pre>
           {plan.mode === 'terminal' && plan.why ? (

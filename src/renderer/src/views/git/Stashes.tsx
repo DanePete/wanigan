@@ -11,7 +11,7 @@ import { attempt, call, forProject, useQuery } from '../../lib/api';
 import { gitHref } from '../../lib/router';
 import { ago, plural } from '../../lib/format';
 import { Icon } from '../../components/icons';
-import { Button, Dialog, EmptyState, IconButton, useToast } from '../../components/ui';
+import { Button, Dialog, EmptyState, IconButton, tipProps, useToast } from '../../components/ui';
 import { Panel } from '../../components/Panel';
 import { FileDiff } from '../../components/FileDiff';
 import { Confirm, Ref, agentName, placeOf, type Where } from './common';
@@ -139,7 +139,7 @@ export function StashDialog({ where, status, onClose, onDone }: { where: Where; 
     <Dialog title="Stash the changes" onClose={onClose} width={480} footer={(
       <>
         <Button tone="quiet" onClick={onClose}>Cancel</Button>
-        <Button type="submit" form="stash-save" tone="primary" icon="stash" disabled={busy || !changes}>
+        <Button type="submit" form="stash-save" tone="primary" icon="stash" disabled={busy || !changes} {...tipProps(busyWhy ?? (changes ? `Stash ${plural(changes, 'file')}` : 'There are no uncommitted changes to put aside.'))}>
           {changes ? `Stash ${plural(changes, 'file')}` : 'Nothing to stash'}
         </Button>
       </>
@@ -153,7 +153,7 @@ export function StashDialog({ where, status, onClose, onDone }: { where: Where; 
           <input type="checkbox" checked={untracked} onChange={(e) => setUntracked(e.target.checked)} />
           Include untracked files
         </label>
-        <p className={busyWhy ? 'stash-why error-text' : 'stash-why'} role="status">
+        <p className={busyWhy ? 'stash-why stash-held' : 'stash-why'} role="status">
           {busyWhy ?? (changes ? `They leave the working tree and wait in Stashes until you apply or pop them${status.branch ? ', on any branch' : ''}.` : 'There are no uncommitted changes to put aside.')}
         </p>
       </form>
