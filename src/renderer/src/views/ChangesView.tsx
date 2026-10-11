@@ -254,8 +254,13 @@ function Operation({ where, status, cards, onReload }: { where: { id: string; ca
     'cherry-pick': 'The branch goes back to before the cherry-pick (git cherry-pick --abort), and the files lose what it brought.',
     revert: 'The branch goes back to before the revert (git revert --abort), and the files lose what it changed.',
   }[op];
+  // The file's diff, scrolled to and given the keyboard: already in view, the jump still lands somewhere a reader can follow.
   const jump = (path: string): void => {
-    document.querySelector<HTMLElement>(`.diff-slot[data-path="${CSS.escape(path)}"]`)?.scrollIntoView({ block: 'start' });
+    const slot = document.querySelector<HTMLElement>(`.diff-slot[data-path="${CSS.escape(path)}"]`);
+    if (!slot) return;
+    slot.scrollIntoView({ block: 'start' });
+    if (!slot.hasAttribute('tabindex')) slot.tabIndex = -1;
+    slot.focus({ preventScroll: true });
   };
   return (
     <Panel side="right" title={`${what} in progress`} className="git-operation" label={`${what} in progress`}>
