@@ -173,6 +173,7 @@ export function pageHelpers() {
       href: el.getAttribute('href'), target: el.getAttribute('target'), rel: el.getAttribute('rel') ?? '',
       current: ['true', 'page', 'step'].includes(el.getAttribute('aria-current') ?? '') ? el.getAttribute('aria-current') : null,
       checked: el.checked === true || el.getAttribute('aria-checked') === 'true',
+      selected: el.getAttribute('aria-selected') === 'true',
       value: 'value' in el && kindOf(el) === 'text' ? String(el.value) : null,
       readOnly: el.readOnly === true,
     };
