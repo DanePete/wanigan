@@ -235,5 +235,6 @@ export const isVoiceHoldKey = (e: VoiceKeyInput, mac: boolean): boolean => modSh
  */
 export function endsVoiceHold(e: { key: string; code?: string }, mac: boolean): boolean {
   if (e.key === 'Shift' || e.key === (mac ? 'Meta' : 'Control')) return true;
-  return letterOf({ ...e, metaKey: false, ctrlKey: false, altKey: false, shiftKey: false }) === 'h';
+  // Named, never spread: a KeyboardEvent's key and code are getters on its prototype, which a spread leaves behind.
+  return letterOf({ key: e.key, code: e.code, metaKey: false, ctrlKey: false, altKey: false, shiftKey: false }) === 'h';
 }
