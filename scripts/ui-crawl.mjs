@@ -67,7 +67,8 @@ const ALLOW = [
     reason: 'a tile that already has the keys keeps them when clicked again; Escape gives them back (the sweep checks that)',
   },
   {
-    surface: /›.*(History|reader)/, label: /^Read Free shipping banner threshold$/, problem: /record of this conversation is gone/,
+    // Studio's History row is named by everything it shows (the agent, the title, its first words, where it ran).
+    surface: /›.*(History|reader)/, label: /^(Read )?(Codex)?Free shipping banner threshold/, problem: /record of this conversation is gone/,
     reason: 'the demo seeds a Codex conversation whose record Codex no longer keeps; the reader says so in place',
   },
   {
@@ -387,6 +388,22 @@ async function crawlSurface(browser, surface, world0, retry = null) {
           await t.click({ timeout: 3000 });
           return 'followed';
         }
+        case 'separator': {
+          // A window splitter (WAI-ARIA): its arrow keys move it, and its value says where it is. Pressed once each way,
+          // so the surface is left as it was. A click on a drag handle shows nothing, and is not what it is for.
+          await t.focus({ timeout: 3000 });
+          const vertical = (await t.getAttribute('aria-orientation')) !== 'horizontal';
+          const [grow, shrink] = vertical ? ['ArrowRight', 'ArrowLeft'] : ['ArrowDown', 'ArrowUp'];
+          const now = async () => Number(await t.getAttribute('aria-valuenow'));
+          const from = await now();
+          await page.keyboard.press(grow);
+          let to = await now();
+          let key = grow;
+          if (to === from) { await page.keyboard.press(shrink); to = await now(); key = shrink; }
+          if (to !== from) await page.keyboard.press(key === grow ? shrink : grow);
+          item.resized = to !== from;
+          return to !== from ? `pressed ${key}: ${from} → ${to}, then back` : `pressed ${grow} and ${shrink}: stayed at ${from}`;
+        }
         default:
           await t.click({ timeout: 3000 });
           return 'clicked';
@@ -480,6 +497,10 @@ async function crawlSurface(browser, surface, world0, retry = null) {
       if (item.kind === 'text' && !d.readOnly) {
         const value = await target().inputValue().catch(() => null);
         if (value !== null && value === d.value) rec.problems.push('did not take typing');
+      }
+      if (item.kind === 'separator') {
+        if (item.resized) rec.effects.push('resized it');
+        else if (!rec.problems.length) rec.problems.push('its arrow keys did not resize it');
       }
       const oneChoice = /it has one choice$/.test(rec.action);
       if (already) rec.note ||= item.kind === 'radio' ? 'already the choice' : item.kind === 'button' ? 'already the current one' : 'already here';

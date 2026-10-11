@@ -77,6 +77,8 @@ export function pageHelpers() {
     if (role === 'option') return 'option';
     if (role === 'tab') return 'tab';
     if (role === 'menuitem') return 'menuitem';
+    // A focusable separator is a window splitter (a panel's resize edge): resized with its arrow keys, not clicked.
+    if (role === 'separator') return 'separator';
     if (el.tagName === 'SUMMARY') return 'toggle';
     return 'button';
   };
