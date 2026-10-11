@@ -48,11 +48,13 @@ export function SessionsView({ project, setDialog }: { project: ProjectSummary; 
   const past = shown.filter((s) => s.endedAt !== null);
   const newSession = (): void => setDialog({ kind: 'session', projectId: project.id });
   const paused = !!project.pausedAt;
+  // Disabled, and why: said to the pointer and to a screen reader alike.
+  const pausedWhy = paused ? { 'aria-description': 'This project is paused: resume it to start a session.', 'data-tip': 'Paused: resume the project to start a session' } : {};
 
   if (sessions.error) return <NotAnswering error={sessions.error} onRetry={sessions.reload} />;
   if (sessions.data && !sessions.data.length) {
     return (
-      <EmptyState title="No sessions yet" icon="terminal" action={<Button tone="primary" icon="terminal" keys="new-session" disabled={paused} onClick={newSession}>New session</Button>}>
+      <EmptyState title="No sessions yet" icon="terminal" action={<Button tone="primary" icon="terminal" keys="new-session" disabled={paused} onClick={newSession} {...pausedWhy}>New session</Button>}>
         A session is a real terminal running Claude Code, Codex, Gemini CLI or your shell in this project. Start one on a card, or on its own for quick work.
       </EmptyState>
     );
@@ -72,7 +74,7 @@ export function SessionsView({ project, setDialog }: { project: ProjectSummary; 
         <span className="toolbar-gap" />
         <Button size="s" tone="quiet" icon="history" onClick={() => navigate({ name: 'project', projectKey: project.key, view: 'history' })}
           {...tipProps('Every conversation in this folder, from here, VS Code and other terminals', 'history')} data-tour="sessions-history">History</Button>
-        <Button size="s" tone="primary" icon="terminal" keys="new-session" disabled={paused} onClick={newSession} data-tour="sessions-new">New session</Button>
+        <Button size="s" tone="primary" icon="terminal" keys="new-session" disabled={paused} onClick={newSession} data-tour="sessions-new" {...pausedWhy}>New session</Button>
       </Toolbar>
       <div className="sessions-list" data-tour="sessions-list">
         {!sessions.data ? null : (
