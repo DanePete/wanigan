@@ -1930,8 +1930,9 @@ span.git-file-box {
   line-height: var(--leading);
 }
 
-.stash-why.error-text {
-  color: var(--red);
+/* Held while an agent works in the checkout: the reason, said plainly before anything is tried (not a failure). */
+.stash-why.stash-held {
+  color: var(--fg);
 }
 
 /* ── push, pull requests ─────────────────────────────────────────────────── */

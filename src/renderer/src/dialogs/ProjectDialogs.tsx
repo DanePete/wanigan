@@ -114,7 +114,7 @@ export function ProjectSettingsDialog({ project, onClose }: { project: ProjectSu
       <Section title="Close this project">
         <p className="faint small">It leaves the rail; its cards, sessions and history are kept, and opening the folder again brings it all back. Nothing in the folder is touched.</p>
         <span className="dialog-row" {...(project.liveSessions ? tipProps('Stop its live sessions first') : {})}>
-          <Button size="s" tone="danger" disabled={project.liveSessions > 0}
+          <Button size="s" tone="danger" disabled={project.liveSessions > 0} aria-description={project.liveSessions ? 'Stop its live sessions first' : undefined}
             onClick={() => attempt(() => call('projects.archive', { id: project.id }), setError).then((r) => {
               if (r) { toast(`${project.name} closed.`); onClose(); navigate({ name: 'needs' }); }
             })}>

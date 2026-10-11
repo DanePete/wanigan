@@ -23,6 +23,7 @@ import { LIVE_STUB } from './ui-goto-stub.mjs';
 import { LIVE_DEFAULTS } from './ui-live-defaults.mjs';
 import { liveFixture, liveStub } from './ui-live-stub.mjs';
 import { snapStub } from './ui-snap-stub.mjs';
+import { voiceStub } from './ui-voice-stub.mjs';
 import { PICK_STUB } from './ui-pick-stub.mjs';
 import { crawlTarget } from './ui-crawl-target.mjs';
 import { qualifyStoppedResize } from './ui-crawl-refusals.ts';
@@ -67,12 +68,13 @@ const ALLOW = [
     reason: 'a tile that already has the keys keeps them when clicked again; Escape gives them back (the sweep checks that)',
   },
   {
-    surface: /›.*(History|reader)/, label: /^Read Free shipping banner threshold$/, problem: /record of this conversation is gone/,
-    reason: 'the demo seeds a Codex conversation whose record Codex no longer keeps; the reader says so in place',
+    surface: /^Session ›/, label: /^Answer in the terminal$/, problem: /^did nothing visible$/,
+    reason: 'a session opens with its terminal holding the keys, so giving them to it again changes nothing; the button is for after you have moved away',
   },
   {
-    surface: /^MCP/, label: /^Add…$/, problem: /^showed an error: A server called .+ is already there\.$/,
-    reason: 'the store offers a server already added; its plan says so and Add stays off, before anything runs',
+    // Studio's History row is named by everything it shows (the agent, the title, its first words, where it ran).
+    surface: /›.*(History|reader)/, label: /^(Read )?(Codex)?Free shipping banner threshold/, problem: /record of this conversation is gone/,
+    reason: 'the demo seeds a Codex conversation whose record Codex no longer keeps; the reader says so in place',
   },
   {
     surface: /^Card drawer/, label: /^(Merge|Remove branch)$/, problem: /(uncommitted changes|has commits that are not in main)/,
@@ -169,7 +171,8 @@ function plan(w) {
     { name: 'A turn’s changes', session: stock, open: click('.turn-change .turn-diff'), scope: '.turn-panel', ready: '.turn-panel .dl-add' },
     // The card's branch and its pull request are the drawer's Branch tab.
     { name: 'Pull request', hash: `${board}?card=${ns.key}-10`, open: async (page) => { await click('.drawer [role="tab"]:has-text("Branch")')(page); await click('.drawer button:has-text("Open a pull request")')(page); }, scope: '.drawer .pr-confirm' },
-    { name: 'History › reader', hash: `#/p/${ns.key}/history`, open: click('.hrow .hrow-actions button:has-text("Read")'), scope: '.reader', ready: '.reader .turn' },
+    // Studio: the whole row reads the conversation, in a panel beside the list.
+    { name: 'History › reader', hash: `#/p/${ns.key}/history`, open: click('.hrow .hrow-main'), scope: '.reader', ready: '.reader .msg' },
     { name: 'History › resume', hash: `#/p/${ns.key}/history`, open: click('.hrow:has-text("Expired coupon codes") button:has-text("Resume")'), scope: '.dialog', ready: '.dialog .choose-accounts' },
     { name: 'Skills › copy', hash: '#/skills', open: click('.lib-actions button:has-text("Copy to a project")'), scope: '.dialog', ready: '.dialog .plan-files li' },
     { name: 'MCP › add', hash: '#/mcp', open: async (page) => { await click('.topbar-tools [role="tab"]:has-text("Store")')(page); await click('.store-item:has-text("GitHub") button')(page); }, scope: '.dialog', ready: '.dialog .plan-command' },
@@ -387,6 +390,22 @@ async function crawlSurface(browser, surface, world0, retry = null) {
           await t.click({ timeout: 3000 });
           return 'followed';
         }
+        case 'separator': {
+          // A window splitter (WAI-ARIA): its arrow keys move it, and its value says where it is. Pressed once each way,
+          // so the surface is left as it was. A click on a drag handle shows nothing, and is not what it is for.
+          await t.focus({ timeout: 3000 });
+          const vertical = (await t.getAttribute('aria-orientation')) !== 'horizontal';
+          const [grow, shrink] = vertical ? ['ArrowRight', 'ArrowLeft'] : ['ArrowDown', 'ArrowUp'];
+          const now = async () => Number(await t.getAttribute('aria-valuenow'));
+          const from = await now();
+          await page.keyboard.press(grow);
+          let to = await now();
+          let key = grow;
+          if (to === from) { await page.keyboard.press(shrink); to = await now(); key = shrink; }
+          if (to !== from) await page.keyboard.press(key === grow ? shrink : grow);
+          item.resized = to !== from;
+          return to !== from ? `pressed ${key}: ${from} → ${to}, then back` : `pressed ${grow} and ${shrink}: stayed at ${from}`;
+        }
         default:
           await t.click({ timeout: 3000 });
           return 'clicked';
@@ -454,6 +473,7 @@ async function crawlSurface(browser, surface, world0, retry = null) {
       }
       // Choosing what is already chosen, or following a link to where you are, rightly does nothing.
       const already = (item.kind === 'radio' && d.checked)
+        || (item.kind === 'tab' && d.selected)
         || (item.kind === 'link' && d.href === (await page.evaluate(() => location.hash)))
         || (item.kind === 'button' && !!d.current);
       const before = await page.evaluate(() => window.__crawl.observe());
@@ -481,8 +501,12 @@ async function crawlSurface(browser, surface, world0, retry = null) {
         const value = await target().inputValue().catch(() => null);
         if (value !== null && value === d.value) rec.problems.push('did not take typing');
       }
+      if (item.kind === 'separator') {
+        if (item.resized) rec.effects.push('resized it');
+        else if (!rec.problems.length) rec.problems.push('its arrow keys did not resize it');
+      }
       const oneChoice = /it has one choice$/.test(rec.action);
-      if (already) rec.note ||= item.kind === 'radio' ? 'already the choice' : item.kind === 'button' ? 'already the current one' : 'already here';
+      if (already) rec.note ||= item.kind === 'radio' || item.kind === 'tab' ? 'already the choice' : item.kind === 'button' ? 'already the current one' : 'already here';
       else if (!rec.effects.length && !oneChoice && !rec.problems.length) rec.problems.push('did nothing visible');
 
       // What it revealed on this surface is used too, after doing this again.
@@ -560,6 +584,19 @@ const focusCard = (column, index = 0) => async (page) => {
   await card.focus();
 };
 const cardIn = (column) => (page) => page.waitForFunction((c) => document.activeElement?.closest?.(`.column-${c}`) && document.activeElement.classList.contains('card'), column, { timeout: 3000 });
+/** Focus a card and remember it (across the reload before the next check), to move it and then move it back. */
+const remember = (column, index = 0) => async (page) => {
+  await focusCard(column, index)(page);
+  await page.evaluate(() => sessionStorage.setItem('wanigan.crawl.moved', document.activeElement?.dataset?.key ?? ''));
+};
+const focusMoved = async (page) => {
+  const k = await page.evaluate(() => sessionStorage.getItem('wanigan.crawl.moved'));
+  await page.locator(`.card[data-key="${k}"]`).focus();
+};
+const movedTo = (column, n) => (page) => page.waitForFunction(([c, i]) => {
+  const card = document.querySelectorAll(`.column-${c} .card`)[i];
+  return !!card && card.dataset.key === sessionStorage.getItem('wanigan.crawl.moved') && document.activeElement === card;
+}, [column, n], { timeout: 3000 });
 const nthCardFocused = (column, n) => (page) => page.waitForFunction(([c, i]) => document.activeElement === document.querySelectorAll(`.column-${c} .card`)[i], [column, n], { timeout: 3000 });
 
 /**
@@ -600,6 +637,11 @@ const LIVE_STANDINS = {
       await window.wanigan.call('live.setSite', { projectId: project.id, url: 'https://northstar.example.test/', platform: 'drupal' });
       sessionStorage.setItem('wanigan.crawl.docroot', `${project.path}/web`);
     }, key),
+  },
+  // Voice input played (ui-voice-stub.mjs), its model ready: the microphone is a made-up tone, never opened.
+  voice: {
+    scripts: [`(${voiceStub})({});`],
+    prepare: async () => {},
   },
   // Compare: Local and a hosted Live drawn on a canvas (ui-compare-stub.mjs). The core keeps the site and the environment.
   compare: {
@@ -652,11 +694,13 @@ function keyChecks(w) {
   const atWidth = (key, px) => async (page) => { await page.keyboard.press(key); await takenAt(px)(page); await page.waitForSelector('.cmp-change', { timeout: 10_000 }); };
   /** The live view with a part chosen in its tree, the keyboard on the tree. */
   const choose = (name) => async (page) => { await page.click(`.live-layer:has-text("${name}")`); await page.waitForSelector('.live-inspector', { timeout: 5000 }); };
-  const widthIs = (label) => focused((l) => document.querySelector(`.live-widths button[aria-label^="${l}"]`)?.getAttribute('aria-pressed') === 'true', label);
-  const tabIs = (label) => focused((l) => document.querySelector('.live-side > .segmented [aria-checked="true"]')?.textContent?.startsWith(l), label);
+  // Studio: the widths are a radio group, the side panel's tabs (Layers, Add, Pages) a tab list named Structure,
+  // and the dock's tabs sit in the status line, pressed for the one the dock shows.
+  const widthIs = (label) => focused((l) => document.querySelector(`.live-widths [role="radio"][aria-label^="${l}"]`)?.getAttribute('aria-checked') === 'true', label);
+  const tabIs = (label) => focused((l) => document.querySelector('[role="tablist"][aria-label="Structure"] [role="tab"][aria-selected="true"]')?.textContent?.startsWith(l), label);
   /** What the dock beneath the page shows now ('' closed), remembered before a key, which must move it to another tab, open. */
-  const dockWas = async (page) => { await page.evaluate(() => { window.__dockWas = document.querySelector('.editor-drawer:not([hidden]) .dock-tabs [aria-checked="true"]')?.textContent ?? ''; }); };
-  const dockMoved = focused(() => { const now = document.querySelector('.editor-drawer:not([hidden]) .dock-tabs [aria-checked="true"]')?.textContent ?? ''; return !!now && now !== window.__dockWas; });
+  const dockWas = async (page) => { await page.evaluate(() => { window.__dockWas = document.querySelector('.dock-tabs .dock-tab[aria-pressed="true"]')?.dataset.dock ?? ''; }); };
+  const dockMoved = focused(() => { const now = document.querySelector('.dock-tabs .dock-tab[aria-pressed="true"]')?.dataset.dock ?? ''; return !!now && now !== window.__dockWas; });
   /** A note written in the box under a chosen part. */
   const noting = async (page) => {
     await choose('Opening hours')(page);
@@ -693,6 +737,28 @@ function keyChecks(w) {
       { at: board, setup: focusCard('ready'), keys: ['ArrowLeft'], expect: cardIn('inbox') },
     ],
     'Open the card': [{ at: board, setup: focusCard('ready'), keys: ['Enter'], expect: shows('.drawer .stages') }],
+    // Each move is pressed, then its opposite on the same card: the board is left as seeded for the Inbox keys below.
+    'Move the card up or down its column': [
+      { at: board, setup: remember('inbox', 0), keys: ['Meta+ArrowDown'], expect: movedTo('inbox', 1) },
+      { at: board, setup: focusMoved, keys: ['Meta+ArrowUp'], expect: movedTo('inbox', 0) },
+    ],
+    'Move the card to the next column': [
+      { at: board, setup: remember('inbox', 0), keys: ['Meta+ArrowRight'], expect: movedTo('ready', 0) },
+      { at: board, setup: focusMoved, keys: ['Meta+ArrowLeft'], expect: movedTo('inbox', 0) },
+    ],
+    'First or last card in the List': [
+      { at: `#/p/${ns}/list`, ready: 'tr[data-key]', setup: async (page) => { await page.locator('tr[data-key]').nth(1).focus(); }, keys: ['Home'],
+        expect: focused(() => document.activeElement === document.querySelector('tr[data-key]')) },
+      { at: `#/p/${ns}/list`, ready: 'tr[data-key]', setup: async (page) => { await page.locator('tr[data-key]').first().focus(); }, keys: ['End'],
+        expect: focused(() => { const r = document.querySelectorAll('tr[data-key]'); return r.length > 1 && document.activeElement === r[r.length - 1]; }) },
+    ],
+    // A page is ten rows, or as far as the List goes.
+    'A page down or up the List': [
+      { at: `#/p/${ns}/list`, ready: 'tr[data-key]', setup: async (page) => { await page.locator('tr[data-key]').first().focus(); }, keys: ['PageDown'],
+        expect: focused(() => { const r = [...document.querySelectorAll('tr[data-key]')]; return r.length > 1 && r.indexOf(document.activeElement) === Math.min(10, r.length - 1); }) },
+      { at: `#/p/${ns}/list`, ready: 'tr[data-key]', setup: async (page) => { await page.locator('tr[data-key]').last().focus(); }, keys: ['PageUp'],
+        expect: focused(() => { const r = [...document.querySelectorAll('tr[data-key]')]; return r.length > 1 && r.indexOf(document.activeElement) === Math.max(0, r.length - 11); }) },
+    ],
     'Next file': [{ at: `#/p/${ns}/changes`, ready: '.dl-add', setup: click('.changes-files li:first-child button'), keys: ['j'], expect: shows('.changes-files li:nth-child(2) [aria-current="true"]') }],
     'Previous file': [{ at: `#/p/${ns}/changes`, ready: '.dl-add', setup: click('.changes-files li:nth-child(2) button'), keys: ['k'], expect: shows('.changes-files li:first-child [aria-current="true"]') }],
     'Mark the file viewed, or not': [{ at: `#/p/${ns}/changes`, ready: '.dl-add', setup: click('.changes-files li:first-child button'), keys: ['v'], expect: shows('.changes-files li.git-file.viewed') }],
@@ -742,6 +808,18 @@ function keyChecks(w) {
     'Create the card and open it': [{ at: board, setup: async (page) => { await page.keyboard.press('c'); await page.waitForSelector('.dialog input[data-autofocus]'); await page.keyboard.type('Made by the crawler'); }, keys: ['Meta+Enter'], expect: shows('.drawer .stages') }],
     'Send a message to the agent': [{ at: shell ? `#/p/${shell.projectKey}/s/${shell.id}` : null, ready: '#composer', setup: async (page) => { await page.click('#composer'); await page.keyboard.type(TYPED); }, keys: ['Enter'], expect: focused(() => document.querySelector('#composer')?.value === '') }],
     'New line in a message': [{ at: shell ? `#/p/${shell.projectKey}/s/${shell.id}` : null, ready: '#composer', setup: async (page) => { await page.click('#composer'); await page.keyboard.type('one'); }, keys: ['Shift+Enter'], expect: focused(() => document.querySelector('#composer')?.value === 'one\n') }],
+    'Show or hide the session’s turns and details': [{ at: shell ? `#/p/${shell.projectKey}/s/${shell.id}` : null, ready: '#composer',
+      setup: async (page) => { await page.evaluate(() => { window.__panelWas = document.querySelector('[data-tour="session-panel"]')?.getAttribute('aria-pressed') ?? null; }); },
+      keys: ['Meta+Shift+d'], expect: focused(() => { const now = document.querySelector('[data-tour="session-panel"]')?.getAttribute('aria-pressed'); return now != null && window.__panelWas != null && now !== window.__panelWas; }) }],
+    'Message the agent, or go back to its terminal': [{ at: shell ? `#/p/${shell.projectKey}/s/${shell.id}` : null, ready: '#composer',
+      setup: async (page) => { await page.evaluate(() => { document.activeElement?.blur?.(); }); }, keys: ['Meta+Shift+e'], expect: focused(() => document.activeElement?.id === 'composer') }],
+    // Voice input, played by the voice sweep's stand-in: the box being typed in starts listening.
+    'Speak into the box you are typing in: start or stop listening': [{ standIn: 'voice', at: shell ? `#/p/${shell.projectKey}/s/${shell.id}` : null, ready: '#composer',
+      setup: click('#composer'), keys: ['Meta+Shift+m'], expect: (page) => page.waitForSelector('.voice[data-voice="listening"]', { timeout: 6000 }) }],
+    // Held, as a person holds it: listening while the chord is down, and stopped once it is let go.
+    'Hold to speak, and let go to stop': [{ standIn: 'voice', at: shell ? `#/p/${shell.projectKey}/s/${shell.id}` : null, ready: '#composer',
+      setup: click('#composer'), keys: ['Meta+Shift+KeyH'], held: (page) => page.waitForSelector('.voice[data-voice="listening"]', { timeout: 6000 }),
+      expect: (page) => page.waitForSelector('.voice[data-voice="idle"]', { timeout: 6000 }) }],
     'Close a dialog': [{ at: board, setup: press('c'), then: '.dialog', keys: ['Escape'], expect: gone('.dialog') }],
     // Go to: ⌘⇧Space from anywhere in a project; Shift+Space in the live view, pressed on another of its buttons so a
     // button's own Space can never be what opened it.
@@ -749,16 +827,16 @@ function keyChecks(w) {
     'A page of the site, from the live view (not while typing)': [{ standIn: 'goto', at: live, ready: '.live-bar', setup: async (page) => { await page.focus('.live-bar button[aria-label^="Reload"]'); },
       keys: ['Shift+Space'], expect: shows('.goto [role="option"]') }],
     // The live view's own keys (shared/live-keys.ts), with the made-up Acme parts; nothing focused but the view.
-    'Select a part on the page, or stop selecting': [{ standIn: 'live', at: live, ready: '.live-tree', keys: ['p'], expect: shows('.live-status:has-text("Picking")') }],
+    'Select a part on the page, or stop selecting': [{ standIn: 'live', at: live, ready: '.live-tree', keys: ['p'], expect: shows('.live-status:has-text("Selecting")') }],
     'Colour the page by a lens': [{ standIn: 'live', at: live, ready: '.live-tree', keys: ['Shift+L'], expect: shows('.sel-list [role="option"]:has-text("Owner")') }],
     'Phone, tablet or full width': [
       { standIn: 'live', at: live, ready: '.live-tree', keys: ['1'], expect: widthIs('Phone') },
       { standIn: 'live', at: live, ready: '.live-tree', keys: ['2'], expect: widthIs('Tablet') },
       { standIn: 'live', at: live, ready: '.live-tree', setup: press('1'), keys: ['3'], expect: widthIs('Full width') },
     ],
-    // The side panel's tabs are Layers and Add; Notes, Problems and Request are the dock's, beneath the page.
+    // The side panel's tabs are Layers, Add and Pages (from Layers, [ wraps to Pages); Notes, Problems and Request are the dock's.
     'Previous or next tab of the side panel': [
-      { standIn: 'live', at: live, ready: '.live-tree', keys: ['['], expect: tabIs('Add') },
+      { standIn: 'live', at: live, ready: '.live-tree', keys: ['['], expect: tabIs('Pages') },
       { standIn: 'live', at: live, ready: '.live-tree', keys: [']'], expect: tabIs('Add') },
     ],
     'Previous or next tab of the dock beneath the page (code, notes, problems, request, DevTools)': [
@@ -790,8 +868,8 @@ function keyChecks(w) {
     ],
     'Show the chosen part, or the row of the tree, in DevTools': [{ standIn: 'live', at: live, ready: '.live-tree', setup: choose('Search'), keys: ['Shift+D'],
       expect: focused(() => window.__wgLive.calls.some((c) => c.startsWith('devtoolsInspect '))) }],
-    'Add the note to the notes (in the note box)': [{ standIn: 'live', at: live, ready: '.live-tree', setup: noting, keys: ['Meta+Enter'], expect: shows('.dock-tabs button:has-text("Notes 1")') }],
-    'Send the note now, or the notes waiting': [{ standIn: 'live', at: live, ready: '.live-tree', setup: noting, keys: ['Meta+Shift+Enter'], expect: shows('.toast:has-text("Sent to")') }],
+    'Add the note to the notes (in the note box)': [{ standIn: 'live', at: live, ready: '.live-tree', setup: noting, keys: ['Meta+Enter'], expect: shows('.dock-tabs .dock-tab[data-dock="notes"][aria-label="Notes, 1 waiting"]') }],
+    'Send the note now, or the notes waiting': [{ standIn: 'live', at: live, ready: '.live-tree', setup: noting, keys: ['Meta+Shift+Enter'], expect: shows('.status-line:has-text("Sent to")') }],
     // Compare, opened from the live view. It starts on the slider, at the first change, at the view's 1440 px.
     'Show Local, or the hosted page': [
       { standIn: 'compare', at: live, ready: '.live-bar', setup: comparing(), keys: ['ArrowRight'], expect: showing('Live') },
@@ -863,7 +941,13 @@ async function crawlKeys(browser) {
           if (c.then) await page.waitForSelector(c.then, { timeout: 5000 });
           const errorsAt = errors.length;
           const before = await page.evaluate(() => window.__crawl.observe());
-          for (const k of c.keys) await page.keyboard.press(k);
+          if (c.held) {
+            // A chord held down: pressed key by key, what it does while held awaited, then let go in reverse.
+            const parts = c.keys[0].split('+');
+            for (const k of parts) await page.keyboard.down(k);
+            await c.held(page).then(() => { rec.effects.push('did what the sheet says while held'); }, () => { rec.problems.push('did not do what the sheet says while held'); });
+            for (const k of parts.reverse()) await page.keyboard.up(k);
+          } else for (const k of c.keys) await page.keyboard.press(k);
           await c.expect(page).then(() => { rec.effects.push('did what the sheet says'); }, () => { rec.problems.push('did not do what the sheet says'); });
           await settle(page);
           const after = await page.evaluate(() => window.__crawl.observe());

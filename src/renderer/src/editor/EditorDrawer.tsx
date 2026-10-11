@@ -186,8 +186,10 @@ export function EditorDrawer({ project, page = false }: {
                   {active ? (
                     <>
                       <IconButton icon="save" size="s" label="Save" keys={SAVE_KEYS} tipSide="bottom" disabled={!editor.unsaved.has(active.key)}
+                        aria-description={editor.unsaved.has(active.key) ? undefined : 'Nothing to save: the file is as it was saved.'}
                         onClick={() => { void currentSurface()?.save(active.key); }} />
                       <IconButton icon="undo" size="s" label="Revert to the saved file" tipSide="bottom" disabled={!editor.unsaved.has(active.key)}
+                        aria-description={editor.unsaved.has(active.key) ? undefined : 'Nothing to revert: the file is as it was saved.'}
                         onClick={() => { currentSurface()?.revert(active.key); }} />
                     </>
                   ) : null}

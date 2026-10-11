@@ -459,6 +459,8 @@ export const WorkingTree = forwardRef<WorkingTreeHandle, {
                           aria-label={area === 'staged' ? `Unstage ${e.file.path}` : area === 'conflicted' ? `Mark ${e.file.path} resolved` : `Stage ${e.file.path}`}
                           // A conflicted file with markers still in it is resolved in the diff; ticked off, it would be refused.
                           disabled={area === 'conflicted' && !!e.file.hunks}
+                          // Off while markers remain: the reason reaches a screen reader too, not only the pointer's tooltip.
+                          aria-description={area === 'conflicted' && e.file.hunks ? `It still has ${plural(e.file.hunks, 'conflict')}: resolve ${e.file.hunks === 1 ? 'it' : 'them'} in the diff, or in an editor, then tick it` : undefined}
                           data-tip={area === 'staged' ? 'Staged: untick to unstage'
                             : area === 'conflicted' ? (e.file.hunks ? `It still has ${plural(e.file.hunks, 'conflict')}: resolve ${e.file.hunks === 1 ? 'it' : 'them'} in the diff, or in an editor, then tick it` : 'Tick when it is resolved')
                               : 'Tick to stage'}

@@ -85,6 +85,16 @@ function useBusyClick(onClick: ButtonHTMLAttributes<HTMLButtonElement>['onClick'
   return [click, busy];
 }
 
+/**
+ * Why a disabled button is off, for a screen reader too: its tooltip, when the tooltip says more than its name. A
+ * tooltip alone never reached assistive tech, and a disabled button may not show one at all.
+ */
+function disabledWhy(disabled: boolean | undefined, rest: Record<string, unknown>, name: unknown): { 'aria-description'?: string } {
+  const tip = rest['data-tip'];
+  if (!disabled || rest['aria-description'] !== undefined || typeof tip !== 'string' || !tip.trim() || tip === name) return {};
+  return { 'aria-description': tip };
+}
+
 /** A button with words: s is 28 px, m 32 px. `keys` puts its shortcut in its tooltip. */
 export function Button({ tone = 'plain', icon, size = 'm', keys, children, className, onClick, disabled, ...rest }:
   { tone?: Tone; icon?: IconName; size?: 's' | 'm'; keys?: Shortcut | CommandId } & ButtonHTMLAttributes<HTMLButtonElement>) {
@@ -92,6 +102,7 @@ export function Button({ tone = 'plain', icon, size = 'm', keys, children, class
   const tip = keys && typeof children === 'string' ? tipProps(children, keys) : {};
   return (
     <button type="button" className={`btn btn-${tone} btn-${size}${className ? ` ${className}` : ''}`} {...tip} {...rest}
+      {...disabledWhy(disabled, rest as Record<string, unknown>, children)}
       onClick={click} disabled={disabled || busy} aria-busy={busy || undefined}>
       {icon ? <Icon name={icon} size={size === 's' ? 14 : 16} /> : null}
       {children ? <span>{children}</span> : null}
@@ -111,6 +122,7 @@ export function IconButton({ icon, label, tone = 'quiet', size = 'm', pressed, k
   return (
     <button type="button" className={`btn btn-${tone} btn-icon btn-icon-${size}${className ? ` ${className}` : ''}`} aria-label={label}
       aria-pressed={pressed === undefined ? undefined : pressed} {...tipProps(label, keys, tipSide)} {...rest}
+      {...disabledWhy(disabled, rest as Record<string, unknown>, label)}
       onClick={click} disabled={disabled || busy} aria-busy={busy || undefined}>
       <Icon name={icon} size={size === 's' ? 14 : 16} />
     </button>

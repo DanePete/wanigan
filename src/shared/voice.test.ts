@@ -72,6 +72,12 @@ test('⌘⇧M starts or stops listening and ⌘⇧H is held to talk, Ctrl+Shift 
   assert.ok(endsVoiceHold({ key: 'H', code: 'KeyH' }, true));
   assert.ok(!endsVoiceHold({ key: 'Control' }, true));
   assert.ok(!endsVoiceHold({ key: 'a' }, true));
+  // A real key-up keeps key and code on its prototype, as KeyboardEvent does: letting go of H first (Windows and
+  // Linux send its key-up while Ctrl is still down) ends the hold, and never throws.
+  const KeyUp = class { readonly #k: string; readonly #c: string; constructor(k: string, c: string) { this.#k = k; this.#c = c; } get key(): string { return this.#k; } get code(): string { return this.#c; } };
+  assert.ok(endsVoiceHold(new KeyUp('H', 'KeyH'), false));
+  assert.ok(endsVoiceHold(new KeyUp('h', 'KeyH'), true));
+  assert.ok(!endsVoiceHold(new KeyUp('a', 'KeyA'), false));
 });
 
 test('the voice chords are on the sheet, and no other shortcut, app command or menu item is either chord on any platform', () => {
