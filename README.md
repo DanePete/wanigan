@@ -11,14 +11,14 @@
 <p align="center">
   <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-4C5967"></a>
   <a href="#quick-start"><img alt="Platform: macOS on Apple silicon" src="https://img.shields.io/badge/macOS-Apple%20silicon-4C5967"></a>
-  <a href="https://github.com/DanePete/wanigan/releases/tag/v2.0.0-beta.4"><img alt="Latest release: v2.0.0-beta.4" src="https://img.shields.io/badge/release-v2.0.0--beta.4-1E6FD9"></a>
+  <a href="https://github.com/DanePete/wanigan/releases/tag/v2.0.0-beta.5"><img alt="Latest release: v2.0.0-beta.5" src="https://img.shields.io/badge/release-v2.0.0--beta.5-1E6FD9"></a>
 </p>
 
 <p align="center">
   <a href="https://wanigan.ai">Website</a> ·
   <a href="https://wanigan.ai/#top">Video</a> ·
   <a href="https://wanigan.ai/docs">Docs</a> ·
-  <a href="https://github.com/DanePete/wanigan/releases/tag/v2.0.0-beta.4">Download</a>
+  <a href="https://github.com/DanePete/wanigan/releases/tag/v2.0.0-beta.5">Download</a>
 </p>
 
 <!-- PICTURE PENDING: docs/images/hero-editor-drupal-light.png and docs/images/hero-editor-drupal-dark.png.
@@ -175,7 +175,7 @@ More: [on your phone](docs/guide/phone.md) ·
 
 Wanigan 2 is a beta for macOS on Apple silicon.
 
-1. [Download the DMG or zip](https://github.com/DanePete/wanigan/releases/tag/v2.0.0-beta.4),
+1. [Download the DMG or zip](https://github.com/DanePete/wanigan/releases/tag/v2.0.0-beta.5),
    open it and drag Wanigan 2 to Applications.
 2. Open it. The build is ad-hoc signed and not notarized, so the first time,
    macOS says it could not verify Wanigan 2 is free of malware. Click **Done**,
@@ -199,7 +199,7 @@ Wanigan runs them as you, with the accounts you already have.
 (`xcode-select --install`) and Node 22.23.2 (`nvm install` reads `.nvmrc`).
 
 ```sh
-git clone --branch v2.0.0-beta.4 https://github.com/DanePete/wanigan.git
+git clone --branch v2.0.0-beta.5 https://github.com/DanePete/wanigan.git
 cd wanigan
 nvm install
 npm install           # also compiles SQLite and node-pty for Electron

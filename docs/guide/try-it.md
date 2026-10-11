@@ -2,11 +2,11 @@
 
 Installing Wanigan 2, building it from source, starting with the demo, and what it does on your Mac. Back to the [README](../../README.md). The website walks through it too: [getting started](https://wanigan.ai/docs/get-started).
 
-This source tree targets Wanigan 2 beta.4, a limited beta for macOS on Apple
+This source tree targets Wanigan 2 beta.5, a limited beta for macOS on Apple
 silicon. Its scope is the existing project boards, terminal sessions, saved
 work and **Needs you** workflow. The known limits in [Not done yet](status.md) still apply.
 
-[Download the DMG or zip](https://github.com/DanePete/wanigan/releases/tag/v2.0.0-beta.4),
+[Download the DMG or zip](https://github.com/DanePete/wanigan/releases/tag/v2.0.0-beta.5),
 then drag Wanigan 2.app to Applications. The app is ad-hoc signed and not notarized;
 macOS may require approval in Privacy & Security before opening it.
 Verification status and remaining acceptance checks are recorded in
@@ -15,7 +15,7 @@ Verification status and remaining acceptance checks are recorded in
 The independent review ran on macOS 26.5 with stand-in agents. It did not
 repeat the historical real-CLI scenario described in [Not done yet](status.md).
 
-You can also build from source. The commands below select the beta.4 tag to
+You can also build from source. The commands below select the beta.5 tag to
 match the download; `main` may contain a
 different version.
 You need:
@@ -29,7 +29,7 @@ You need:
   for Jev (Settings › Jev).
 
 ```sh
-git clone --branch v2.0.0-beta.4 https://github.com/DanePete/wanigan.git
+git clone --branch v2.0.0-beta.5 https://github.com/DanePete/wanigan.git
 cd wanigan
 nvm install
 npm install           # also compiles SQLite and node-pty for Electron
