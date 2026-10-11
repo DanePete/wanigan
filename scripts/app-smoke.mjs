@@ -276,10 +276,14 @@ try {
     results.push(/Core unavailable/.test(rail) ? 'the rail says the core is unavailable' : `FAIL: the rail says "${rail}"`);
     rmSync(store);
     await win.click('.core-problem button:has-text("Try again")');
-    const back = await win.waitForSelector('.core-status:has-text("Core running")', { timeout: 20_000 }).then(() => true, () => false);
+    // Studio's rail draws nothing while the core runs (its dot is hidden, its words only for a screen reader), so the
+    // state is read, not looked for: waiting for it to be visible never ends.
+    const back = await win.waitForSelector('.core-status.core-connected', { state: 'attached', timeout: 20_000 }).then(() => true, () => false);
+    const said = await win.textContent('.core-status').catch(() => '');
     const gone = !(await win.$('.core-problem'));
     pid = existsSync(join(refusedDir, 'core.json')) ? JSON.parse(readFileSync(join(refusedDir, 'core.json'), 'utf8')).pid : 0;
-    results.push(back && gone ? 'Try again started the core once the reason was gone, and the panel went' : `FAIL: Try again (running: ${back}, panel gone: ${gone})`);
+    const running = back && /Core running/.test(said ?? '') && pid > 0 && alive(pid);
+    results.push(running && gone ? 'Try again started the core once the reason was gone, and the panel went' : `FAIL: Try again (running: ${running}, panel gone: ${gone})`);
   } catch (error) {
     results.push(`FAIL: the refused-store launch: ${error.message.split('\n')[0]}`);
   } finally {
