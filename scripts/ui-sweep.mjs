@@ -2464,9 +2464,12 @@ async function liveSiteStates() {
       await page.goto(`${base}#/p/${acmeProject.key}/live`);
       await page.waitForSelector('.live-problem:has-text("This site isn’t running")', { timeout: 10000 })
         .catch(() => failures.push(`${theme}/live: a paused site was not said to be paused (${errors.join('; ')})`));
+      // The heading can paint before the asynchronous certificate explanation.
+      await page.waitForSelector('.live-problem:has-text("ddev’s router answered with a wildcard certificate")', { timeout: 10000 })
+        .catch(() => null);
       const paused = await panel();
       if (!paused.includes('ddev says it is paused.')) failures.push(`${theme}/live: the paused panel does not quote ddev (${paused})`);
-      if (!/ddev’s router answered with a wildcard certificate for \*\.ddev\.site/.test(paused)) failures.push(`${theme}/live: the router’s certificate is not explained`);
+      if (!/ddev’s router answered with a wildcard certificate for \*\.ddev\.site/.test(paused)) failures.push(`${theme}/live: the router’s certificate is not explained (${paused})`);
       if (/mkcert -install|does not trust|ERR_CERT/.test(paused)) failures.push(`${theme}/live: a paused site shows certificate advice: ${paused}`);
       if (!(await page.$('.live-problem[role="status"] button:has-text("Start it")'))) failures.push(`${theme}/live: no Start it for a paused site`);
       await page.waitForTimeout(250);
