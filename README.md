@@ -21,9 +21,6 @@
   <a href="https://github.com/DanePete/wanigan/releases/tag/v2.0.0-beta.5">Download</a>
 </p>
 
-<!-- PICTURE PENDING: docs/images/hero-editor-drupal-light.png and docs/images/hero-editor-drupal-dark.png.
-     The Studio live editor on the Drupal demo (Northstar), from the final build: a part chosen on the page,
-     its action bar above it, Layers on the left, the Inspector on the right. 1600 px wide, under about 400 KB. -->
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/images/hero-editor-drupal-dark.png">
   <source media="(prefers-color-scheme: light)" srcset="docs/images/hero-editor-drupal-light.png">
@@ -58,8 +55,6 @@ text contrast at WCAG AA measured from the design tokens by the tests.
 
 ### One editor for every site
 
-<!-- PICTURE PENDING: docs/images/editor-wordpress.png. The live editor on the WordPress demo (Fieldnotes),
-     typing on a heading in place ("typing · Enter keeps · Esc puts back"), Edits showing a count. -->
 ![The live editor on a made-up WordPress journal: a heading being typed on in place, with Edits and Make real in the toolbar](docs/images/editor-wordpress.png)
 
 Choose a part of the page and type on its words right where they show, or try a
@@ -77,8 +72,6 @@ More: [the live view guide](docs/guide/live-view.md) ·
 
 ### Show it, and an agent starts on it
 
-<!-- PICTURE PENDING: docs/images/snap-to-agent.png. A snap of the demo page marked up with a box and an arrow,
-     and the note composer open with its context and "Start Claude Code with this". -->
 ![A snap of a made-up page marked up with a box and an arrow, beside the note composer offering to start an agent with it](docs/images/snap-to-agent.png)
 
 **Snap** (⇧S) takes a picture of the page to mark up with a box, an arrow, a
@@ -92,8 +85,6 @@ More: [Snap and Record](https://wanigan.ai/docs/agents/snap-and-record)
 
 ### What made every part, and the tools to change it
 
-<!-- PICTURE PENDING: docs/images/made-by-devtools.png. The Inspector's Made by tab on a chosen part of the Drupal
-     demo, and the page's DevTools open in the dock beneath the page with that element selected. -->
 ![The Inspector's Made by tab beside a chosen part of a made-up page, with the page's DevTools open beneath it](docs/images/made-by-devtools.png)
 
 With the site helper installed, the Inspector's **Made by** tab says what made
@@ -109,8 +100,6 @@ More: [the code editor](docs/guide/code-editor.md) ·
 
 ### The component library, and Take out
 
-<!-- PICTURE PENDING: docs/images/library.png. The component library (Add, ⇧B) on the Drupal demo: components
-     pictured alone in the site's theme, one chosen with its props and where the site uses it. -->
 ![The component library of a made-up Drupal site: each component pictured alone in the site's own theme, one chosen with where it is used](docs/images/library.png)
 
 **Add** (⇧B) shows everything the site can place, as its core lists it:
@@ -124,8 +113,6 @@ More: [components](https://wanigan.ai/docs/components)
 
 ### Your agents, without losing track
 
-<!-- PICTURE PENDING: docs/images/board.png. The board in the calm showcase demo: cards across Inbox, Ready,
-     Working, Review and Done, two agents working, Wanigan's mark calm (never amber). -->
 ![A project's board in the demo: cards from Inbox to Done, two agents working on cards, and the rail on the left](docs/images/board.png)
 
 Every project gets a board. Cards move from Inbox to Done; agents file into the
@@ -143,8 +130,6 @@ More: [how it works](docs/guide/how-it-works.md) ·
 
 ### Every view explains itself
 
-<!-- PICTURE PENDING: docs/images/tour.png. A step of the live editor's tour (or a view's How this works) in the
-     demo: the lit area and the tour's card beside it. -->
 ![A step of the live editor's tour in the demo: one area of the window lit, with a card beside it explaining it](docs/images/tour.png)
 
 A short welcome tour plays on the first launch, and each view offers its own
@@ -156,9 +141,7 @@ More: [tours](https://wanigan.ai/docs/get-started/tours)
 
 ### Your phone, models on your Mac, and your voice
 
-<!-- PICTURE PENDING: docs/images/phone.png. Wanigan's phone page at 390 px in the demo: Needs you, or a session's
-     terminal. Seen through the phone sweep's harness or a real phone, never a mock. -->
-![Wanigan's page on a phone-sized screen in the demo, showing what needs you](docs/images/phone.png)
+![Wanigan's page on phone-sized screens in the demo: what needs you, and the sessions](docs/images/phone.png)
 
 Answer what needs you, type into a terminal or start a session from your phone,
 over [Tailscale](https://tailscale.com) between your own devices: nothing is
